@@ -1,0 +1,55 @@
+*sekken.txt* SKK 風の日本語入力用 ddc-source
+
+Author: warashi
+License: MIT
+
+==============================================================================
+INTRODUCTION                                             *sekken-introduction*
+
+*sekken* は |denops.vim| および |ddc.vim| を利用した SKK風の日本語入力環境を
+提供します。
+
+REQUIREMENTS                                             *sekken-requirements*
+
+基本的に作者が最新の neovim を利用しているため、その環境にて動作確認を
+行っています。
+他の条件は |denops.vim| および |ddc.vim| に準拠します。
+
+==============================================================================
+CONFIGURATION EXAMPLE                                         *sekken-example*
+
+まだ設定まわりを整備できていないため、 denops の API を直接使って設定を
+行う必要があります。
+set_dictionary に渡すファイルパスは JISYO 形式と呼ばれる形式の JSON ファイル
+です。
+詳しくは https://github.com/skk-dict/jisyo を参照してください。
+
+以下はこのドキュメント執筆時点で作者が利用している設定です。
+
+>
+	function InitializeSekken()
+	  call denops#notify('sekken', 'use_default_kana_table', [])
+	  call denops#notify('sekken', 'load_model', [])
+	  call denops#notify('sekken', 'set_dictionary', [$HOME .. '/.config/sekken/jisyo/SKK-JISYO.L.json'])
+	endfunction
+
+	augroup MyDenopsSekken
+	  autocmd!
+	  autocmd User DenopsPluginPost:sekken call InitializeSekken()
+	augroup END
+
+	call ddc#custom#patch_global('sourceOptions', #{
+	      \   sekken: #{
+	      \     matchers: [],
+	      \     sorters: [],
+	      \     converters: [],
+	      \     isVolatile: v:true,
+	      \     minAutoCompleteLength: 1,
+	      \     keywordPattern: '[!-~]+',
+	      \     maxItems: 15,
+	      \     timeout: 1000,
+	      \   },
+	      \ })
+<
+
+vim:tw=78:fo=tcq2mM:ts=8:ft=help:norl
