@@ -6,7 +6,7 @@ use sekken_model::compact::CompactModel;
 
 use crate::dictionary::SKKDictionary;
 use crate::kana::KanaTable;
-use crate::util::is_han;
+use crate::util::is_kanji;
 use crate::viterbi::Node;
 
 mod lattice;
@@ -191,12 +191,12 @@ impl Sekken {
             .map(|s| {
                 s.into_iter()
                     .map(|(i, s)| {
-                        let hans = s.chars().filter(|c| is_han(*c)).collect::<Vec<char>>();
-                        if hans.is_empty() {
+                        let kanjis = s.chars().filter(|c| is_kanji(*c)).collect::<Vec<char>>();
+                        if kanjis.is_empty() {
                             return lattice::Entry::new(Node::new(s, i as u8), '\0', '\0');
                         }
-                        let (head_han, tail_han) = (hans[0], hans[hans.len() - 1]);
-                        lattice::Entry::new(Node::new(s, i as u8), head_han, tail_han)
+                        let (head_kanji, tail_kanji) = (kanjis[0], kanjis[kanjis.len() - 1]);
+                        lattice::Entry::new(Node::new(s, i as u8), head_kanji, tail_kanji)
                     })
                     .collect::<Vec<_>>()
             })

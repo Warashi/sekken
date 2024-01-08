@@ -8,16 +8,16 @@ use sekken_model::compact::CompactModel;
 
 #[derive(Clone, Debug)]
 pub struct Entry {
-    head_han: char,
-    tail_han: char,
+    head_kanji: char,
+    tail_kanji: char,
     node: Rc<RefCell<Node<String>>>,
 }
 
 impl Entry {
-    pub fn new(node: Rc<RefCell<Node<String>>>, head_han: char, tail_han: char) -> Entry {
+    pub fn new(node: Rc<RefCell<Node<String>>>, head_kanji: char, tail_kanji: char) -> Entry {
         Entry {
-            head_han,
-            tail_han,
+            head_kanji,
+            tail_kanji,
             node,
         }
     }
@@ -46,7 +46,7 @@ impl Lattice {
         for right in entries.iter().skip(1) {
             for left_entry in left {
                 for right_entry in right {
-                    let score = model.get_bigram_cost(left_entry.tail_han, right_entry.head_han);
+                    let score = model.get_bigram_cost(left_entry.tail_kanji, right_entry.head_kanji);
                     let mut right_node = right_entry.node.borrow_mut();
                     right_node.add_left(left_entry.node.clone(), score);
                 }

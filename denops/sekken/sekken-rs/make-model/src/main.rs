@@ -3,7 +3,7 @@ use std::io::{BufWriter, Write};
 use anyhow::{Context, Result};
 use bzip2::read::MultiBzDecoder;
 
-use sekken_core::util::is_han;
+use sekken_core::util::is_kanji;
 use sekken_model::NormalModel;
 
 fn main() -> Result<()> {
@@ -16,7 +16,7 @@ fn main() -> Result<()> {
     let mut model = NormalModel::new();
 
     for ch in input.into_iter().flatten() {
-        if !is_han(ch) {
+        if !is_kanji(ch) {
             continue;
         }
 
