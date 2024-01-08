@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SKKDictionary {
-    pub okuri_ari: HashMap<String, Vec<String>>,
-    pub okuri_nasi: HashMap<String, Vec<String>>,
+    pub okuri_ari: BTreeMap<String, Vec<String>>,
+    pub okuri_nasi: BTreeMap<String, Vec<String>>,
 }

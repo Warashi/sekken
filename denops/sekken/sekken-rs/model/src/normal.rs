@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -6,7 +6,7 @@ use crate::compact::CompactModel;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NormalModel {
-    bigram_cost: HashMap<u64, u128>,
+    bigram_cost: BTreeMap<u64, u128>,
 }
 
 impl Default for NormalModel {
@@ -18,7 +18,7 @@ impl Default for NormalModel {
 impl NormalModel {
     pub fn new() -> Self {
         Self {
-            bigram_cost: HashMap::new(),
+            bigram_cost: BTreeMap::new(),
         }
     }
 

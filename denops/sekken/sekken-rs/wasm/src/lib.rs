@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use anyhow::anyhow;
 use anyhow::Context as _;
@@ -45,7 +45,7 @@ pub fn use_default_kana_table() -> Result<(), JsError> {
 
 #[wasm_bindgen]
 pub fn set_kana_table(map: JsValue) -> Result<(), JsError> {
-    let map: Result<HashMap<String, String>, Error> = serde_wasm_bindgen::from_value(map);
+    let map: Result<BTreeMap<String, String>, Error> = serde_wasm_bindgen::from_value(map);
     let map = map.map_err(|e| anyhow!("{:?}", e).context("failed to parse kana table"));
     let kana_table =
         map.and_then(|map| kana::KanaTable::new(map).context("failed to load kana table"));
