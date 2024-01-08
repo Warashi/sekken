@@ -48,12 +48,17 @@ impl HiddenMarkovModel {
             .iter()
             .collect::<Vec<_>>()
             .chunks(n_hidden)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|x| x.iter().copied().collect::<Vec<_>>())
             .collect();
         let emission = reader
             .get_emission()?
             .iter()
             .collect::<Vec<_>>()
             .chunks(n_hidden)
+            .into_iter()
+            .map(|x| x.iter().copied().collect::<Vec<_>>())
             .collect();
 
         let chars = reader.get_chars()?;
@@ -101,31 +106,31 @@ impl HiddenMarkovModel {
         .context("Failed to create zstd encoder")?;
         let writer = writer.auto_finish();
         let mut msg = Builder::new_default();
-        let builder = msg.init_root::<hidden_markov_model::Builder>();
+        let mut builder = msg.init_root::<hidden_markov_model::Builder>();
 
-        let mut initial = builder.init_initial(self.initial.len() as u32);
+        let mut initial = builder.reborrow().init_initial(self.initial.len() as u32);
         for (i, x) in self.initial.iter().enumerate() {
             initial.set(i as u32, *x);
         }
 
-        let mut transition = builder.init_transition(self.n_hidden * self.n_hidden as u32);
+        let mut transition = builder.reborrow().init_transition((self.n_hidden * self.n_hidden) as u32);
         for (i, x) in self.transition.iter().enumerate() {
             for (j, y) in x.iter().enumerate() {
                 transition.set(i as u32 * self.n_hidden as u32 + j as u32, *y);
             }
         }
 
-        let mut emission = builder.init_emission(self.n_hidden * self.n_observed as u32);
+        let mut emission = builder.reborrow().init_emission((self.n_hidden * self.n_observed) as u32);
         for (i, x) in self.emission.iter().enumerate() {
             for (j, y) in x.iter().enumerate() {
                 emission.set(i as u32 * self.n_observed as u32 + j as u32, *y);
             }
         }
 
-        let mut chars = builder.init_chars(self.id2char.len() as u32);
+        let mut chars = builder.reborrow().init_chars(self.id2char.len() as u32);
         for (i, (id, c)) in self.id2char.iter().enumerate() {
-            let mut char = chars.reborrow().get(i as u32)?;
-            char.set_id(*id as u32);
+            let mut char = chars.reborrow().get(i as u32);
+            char.set_id(*id as u64);
             char.set_code(*c as u32);
         }
 
