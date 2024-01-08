@@ -241,6 +241,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sekken-make-training-data"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bzip2",
+ "sekken-core",
+ "utf8-read",
+]
+
+[[package]]
 name = "sekken-model"
 version = "0.1.0"
 dependencies = [

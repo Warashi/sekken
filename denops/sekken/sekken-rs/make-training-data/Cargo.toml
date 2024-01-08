@@ -1,0 +1,10 @@
+[package]
+name = "sekken-make-training-data"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.75"
+bzip2 = "0.4.4"
+sekken-core = { path = "../core" }
+utf8-read = "0.4.0"
