@@ -11,8 +11,8 @@ use crate::hmm_capnp::hidden_markov_model;
 
 #[derive(Default, Serialize, Deserialize, Debug, Clone)]
 pub struct HiddenMarkovModel {
-    n_hidden: usize,
-    n_observed: usize,
+    pub n_hidden: usize,
+    pub n_observed: usize,
 
     pub initial: Vec<f64>,
     pub transition: Vec<Vec<f64>>,
