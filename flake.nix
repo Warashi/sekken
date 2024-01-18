@@ -35,6 +35,8 @@
               cargo-edit
               wasm-bindgen-cli
               wasm-pack
+
+              python310
             ];
           };
       }
