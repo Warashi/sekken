@@ -9,12 +9,13 @@ use anyhow::Result;
 use rayon::prelude::*;
 
 use sekken_core::util::is_japanese;
+use sekken_model::normal::NormalModel;
 
 mod wikijson;
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    let dir = args[1].clone() + "/*/wiki_*";
+    let dir = args[2].clone() + "/*/wiki_*";
 
     let paths = glob(dir.as_str())?;
     let paths = paths.par_bridge().map(|path| path.unwrap());
@@ -30,14 +31,28 @@ fn main() -> Result<()> {
             let text = serde_json::from_str::<wikijson::WikiJSON>(&line.unwrap())
                 .unwrap()
                 .text;
-            let text = text.chars().filter(|c| is_japanese(*c)).collect::<Vec<char>>();
+            let text = text
+                .chars()
+                .filter(|c| is_japanese(*c))
+                .collect::<Vec<char>>();
 
             text
         })
         .filter(|text| text.len() > 0)
         .collect::<Vec<_>>();
 
-    println!("{}", texts.len());
+    let mut model = NormalModel::new();
+
+    for text in texts {
+        text.iter()
+            .zip(text.iter().skip(1))
+            .for_each(|(c1, c2)| model.increment_bigram_cost(*c1, *c2));
+    }
+
+    let model = model.compact();
+
+    let mut output = std::fs::File::create(args[1].clone())?;
+    model.save(&mut output)?;
 
     Ok(())
 }
