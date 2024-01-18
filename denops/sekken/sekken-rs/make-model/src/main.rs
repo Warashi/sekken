@@ -1,42 +1,36 @@
-use std::io::{BufWriter, Write};
+use std::env;
+use std::io::BufRead;
 
-use anyhow::{Context, Result};
-use bzip2::read::MultiBzDecoder;
+use anyhow::Context as _;
+use anyhow::Result;
+use glob::glob;
 
-use sekken_core::util::is_kanji;
-use sekken_model::NormalModel;
+mod wikijson;
 
 fn main() -> Result<()> {
-    let input = std::io::stdin();
-    let input = std::io::BufReader::new(input);
-    let input = MultiBzDecoder::new(input);
-    let mut input = utf8_read::Reader::new(input);
-    let mut pre: Option<char> = None;
+    let args: Vec<String> = env::args().collect();
+    let dir = args[1].clone() + "/*/wiki_*";
 
-    let mut model = NormalModel::new();
+    let paths = glob(dir.as_str())?;
+    let paths = paths
+        .map(|path| path.context("Failed to read path"))
+        .collect::<Result<Vec<_>>>()?;
+    let paths = paths.into_iter().filter(|path| path.is_file());
+    let files = paths
+        .map(|path| std::fs::File::open(path).context("Failed to open file"))
+        .collect::<Result<Vec<_>>>()?;
+    let lines = files
+        .into_iter()
+        .flat_map(|file| std::io::BufReader::new(file).lines());
+    let texts = lines.map(|line| {
+        serde_json::from_str::<wikijson::WikiJSON>(&line.unwrap())
+            .unwrap()
+            .text
+    });
 
-    for ch in input.into_iter().flatten() {
-        if !is_kanji(ch) {
-            continue;
-        }
-
-        if let Some(p) = pre {
-            model.increment_bigram_cost(p, ch);
-        }
-
-        pre = Some(ch);
+    for text in texts {
+        println!("{}", text);
     }
-    let model = model;
-
-    let output = std::io::stdout();
-    let mut output = BufWriter::new(output);
-
-    model
-        .compact()
-        .save(&mut output)
-        .context("Failed to save model")?;
-
-    output.flush().context("Failed to flush output")?;
 
     Ok(())
 }
