@@ -355,6 +355,7 @@ dependencies = [
  "bzip2",
  "glob",
  "ndarray",
+ "rayon",
  "sekken-core",
  "sekken-model",
  "serde",
