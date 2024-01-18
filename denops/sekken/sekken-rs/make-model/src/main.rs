@@ -38,7 +38,7 @@ fn main() -> Result<()> {
 
             text
         })
-        .filter(|text| text.len() > 0)
+        .filter(|text| !text.is_empty())
         .collect::<Vec<_>>();
 
     let mut model = NormalModel::new();

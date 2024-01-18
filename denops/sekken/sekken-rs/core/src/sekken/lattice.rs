@@ -10,14 +10,20 @@ use sekken_model::compact::CompactModel;
 pub struct Entry {
     head: Rc<RefCell<Node<char>>>,
     tail: Rc<RefCell<Node<char>>>,
+    skip_next: bool,
 }
 
 impl Entry {
     pub fn new(
         head: Rc<RefCell<Node<char>>>,
         tail: Rc<RefCell<Node<char>>>,
+        skip_next: bool,
     ) -> Entry {
-        Entry { head, tail,  }
+        Entry {
+            head,
+            tail,
+            skip_next,
+        }
     }
 }
 
@@ -38,14 +44,33 @@ impl Lattice {
 
         let mut entries = self.entries.clone();
         let last = Node::new('\0', 0);
-        entries.push(vec![Entry::new(last.clone(), last.clone())]);
+        entries.push(vec![Entry::new(last.clone(), last.clone(), false)]);
 
         let mut left = entries.first().context("entries is empty")?;
+        let mut skipped = Vec::<Entry>::new();
         for right in entries.iter().skip(1) {
-            for left_entry in left {
+            for left_entry in skipped.iter() {
                 for right_entry in right {
-                    let score =
-                        model.get_bigram_cost(left_entry.tail.borrow().value, right_entry.head.borrow().value);
+                    let score = model.get_bigram_cost(
+                        left_entry.tail.borrow().value,
+                        right_entry.head.borrow().value,
+                    );
+                    let mut right_node = right_entry.head.borrow_mut();
+                    right_node.add_left(left_entry.tail.clone(), score);
+                }
+            }
+            skipped.clear();
+
+            for left_entry in left {
+                if left_entry.skip_next {
+                    skipped.push(left_entry.clone());
+                    continue;
+                }
+                for right_entry in right {
+                    let score = model.get_bigram_cost(
+                        left_entry.tail.borrow().value,
+                        right_entry.head.borrow().value,
+                    );
                     let mut right_node = right_entry.head.borrow_mut();
                     right_node.add_left(left_entry.tail.clone(), score);
                 }
