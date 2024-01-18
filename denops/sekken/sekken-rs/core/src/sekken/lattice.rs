@@ -8,18 +8,16 @@ use sekken_model::compact::CompactModel;
 
 #[derive(Clone, Debug)]
 pub struct Entry {
-    head_kanji: char,
-    tail_kanji: char,
-    node: Rc<RefCell<Node<String>>>,
+    head: Rc<RefCell<Node<char>>>,
+    tail: Rc<RefCell<Node<char>>>,
 }
 
 impl Entry {
-    pub fn new(node: Rc<RefCell<Node<String>>>, head_kanji: char, tail_kanji: char) -> Entry {
-        Entry {
-            head_kanji,
-            tail_kanji,
-            node,
-        }
+    pub fn new(
+        head: Rc<RefCell<Node<char>>>,
+        tail: Rc<RefCell<Node<char>>>,
+    ) -> Entry {
+        Entry { head, tail,  }
     }
 }
 
@@ -39,16 +37,17 @@ impl Lattice {
         }
 
         let mut entries = self.entries.clone();
-        let last = Node::new(String::new(), 0);
-        entries.push(vec![Entry::new(last.clone(), '\0', '\0')]);
+        let last = Node::new('\0', 0);
+        entries.push(vec![Entry::new(last.clone(), last.clone())]);
 
         let mut left = entries.first().context("entries is empty")?;
         for right in entries.iter().skip(1) {
             for left_entry in left {
                 for right_entry in right {
-                    let score = model.get_bigram_cost(left_entry.tail_kanji, right_entry.head_kanji);
-                    let mut right_node = right_entry.node.borrow_mut();
-                    right_node.add_left(left_entry.node.clone(), score);
+                    let score =
+                        model.get_bigram_cost(left_entry.tail.borrow().value, right_entry.head.borrow().value);
+                    let mut right_node = right_entry.head.borrow_mut();
+                    right_node.add_left(left_entry.tail.clone(), score);
                 }
             }
 
@@ -62,7 +61,7 @@ impl Lattice {
 
         Ok(result
             .iter()
-            .map(|((score, _), path)| (*score, path.join("")))
+            .map(|((score, _), path)| (*score, path.iter().collect::<String>()))
             .collect())
     }
 }

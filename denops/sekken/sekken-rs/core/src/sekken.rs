@@ -6,7 +6,7 @@ use sekken_model::compact::CompactModel;
 
 use crate::dictionary::SKKDictionary;
 use crate::kana::KanaTable;
-use crate::util::is_kanji;
+use crate::util::is_japanese;
 use crate::viterbi::Node;
 
 mod lattice;
@@ -181,6 +181,8 @@ impl Sekken {
     }
 
     fn make_lattice(&self, words: Vec<String>) -> Result<lattice::Lattice> {
+        let model = self.model.borrow();
+        let model = model.as_ref().context("model is not set")?;
         let entries = words
             .clone()
             .into_iter()
@@ -191,12 +193,22 @@ impl Sekken {
             .map(|s| {
                 s.into_iter()
                     .map(|(i, s)| {
-                        let kanjis = s.chars().filter(|c| is_kanji(*c)).collect::<Vec<char>>();
-                        if kanjis.is_empty() {
-                            return lattice::Entry::new(Node::new(s, i as u8), '\0', '\0');
+                        let entries = s.chars();
+                        let entries = entries.map(|c| Node::new(c, i as u8)).collect::<Vec<_>>();
+                        entries
+                            .iter()
+                            .zip(entries.iter().skip(1))
+                            .for_each(|(a, b)| {
+                                let score =
+                                    model.get_bigram_cost(a.borrow().value, b.borrow().value);
+                                b.borrow_mut().add_left(a.clone(), score);
+                            });
+                        if entries.is_empty() {
+                            let node = Node::new('\0', i as u8);
+                            return lattice::Entry::new(node.clone(), node.clone());
                         }
-                        let (head_kanji, tail_kanji) = (kanjis[0], kanjis[kanjis.len() - 1]);
-                        lattice::Entry::new(Node::new(s, i as u8), head_kanji, tail_kanji)
+                        let (head, tail) = (entries[0].clone(), entries[entries.len() - 1].clone());
+                        lattice::Entry::new(head, tail)
                     })
                     .collect::<Vec<_>>()
             })

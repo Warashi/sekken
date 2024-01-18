@@ -11,7 +11,7 @@ pub struct Node<T>
 where
     T: Clone + Eq + Ord,
 {
-    value: T,
+    pub value: T,
 
     score: u8,
     left: Vec<Edge<T>>,
