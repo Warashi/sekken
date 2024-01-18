@@ -217,41 +217,48 @@ impl Sekken {
 
     fn get_candidates(&self, kanji: String, okuri: String) -> Vec<(usize, String, bool)> {
         let (kanji, okuri) = (kanji.to_lowercase(), okuri.to_lowercase());
+        let okuri_nasi = self
+            .okuri_nasi_henkan(kanji.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .enumerate()
+            .map(|(i, s)| (i, s, false));
+
+        let kana = self
+            .kana_henkan(kanji.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .enumerate()
+            .map(|(i, s)| (i, s, false));
+        let roman = self
+            .roman_henkan(kanji.clone())
+            .into_iter()
+            .enumerate()
+            .map(|(i, s)| (i, s, false));
+        let zenkaku = self
+            .zenkaku_henkan(kanji.clone())
+            .map_or(Vec::new(), |s| vec![s])
+            .into_iter()
+            .enumerate()
+            .map(|(i, s)| (i, s, false));
+
         if okuri.is_empty() {
-            self.okuri_nasi_henkan(kanji.clone())
-                .unwrap_or_default()
-                .into_iter()
-                .chain(self.kana_henkan(kanji.clone()).unwrap_or_default())
-                .chain(self.roman_henkan(kanji.clone()))
-                .chain(
-                    self.zenkaku_henkan(kanji.clone())
-                        .map_or(Vec::new(), |s| vec![s]),
-                )
-                .enumerate()
-                .map(|(i, s)| (i, s, false))
-                .collect()
+            okuri_nasi.chain(kana).chain(roman).chain(zenkaku).collect()
         } else {
             let kanji = self.hira_kana_henkan(kanji.to_string()).unwrap_or_default();
             let okuri = okuri.to_lowercase();
             let okuri_ari = self.okuri_ari_henkan(kanji.to_string(), okuri.to_string());
-            let okuri_nashi = self
-                .okuri_nasi_henkan(kanji.to_string())
-                .unwrap_or_default()
-                .into_iter()
-                .chain(self.kana_henkan(kanji.clone()).unwrap_or_default())
-                .chain(self.roman_henkan(kanji.clone()))
-                .chain(
-                    self.zenkaku_henkan(kanji.clone())
-                        .map_or(Vec::new(), |s| vec![s]),
-                )
-                .enumerate()
-                .map(|(i, s)| (i, s, false));
-            okuri_ari
+            let okuri_ari = okuri_ari
                 .unwrap_or_default()
                 .into_iter()
                 .enumerate()
-                .map(|(i, s)| (i, s, true))
-                .chain(okuri_nashi)
+                .map(|(i, s)| (i, s, true));
+
+            okuri_nasi
+                .chain(kana)
+                .chain(roman)
+                .chain(zenkaku)
+                .chain(okuri_ari)
                 .collect()
         }
     }
