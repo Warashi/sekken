@@ -8,6 +8,8 @@ use anyhow::Result;
 
 use rayon::prelude::*;
 
+use sekken_core::util::is_japanese;
+
 mod wikijson;
 
 fn main() -> Result<()> {
@@ -25,10 +27,14 @@ fn main() -> Result<()> {
     let lines = files.flat_map(|file| std::io::BufReader::new(file).lines().par_bridge());
     let texts = lines
         .map(|line| {
-            serde_json::from_str::<wikijson::WikiJSON>(&line.unwrap())
+            let text = serde_json::from_str::<wikijson::WikiJSON>(&line.unwrap())
                 .unwrap()
-                .text
+                .text;
+            let text = text.chars().filter(|c| is_japanese(*c)).collect::<Vec<char>>();
+
+            text
         })
+        .filter(|text| text.len() > 0)
         .collect::<Vec<_>>();
 
     println!("{}", texts.len());
