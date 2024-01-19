@@ -190,9 +190,9 @@ impl Sekken {
             .map(|(_, (kanji, kana))| self.get_candidates(kanji.clone(), kana.clone()))
             .map(|s| {
                 s.into_iter()
-                    .map(|(_i, s, skip)| {
+                    .map(|(i, s, skip)| {
                         let entries = s.chars();
-                        let entries = entries.map(|c| Node::new(c, 0)).collect::<Vec<_>>();
+                        let entries = entries.map(|c| Node::new(c, i as u8)).collect::<Vec<_>>();
                         entries
                             .iter()
                             .zip(entries.iter().skip(1))
@@ -202,7 +202,7 @@ impl Sekken {
                                 b.borrow_mut().add_left(a.clone(), score);
                             });
                         if entries.is_empty() {
-                            let node = Node::new('\0', 0);
+                            let node = Node::new('\0', i as u8);
                             return lattice::Entry::new(node.clone(), node.clone(), skip);
                         }
                         let (head, tail) = (entries[0].clone(), entries[entries.len() - 1].clone());
