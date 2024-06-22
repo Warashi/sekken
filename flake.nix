@@ -27,6 +27,8 @@
         devShells.default = with pkgs;
           mkShell {
             buildInputs = [
+              pkg-config
+              libiconv
               rust-toolchain
 
               binaryen
