@@ -238,6 +238,7 @@ name = "sekken-dict"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "sekken-lattice",
 ]
 
 [[package]]

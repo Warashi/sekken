@@ -5,3 +5,4 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.75"
+sekken-lattice = { path = "../lattice" }
