@@ -36,7 +36,7 @@ pub trait Segmenter {
 }
 
 pub trait Converter {
-    fn convert(&self, word: &String) -> String;
+    fn convert(&self, word: &String) -> Vec<String>;
 }
 
 pub trait Dict {
@@ -96,8 +96,12 @@ impl Lattice {
     ) -> Result<()> {
         let segments = segmenter.segment(&self.sentence);
 
-        let nodes = segments.iter().map(|n| {
-            return Node::new(n.start, n.end, converter.convert(&n.surface));
+        let nodes = segments.iter().flat_map(|n| {
+            return converter
+                .convert(&n.surface.to_string())
+                .iter()
+                .map(|s| Node::new(n.start, n.end, s.to_string()))
+                .collect::<Vec<_>>();
         });
 
         for n in nodes {
