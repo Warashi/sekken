@@ -1,12 +1,14 @@
 use std::collections::BTreeMap;
 
 #[cfg(feature = "load")]
-use std::io::Read;
 use capnp::message::ReaderOptions;
+#[cfg(feature = "load")]
+use std::io::Read;
 
 #[cfg(feature = "save")]
-use std::io::Write;
 use capnp::message::Builder;
+#[cfg(feature = "save")]
+use std::io::Write;
 
 use anyhow::Context as _;
 use anyhow::Result;
@@ -58,7 +60,10 @@ impl CompactModel {
         });
         let bigram_cost = bigram_cost.collect();
 
-        Ok(CompactModel { unigram_cost, bigram_cost })
+        Ok(CompactModel {
+            unigram_cost,
+            bigram_cost,
+        })
     }
 
     #[cfg(feature = "save")]

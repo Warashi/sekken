@@ -13,7 +13,6 @@ fn main() -> Result<()> {
     let mut model = NormalModel::new();
 
     for ch in input.into_iter().flatten() {
-
         model.increment_unigram_cost(ch);
 
         if let Some(p) = pre {
