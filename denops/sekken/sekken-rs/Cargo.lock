@@ -216,6 +216,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sekken-make-model"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sekken-model",
+ "utf8-read",
+]
+
+[[package]]
 name = "sekken-model"
 version = "0.1.0"
 dependencies = [
@@ -314,6 +323,12 @@ name = "unicode-ident"
 version = "1.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3354b9ac3fae1ff6755cb6db53683adb661634f67557942dea4facebec0fee4b"
+
+[[package]]
+name = "utf8-read"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb566ac06e11c3f13872ebcb0e72ea5f97f0f65a16f45048d0adea21edc28018"
 
 [[package]]
 name = "wasm-bindgen"
