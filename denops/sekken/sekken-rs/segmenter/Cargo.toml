@@ -5,3 +5,5 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.75"
+itertools = "0.13.0"
+sekken-lattice = { path = "../lattice" }

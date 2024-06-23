@@ -50,7 +50,7 @@ pub trait CostManager {
 
 impl Lattice {
     pub fn new(sentence: String) -> Result<Self> {
-        let len = sentence.len();
+        let len = sentence.chars().count();
         let begin_nodes = vec![Vec::new(); len + 1];
         let end_nodes = vec![Vec::new(); len + 1];
         let all_nodes = Vec::new();
@@ -113,7 +113,7 @@ impl Lattice {
         let mut bos = self.end_nodes[0][0].try_borrow_mut()?;
         bos.min_cost = Some(0);
 
-        for i in 0..=self.sentence.len() {
+        for i in 0..=self.sentence.chars().count() {
             for rnode in &self.begin_nodes[i] {
                 let mut rnode = rnode.try_borrow_mut()?;
                 rnode.min_cost = Some(i128::MAX);
@@ -150,7 +150,7 @@ impl Lattice {
             return Ok(());
         };
 
-        let eos = self.begin_nodes[self.sentence.len()][0].clone();
+        let eos = self.begin_nodes[self.sentence.chars().count()][0].clone();
 
         let mut node = eos;
         while let Some(n) = prev(node.clone()) {
