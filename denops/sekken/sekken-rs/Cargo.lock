@@ -348,6 +348,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sekken-lattice"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
 name = "sekken-make-model"
 version = "0.1.0"
 dependencies = [

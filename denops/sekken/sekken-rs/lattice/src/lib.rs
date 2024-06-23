@@ -1,14 +1,12 @@
-#![allow(dead_code)]
-
 use anyhow::Result;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 #[derive(Clone)]
-struct Node {
-    start: usize,
-    end: usize,
-    surface: String,
+pub struct Node {
+    pub start: usize,
+    pub end: usize,
+    pub surface: String,
 
     min_cost: Option<i128>,
     min_prev: Option<Rc<RefCell<Node>>>,
@@ -26,26 +24,26 @@ impl Node {
     }
 }
 
-struct Lattice {
+pub struct Lattice {
     sentence: String,
     begin_nodes: Vec<Vec<Rc<RefCell<Node>>>>,
     end_nodes: Vec<Vec<Rc<RefCell<Node>>>>,
     all_nodes: Vec<Rc<RefCell<Node>>>,
 }
 
-trait Segmenter {
+pub trait Segmenter {
     fn segment(&self, sentence: &String) -> Vec<Node>;
 }
 
-trait Converter {
+pub trait Converter {
     fn convert(&self, word: &String) -> String;
 }
 
-trait Dict {
+pub trait Dict {
     fn get(&self, word: &String) -> Vec<String>;
 }
 
-trait CostManager {
+pub trait CostManager {
     fn emission_cost(&self, node: &Node) -> i128;
     fn transition_cost(&self, left: &Node, right: &Node) -> i128;
 }
@@ -138,7 +136,7 @@ impl Lattice {
 
         let mut results = Vec::new();
 
-        fn next(node: Rc<RefCell<Node>>) -> Option<Rc<RefCell<Node>>> {
+        fn prev(node: Rc<RefCell<Node>>) -> Option<Rc<RefCell<Node>>> {
             let node = node.clone();
             let Ok(node) = node.try_borrow() else {
                 return None;
@@ -152,8 +150,10 @@ impl Lattice {
             return Ok(());
         };
 
-        let mut node = self.begin_nodes[self.sentence.len()][0].clone();
-        while let Some(n) = next(node.clone()) {
+        let eos = self.begin_nodes[self.sentence.len()][0].clone();
+
+        let mut node = eos;
+        while let Some(n) = prev(node.clone()) {
             push(n.clone())?;
             node = n;
         }
