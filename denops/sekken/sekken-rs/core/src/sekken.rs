@@ -9,6 +9,7 @@ use crate::kana::KanaTable;
 use crate::viterbi::Node;
 
 mod lattice;
+mod lattice2;
 
 pub struct Sekken {
     kana_table: RefCell<Option<KanaTable>>,
