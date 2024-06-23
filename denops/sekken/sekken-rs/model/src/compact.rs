@@ -42,15 +42,23 @@ impl CompactModel {
             .get_root::<compact_model::Reader>()
             .context("Failed to get root")?;
 
-        let entries = reader.get_entries().context("Failed to get entries")?;
-        let entries = entries.iter().map(|entry| {
+        let unigram_cost = reader.get_unigram().context("Failed to get entries")?;
+        let unigram_cost = unigram_cost.iter().map(|entry| {
             let key = entry.get_key();
             let cost = entry.get_value();
             (key, cost)
         });
-        let bigram_cost = entries.collect();
+        let unigram_cost = unigram_cost.collect();
 
-        Ok(CompactModel { bigram_cost })
+        let bigram_cost = reader.get_bigram().context("Failed to get entries")?;
+        let bigram_cost = bigram_cost.iter().map(|entry| {
+            let key = entry.get_key();
+            let cost = entry.get_value();
+            (key, cost)
+        });
+        let bigram_cost = bigram_cost.collect();
+
+        Ok(CompactModel { unigram_cost, bigram_cost })
     }
 
     #[cfg(feature = "save")]
@@ -63,17 +71,35 @@ impl CompactModel {
                 .unwrap_or(zstd::DEFAULT_COMPRESSION_LEVEL),
         )
         .context("Failed to create zstd encoder")?;
-        let writer = writer.auto_finish();
+        let mut writer = writer.auto_finish();
         let mut msg = Builder::new_default();
-        let entries = msg.init_root::<compact_model::Builder>();
-        let mut entries_list = entries.init_entries(self.bigram_cost.len() as u32);
-        for (i, (key, cost)) in self.bigram_cost.iter().enumerate() {
-            let mut entry = entries_list.reborrow().get(i as u32);
+        let root = msg.init_root::<compact_model::Builder>();
+        let mut unigram_list = root.init_unigram(self.unigram_cost.len() as u32);
+        for (i, (key, cost)) in self.unigram_cost.iter().enumerate() {
+            let mut entry = unigram_list.reborrow().get(i as u32);
             entry.set_key(*key);
             entry.set_value(*cost);
         }
-        serialize::write_message(writer, &msg).context("Failed to write message")?;
+        serialize::write_message(&mut writer, &msg).context("Failed to write message")?;
+
+        let root = msg.init_root::<compact_model::Builder>();
+        let mut bigram_list = root.init_bigram(self.bigram_cost.len() as u32);
+        for (i, (key, cost)) in self.bigram_cost.iter().enumerate() {
+            let mut entry = bigram_list.reborrow().get(i as u32);
+            entry.set_key(*key);
+            entry.set_value(*cost);
+        }
+        serialize::write_message(&mut writer, &msg).context("Failed to write message")?;
+
         Ok(())
+    }
+
+    pub fn get_unigram_cost(&self, c: char) -> u8 {
+        *self.unigram_cost.get(&(c as u32)).unwrap_or(&255)
+    }
+
+    pub(crate) fn set_unigram_cost(&mut self, key: u32, cost: u8) {
+        self.unigram_cost.insert(key, cost);
     }
 
     pub fn get_bigram_cost(&self, c1: char, c2: char) -> u8 {

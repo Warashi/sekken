@@ -32,6 +32,11 @@ impl NormalModel {
     pub fn compact(&self) -> CompactModel {
         let mut compact = CompactModel::new();
 
+        for (key, cost) in self.unigram_cost.iter() {
+            let cost = (1 + cost).ilog2() as u8;
+            compact.set_unigram_cost(*key, 255 - cost);
+        }
+
         for (key, cost) in self.bigram_cost.iter() {
             let cost = (1 + cost).ilog2() as u8;
             compact.set_bigram_cost(*key, 255 - cost);
