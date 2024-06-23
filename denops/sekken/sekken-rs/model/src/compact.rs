@@ -1,30 +1,29 @@
 use std::collections::BTreeMap;
-use std::io::{Read, Write};
+
+#[cfg(feature = "load")]
+use std::io::Read;
+use capnp::message::ReaderOptions;
+
+#[cfg(feature = "save")]
+use std::io::Write;
+use capnp::message::Builder;
 
 use anyhow::Context as _;
 use anyhow::Result;
-use capnp::message::{Builder, ReaderOptions};
 use capnp::serialize;
 use serde::{Deserialize, Serialize};
 
 use crate::compact_capnp::compact_model;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct CompactModel {
+    unigram_cost: BTreeMap<u32, u8>,
     bigram_cost: BTreeMap<u64, u8>,
-}
-
-impl Default for CompactModel {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl CompactModel {
     pub fn new() -> Self {
-        Self {
-            bigram_cost: BTreeMap::new(),
-        }
+        return Self::default();
     }
 
     #[cfg(feature = "load")]

@@ -4,22 +4,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::compact::CompactModel;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct NormalModel {
+    unigram_cost: BTreeMap<u32, u128>,
     bigram_cost: BTreeMap<u64, u128>,
-}
-
-impl Default for NormalModel {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl NormalModel {
     pub fn new() -> Self {
-        Self {
-            bigram_cost: BTreeMap::new(),
-        }
+        return Self::default();
+    }
+
+    pub fn increment_unigram_cost(&mut self, c: char) {
+        self.unigram_cost
+            .entry(c as u32)
+            .and_modify(|e| *e += 1)
+            .or_insert(1);
     }
 
     pub fn increment_bigram_cost(&mut self, c1: char, c2: char) {
