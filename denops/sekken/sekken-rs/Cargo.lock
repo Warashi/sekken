@@ -279,6 +279,7 @@ dependencies = [
  "capnp",
  "rmp-serde",
  "ruzstd",
+ "sekken-lattice",
  "serde",
  "zstd",
 ]

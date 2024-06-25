@@ -23,6 +23,44 @@ pub struct CompactModel {
     bigram_cost: BTreeMap<u64, u8>,
 }
 
+impl sekken_lattice::CostManager for CompactModel {
+    fn emission_cost(&self, node: &sekken_lattice::Node) -> i128 {
+        let unigram_cost: i128 = node
+            .surface
+            .clone()
+            .chars()
+            .map(|c| *(self.unigram_cost.get(&(c as u32)).unwrap_or(&255)) as i128)
+            .sum();
+        let bigram_cost: i128 = node
+            .surface
+            .clone()
+            .chars()
+            .zip(node.surface.clone().chars().skip(1))
+            .map(|(l, r)| {
+                *(self
+                    .bigram_cost
+                    .get(&((l as u64) << 32 + (r as u64)))
+                    .unwrap_or(&255)) as i128
+            })
+            .sum();
+
+        return unigram_cost + bigram_cost;
+    }
+
+    fn transition_cost(&self, left: &sekken_lattice::Node, right: &sekken_lattice::Node) -> i128 {
+        let Some(left_tail) = left.surface.clone().chars().last() else {
+            return 255;
+        };
+        let Some(right_head) = right.surface.clone().chars().next() else {
+            return 255;
+        };
+        return *(self
+            .bigram_cost
+            .get(&((left_tail as u64) << 32 + (right_head as u64)))
+            .unwrap_or(&255)) as i128;
+    }
+}
+
 impl CompactModel {
     pub fn new() -> Self {
         return Self::default();

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+sekken-lattice = { path = "../lattice" }
 anyhow = "1.0.75"
 capnp = "0.18.9"
 rmp-serde = "1.1.2"
