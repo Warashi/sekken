@@ -29,19 +29,14 @@ impl sekken_lattice::CostManager for CompactModel {
             .surface
             .clone()
             .chars()
-            .map(|c| *(self.unigram_cost.get(&(c as u32)).unwrap_or(&255)) as i128)
+            .map(|c| self.get_unigram_cost(c) as i128)
             .sum();
         let bigram_cost: i128 = node
             .surface
             .clone()
             .chars()
             .zip(node.surface.clone().chars().skip(1))
-            .map(|(l, r)| {
-                *(self
-                    .bigram_cost
-                    .get(&((l as u64) << 32 + (r as u64)))
-                    .unwrap_or(&255)) as i128
-            })
+            .map(|(l, r)| self.get_bigram_cost(l, r) as i128)
             .sum();
 
         return unigram_cost + bigram_cost;
@@ -56,7 +51,7 @@ impl sekken_lattice::CostManager for CompactModel {
         };
         return *(self
             .bigram_cost
-            .get(&((left_tail as u64) << 32 + (right_head as u64)))
+            .get(&((left_tail as u64) << 32 | (right_head as u64)))
             .unwrap_or(&255)) as i128;
     }
 }

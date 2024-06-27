@@ -1,6 +1,8 @@
-use anyhow::Result;
 use std::cell::RefCell;
 use std::rc::Rc;
+
+use anyhow::Context as _;
+use anyhow::Result;
 
 #[derive(Clone, Debug)]
 pub struct Node {
@@ -97,7 +99,7 @@ impl Lattice {
     ) -> Result<()> {
         let segments = segmenter.segment(&self.sentence);
 
-        let nodes = segments.iter().flat_map(|n| {
+        let nodes = segments.iter().filter(|n| n.start != n.end).flat_map(|n| {
             return converter
                 .convert(&n.surface.to_string())
                 .iter()
@@ -115,19 +117,28 @@ impl Lattice {
     }
 
     pub fn viterbi(self: &mut Self, manager: impl CostManager) -> Result<Vec<Node>> {
-        let mut bos = self.end_nodes[0][0].try_borrow_mut()?;
+        let mut bos = self.end_nodes[0][0]
+            .try_borrow_mut()
+            .context("try borrow mut bos")?;
         bos.min_cost = Some(0);
+        drop(bos);
 
         for i in 0..=self.sentence.chars().count() {
             for rnode in &self.begin_nodes[i] {
-                let mut rnode = rnode.try_borrow_mut()?;
+                let mut rnode = rnode.try_borrow_mut().context("try borrow mut rnode")?;
                 rnode.min_cost = Some(i128::MAX);
 
                 for lnode in &self.end_nodes[i] {
                     let lnodeb = lnode.clone();
-                    let lnodeb = lnodeb.try_borrow()?;
+                    let lnodeb = lnodeb.try_borrow().context("try borrow lnodeb")?;
 
-                    let cost = lnodeb.min_cost.unwrap()
+                    let current_cost = lnodeb.min_cost.unwrap();
+
+                    if current_cost == i128::MAX {
+                        unreachable!()
+                    }
+
+                    let cost = current_cost
                         + manager.transition_cost(&lnodeb, &rnode)
                         + manager.emission_cost(&rnode);
 
@@ -150,7 +161,7 @@ impl Lattice {
         }
 
         let mut push = |node: Rc<RefCell<Node>>| -> Result<()> {
-            let node = node.try_borrow()?;
+            let node = node.try_borrow().context("try borrow node")?;
             results.push(node.clone());
             return Ok(());
         };
@@ -159,7 +170,7 @@ impl Lattice {
 
         let mut node = eos;
         while let Some(n) = prev(node.clone()) {
-            push(n.clone())?;
+            push(n.clone()).context("push result")?;
             node = n;
         }
 

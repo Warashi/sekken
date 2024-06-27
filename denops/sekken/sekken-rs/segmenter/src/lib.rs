@@ -48,12 +48,12 @@ impl sekken_lattice::Segmenter for Segmenter {
                             .into_iter()
                             .map(|(b, e, s)| match e {
                                 Some(_) => (b, e, s),
-                                None => (b, Some(i + 1), s + &n.to_string()),
+                                None => (b, Some(i), s + &n.to_string()),
                             })
                             .collect();
                         let mut a = a;
                         tmp.append(&mut a);
-                        tmp.insert((i + 1, None, "".to_string()));
+                        tmp.insert((i, None, "".to_string()));
                     }
 
                     if sc.solo {
@@ -119,12 +119,12 @@ impl sekken_lattice::Segmenter for Segmenter {
                             .into_iter()
                             .map(|(b, e, s)| match e {
                                 Some(_) => (b, e, s),
-                                None => (b, Some(i + 1), s),
+                                None => (b, Some(i), s),
                             })
                             .collect();
                         let mut a = a;
                         tmp.append(&mut a);
-                        tmp.insert((i + 1, None, "".to_string()));
+                        tmp.insert((i, None, "".to_string()));
                     }
 
                     if sc.replace_okuri {
@@ -227,12 +227,12 @@ impl sekken_lattice::Segmenter for Segmenter {
                             .into_iter()
                             .map(|(b, e, s)| match e {
                                 Some(_) => (b, e, s),
-                                None => (b, Some(i + 1), s),
+                                None => (b, Some(i), s),
                             })
                             .collect();
                         let mut a = a;
                         tmp.append(&mut a);
-                        tmp.insert((i + 1, None, "".to_string()));
+                        tmp.insert((i, None, "".to_string()));
                     }
 
                     if sc.replace_okuri {
