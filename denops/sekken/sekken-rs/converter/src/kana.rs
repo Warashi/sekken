@@ -19,10 +19,14 @@ impl Default for KanaTable {
 
 impl sekken_lattice::Converter for KanaTable {
     fn convert(self: &Self, word: &String) -> Vec<String> {
-        return vec![
-            self.roman2kana(word.clone()),
-            self.roman2kana(word[0..word.len() - 1].to_string()),
-        ];
+        if word.len() > 1 {
+            return vec![
+                self.roman2kana(word.clone()),
+                self.roman2kana(word[0..word.len() - 1].to_string()),
+            ];
+        } else {
+            return vec![self.roman2kana(word.clone())];
+        }
     }
 }
 
