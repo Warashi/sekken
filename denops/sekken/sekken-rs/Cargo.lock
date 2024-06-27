@@ -226,6 +226,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1cf6437eb19a8f4a6cc0f7dca544973b0b78843adbfeb3683d1a94a0024a294"
 
 [[package]]
+name = "sekken-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "itertools",
+ "sekken-converter",
+ "sekken-dict",
+ "sekken-lattice",
+ "sekken-model",
+ "sekken-segmenter",
+]
+
+[[package]]
 name = "sekken-converter"
 version = "0.1.0"
 dependencies = [

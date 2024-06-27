@@ -1,0 +1,14 @@
+[package]
+name = "sekken-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.75"
+itertools = "0.13.0"
+
+sekken-converter = { path = "../converter" }
+sekken-lattice = { path = "../lattice" }
+sekken-model = { path = "../model" }
+sekken-segmenter = { path = "../segmenter" }
+sekken-dict = { path = "../dict" }
