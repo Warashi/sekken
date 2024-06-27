@@ -35,6 +35,7 @@ impl sekken_lattice::Segmenter for Segmenter {
             .enumerate()
         {
             match e {
+                // TODO: refactoring
                 Both(c, n) => {
                     let sc = self.chars.get(&c);
                     let sc = *sc.unwrap_or(&SegmentChar::default());
@@ -55,13 +56,6 @@ impl sekken_lattice::Segmenter for Segmenter {
                         tmp.insert((i + 1, None, "".to_string()));
                     }
 
-                    cur = tmp;
-                }
-                Left(c) => {
-                    let sc = self.chars.get(&c);
-                    let sc = *sc.unwrap_or(&SegmentChar::default());
-
-                    let mut tmp = BTreeSet::new();
                     if sc.solo {
                         let a: BTreeSet<_> = cur
                             .clone()
@@ -145,6 +139,127 @@ impl sekken_lattice::Segmenter for Segmenter {
                         let mut a = a;
                         tmp.append(&mut a);
                         tmp.insert((i, None, "".to_string()));
+                    }
+
+                    {
+                        let a: BTreeSet<_> = cur
+                            .clone()
+                            .into_iter()
+                            .map(|(b, e, s)| match e {
+                                Some(_) => (b, e, s),
+                                None => (b, None, s + &c.to_string()),
+                            })
+                            .collect();
+                        let mut a = a;
+                        tmp.append(&mut a);
+                    }
+
+                    cur = tmp;
+                }
+
+                // TODO: refactoring
+                Left(c) => {
+                    let sc = self.chars.get(&c);
+                    let sc = *sc.unwrap_or(&SegmentChar::default());
+
+                    let mut tmp = BTreeSet::new();
+
+                    if sc.solo {
+                        let a: BTreeSet<_> = cur
+                            .clone()
+                            .into_iter()
+                            .map(|(b, e, s)| match e {
+                                Some(_) => (b, e, s),
+                                None => (b, Some(i), s),
+                            })
+                            .collect();
+                        let mut a = a;
+                        tmp.append(&mut a);
+                        tmp.insert((i, Some(i + 1), c.to_string()));
+                        tmp.insert((i + 1, None, "".to_string()));
+                    }
+
+                    if sc.pre {
+                        let a: BTreeSet<_> = cur
+                            .clone()
+                            .into_iter()
+                            .map(|(b, e, s)| match e {
+                                Some(_) => (b, e, s),
+                                None => (b, Some(i), s),
+                            })
+                            .collect();
+                        let mut a = a;
+                        tmp.append(&mut a);
+                        tmp.insert((i, None, c.to_string()));
+                    }
+
+                    if sc.pre_okuri {
+                        let a: BTreeSet<_> = cur
+                            .clone()
+                            .into_iter()
+                            .map(|(b, e, s)| match e {
+                                Some(_) => (b, e, s),
+                                None => (b, Some(i), s + &c.to_string()),
+                            })
+                            .collect();
+                        let mut a = a;
+                        tmp.append(&mut a);
+                        tmp.insert((i, None, c.to_string()));
+                    }
+
+                    if sc.post {
+                        let a: BTreeSet<_> = cur
+                            .clone()
+                            .into_iter()
+                            .map(|(b, e, s)| match e {
+                                Some(_) => (b, e, s),
+                                None => (b, Some(i + 1), s + &c.to_string()),
+                            })
+                            .collect();
+                        let mut a = a;
+                        tmp.append(&mut a);
+                        tmp.insert((i + 1, None, "".to_string()));
+                    }
+
+                    if sc.replace {
+                        let a: BTreeSet<_> = cur
+                            .clone()
+                            .into_iter()
+                            .map(|(b, e, s)| match e {
+                                Some(_) => (b, e, s),
+                                None => (b, Some(i + 1), s),
+                            })
+                            .collect();
+                        let mut a = a;
+                        tmp.append(&mut a);
+                        tmp.insert((i + 1, None, "".to_string()));
+                    }
+
+                    if sc.replace_okuri {
+                        let a: BTreeSet<_> = cur
+                            .clone()
+                            .into_iter()
+                            .map(|(b, e, s)| match e {
+                                Some(_) => (b, e, s),
+                                None => (b, Some(i), s),
+                            })
+                            .collect();
+                        let mut a = a;
+                        tmp.append(&mut a);
+                        tmp.insert((i, None, "".to_string()));
+                    }
+
+                    {
+                        let a: BTreeSet<_> = cur
+                            .clone()
+                            .into_iter()
+                            .map(|(b, e, s)| match e {
+                                Some(_) => (b, e, s),
+                                None => (b, None, s + &c.to_string()),
+                            })
+                            .collect();
+                        let mut a = a;
+                        tmp.append(&mut a);
                     }
 
                     cur = tmp;
