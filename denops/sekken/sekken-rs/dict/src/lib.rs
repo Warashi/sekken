@@ -13,7 +13,12 @@ pub struct Dict {
 
 impl sekken_lattice::Dict for Dict {
     fn get(self: &Self, word: &String) -> Vec<String> {
-        return self.inner.get(word).unwrap_or(&Vec::new()).clone();
+        let mut out = self.inner.get(word).unwrap_or(&Vec::new()).clone();
+        // workaround
+        // TODO: separate dict for identity, katakana
+        // TODO: how to add alphabet?
+        out.push(word.clone());
+        return out;
     }
 }
 

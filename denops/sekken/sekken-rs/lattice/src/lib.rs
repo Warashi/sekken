@@ -10,6 +10,8 @@ pub struct Node {
     pub end: usize,
     pub surface: String,
 
+    // TODO: add middle layer information
+
     min_cost: Option<i128>,
     min_prev: Option<Rc<RefCell<Node>>>,
 }

@@ -10,7 +10,8 @@ pub struct Segmenter {
 impl Default for Segmenter {
     fn default() -> Self {
         let small = ('a'..='z').map(|c| (c, SegmentChar::continuous()));
-        let large = ('A'..='Z').map(|c| (c, SegmentChar::pre_okuri()));
+        let large = ('A'..='Z').map(|c| (c, SegmentChar::pre_okuri())); // TODO: convert to lower
+                                                                        // case when segmenting
         let sticky = [';'].map(|c| (c, SegmentChar::sticky()));
         let prefix_postfix = ['>'].map(|c| (c, SegmentChar::prefix_postfix()));
 
