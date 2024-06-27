@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Node {
     pub start: usize,
     pub end: usize,
@@ -24,6 +24,7 @@ impl Node {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Lattice {
     sentence: String,
     begin_nodes: Vec<Vec<Rc<RefCell<Node>>>>,
