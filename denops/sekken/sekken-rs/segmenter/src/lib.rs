@@ -3,11 +3,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use itertools::{EitherOrBoth::*, Itertools};
 
 #[derive(Debug, Clone)]
-pub struct Segmenter {
-    chars: BTreeMap<char, SegmentChar>,
-}
-
-#[derive(Debug, Clone)]
 pub struct SKK<C: sekken_lattice::Converter> {
     chars: BTreeMap<char, SegmentChar>,
     converter: C,
