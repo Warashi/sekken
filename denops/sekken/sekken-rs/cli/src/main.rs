@@ -26,21 +26,26 @@ fn main() -> Result<()> {
 
     let segconverter = SKK::<KanaTable>::default();
 
-    let mut lattice = Lattice::new(args[3].clone()).context("failed to build lattice")?;
-    lattice
-        .build(segconverter, dict)
-        .context("failed to bulid lattice")?;
-    let result = lattice
-        .viterbi(model)
-        .context("failed to caluclate viterbi path")?;
+    println!("ready!");
 
-    let result = result
-        .iter()
-        .map(|n| n.surface.clone())
-        .collect::<Vec<_>>()
-        .concat();
+    for line in std::io::stdin().lines() {
+        let mut lattice = Lattice::new(line?).context("failed to build lattice")?;
+        lattice
+            .build(segconverter.clone(), dict.clone())
+            .context("failed to bulid lattice")?;
 
-    println!("{:?}", result);
+        let result = lattice
+            .viterbi(model.clone())
+            .context("failed to caluclate viterbi path")?;
+
+        let result = result
+            .iter()
+            .map(|n| n.surface.clone())
+            .collect::<Vec<_>>()
+            .concat();
+
+        println!("{:?}", result);
+    }
 
     return Ok(());
 }
