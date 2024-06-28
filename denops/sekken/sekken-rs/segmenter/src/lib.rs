@@ -61,9 +61,15 @@ where
         return cur
             .iter()
             .map(|(b, e, s)| match e {
-                Some(e) => sekken_lattice::Node::new(*b, *e, s.to_string()),
-                None => sekken_lattice::Node::new(*b, sentence.chars().count(), s.to_string()),
+                Some(e) => vec![sekken_lattice::Node::new(*b, *e, s.to_string())],
+                None => self
+                    .converter
+                    .convert(&s.to_string())
+                    .iter()
+                    .map(|s| sekken_lattice::Node::new(*b, sentence.chars().count(), s.to_string()))
+                    .collect(),
             })
+            .flatten()
             .collect();
     }
 }
@@ -266,146 +272,6 @@ where
             .map(|(b, e, s)| match e {
                 Some(_) => (b, e, s),
                 None => (b, None, s + &l.to_string()),
-            })
-            .collect();
-    }
-}
-
-impl sekken_lattice::Segmenter for Segmenter {
-    fn segment(self: &Self, sentence: &String) -> Vec<sekken_lattice::Node> {
-        let mut cur: BTreeSet<(usize, Option<usize>, String)> =
-            BTreeSet::from([(0, None, "".to_string())]);
-
-        for (i, e) in sentence
-            .chars()
-            .zip_longest(sentence.chars().skip(1))
-            .enumerate()
-        {
-            match e {
-                // TODO: refactoring
-                Both(c, n) => {
-                    let sc = self.chars.get(&c);
-                    let sc = *sc.unwrap_or(&SegmentChar::default());
-
-                    let mut tmp = BTreeSet::new();
-
-                    {
-                        let a: BTreeSet<_> = cur
-                            .clone()
-                            .into_iter()
-                            .map(|(b, e, s)| match e {
-                                Some(_) => (b, e, s),
-                                None => (b, None, s + &c.to_string()),
-                            })
-                            .collect();
-                        let mut a = a;
-                        tmp.append(&mut a);
-                    }
-
-                    cur = tmp;
-                }
-
-                // TODO: refactoring
-                Left(c) => {
-                    let sc = self.chars.get(&c);
-                    let sc = *sc.unwrap_or(&SegmentChar::default());
-
-                    let mut tmp = BTreeSet::new();
-
-                    if sc.pre {
-                        let a: BTreeSet<_> = cur
-                            .clone()
-                            .into_iter()
-                            .map(|(b, e, s)| match e {
-                                Some(_) => (b, e, s),
-                                None => (b, Some(i), s),
-                            })
-                            .collect();
-                        let mut a = a;
-                        tmp.append(&mut a);
-                        tmp.insert((i, None, c.to_string()));
-                    }
-
-                    if sc.pre_okuri {
-                        let a: BTreeSet<_> = cur
-                            .clone()
-                            .into_iter()
-                            .map(|(b, e, s)| match e {
-                                Some(_) => (b, e, s),
-                                None => (b, Some(i), s + &c.to_string()),
-                            })
-                            .collect();
-                        let mut a = a;
-                        tmp.append(&mut a);
-                        tmp.insert((i, None, c.to_string()));
-                    }
-
-                    if sc.post {
-                        let a: BTreeSet<_> = cur
-                            .clone()
-                            .into_iter()
-                            .map(|(b, e, s)| match e {
-                                Some(_) => (b, e, s),
-                                None => (b, Some(i + 1), s + &c.to_string()),
-                            })
-                            .collect();
-                        let mut a = a;
-                        tmp.append(&mut a);
-                        tmp.insert((i + 1, None, "".to_string()));
-                    }
-
-                    if sc.replace {
-                        let a: BTreeSet<_> = cur
-                            .clone()
-                            .into_iter()
-                            .map(|(b, e, s)| match e {
-                                Some(_) => (b, e, s),
-                                None => (b, Some(i), s),
-                            })
-                            .collect();
-                        let mut a = a;
-                        tmp.append(&mut a);
-                        tmp.insert((i, None, "".to_string()));
-                    }
-
-                    if sc.replace_okuri {
-                        let a: BTreeSet<_> = cur
-                            .clone()
-                            .into_iter()
-                            .map(|(b, e, s)| match e {
-                                Some(_) => (b, e, s),
-                                None => (b, Some(i), s),
-                            })
-                            .collect();
-                        let mut a = a;
-                        tmp.append(&mut a);
-                        tmp.insert((i, None, "".to_string()));
-                    }
-
-                    {
-                        let a: BTreeSet<_> = cur
-                            .clone()
-                            .into_iter()
-                            .map(|(b, e, s)| match e {
-                                Some(_) => (b, e, s),
-                                None => (b, None, s + &c.to_string()),
-                            })
-                            .collect();
-                        let mut a = a;
-                        tmp.append(&mut a);
-                    }
-
-                    cur = tmp;
-                }
-                Right(_) => unreachable!(),
-            }
-        }
-
-        return cur
-            .iter()
-            .map(|(b, e, s)| match e {
-                Some(e) => sekken_lattice::Node::new(*b, *e, s.to_string()),
-                None => sekken_lattice::Node::new(*b, sentence.chars().count(), s.to_string()),
             })
             .collect();
     }

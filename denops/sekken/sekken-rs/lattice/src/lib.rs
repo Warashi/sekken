@@ -97,19 +97,12 @@ impl Lattice {
 
     pub fn build(
         self: &mut Self,
-        segmenter: impl Segmenter,
-        converter: impl Converter,
+        segconverter: impl SegmentConverter,
         dict: impl Dict,
     ) -> Result<()> {
-        let segments = segmenter.segment(&self.sentence);
+        let segments = segconverter.segconvert(&self.sentence);
 
-        let nodes = segments.iter().filter(|n| n.start != n.end).flat_map(|n| {
-            return converter
-                .convert(&n.surface.to_string())
-                .iter()
-                .map(|s| Node::new(n.start, n.end, s.to_string()))
-                .collect::<Vec<_>>();
-        });
+        let nodes = segments.iter().filter(|n| n.start != n.end);
 
         for n in nodes {
             for w in dict.get(&n.surface) {

@@ -6,7 +6,7 @@ use sekken_converter::kana::KanaTable;
 use sekken_dict::Dict;
 use sekken_lattice::Lattice;
 use sekken_model::CompactModel;
-use sekken_segmenter::Segmenter;
+use sekken_segmenter::SKK;
 
 use anyhow::Context as _;
 use anyhow::Result;
@@ -24,12 +24,11 @@ fn main() -> Result<()> {
     let model = File::open(model).context("failed to open model file")?;
     let model = CompactModel::load(model).context("failed to load model file")?;
 
-    let kana_table = KanaTable::default();
-    let segmenter = Segmenter::default();
+    let segconverter = SKK::<KanaTable>::default();
 
     let mut lattice = Lattice::new(args[3].clone()).context("failed to build lattice")?;
     lattice
-        .build(segmenter, kana_table, dict)
+        .build(segconverter, dict)
         .context("failed to bulid lattice")?;
     let result = lattice
         .viterbi(model)
