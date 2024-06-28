@@ -7,11 +7,11 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Default, Clone, Debug)]
-pub struct Dict {
+pub struct BTreeDict {
     inner: BTreeMap<String, Vec<String>>,
 }
 
-impl sekken_lattice::Dict for Dict {
+impl sekken_lattice::Dict for BTreeDict {
     fn get(self: &Self, word: &String) -> Vec<String> {
         let mut out = self.inner.get(word).unwrap_or(&Vec::new()).clone();
         // workaround
@@ -22,7 +22,7 @@ impl sekken_lattice::Dict for Dict {
     }
 }
 
-impl Dict {
+impl BTreeDict {
     pub fn from_skk_json<R: Read>(r: R) -> Result<Self> {
         #[derive(Serialize, Deserialize, Debug, Clone)]
         struct SKKDictJSON {
@@ -32,7 +32,7 @@ impl Dict {
 
         let mut dict: SKKDictJSON = serde_json::from_reader(r).context("parse json dictionary")?;
 
-        let mut out = Dict::default();
+        let mut out = BTreeDict::default();
         out.inner.append(&mut dict.okuri_ari);
 
         for (k, v) in out.inner.iter_mut() {

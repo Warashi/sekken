@@ -4,7 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0.75"
 daachorse = "1.0.0"
 serde = { version = "1.0.193", features = ["derive"] }
+
+sekken-converter = { path = "../converter" }
+sekken-lattice = { path = "../lattice" }
 sekken-model = { path = "../model" }
-anyhow = "1.0.75"
+sekken-segmenter = { path = "../segmenter" }
+sekken-dict = { path = "../dict" }

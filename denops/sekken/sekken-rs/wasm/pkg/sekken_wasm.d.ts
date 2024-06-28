@@ -5,15 +5,11 @@
 export function init(): void;
 /**
 */
-export function use_default_kana_table(): void;
+export function use_default_segconverter(): void;
 /**
-* @param {any} map
+* @param {Uint8Array} dict
 */
-export function set_kana_table(map: any): void;
-/**
-* @param {any} dict
-*/
-export function set_skk_dictionary(dict: any): void;
+export function set_skk_dictionary(dict: Uint8Array): void;
 /**
 * @param {Uint8Array} data
 */

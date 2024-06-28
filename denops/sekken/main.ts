@@ -15,14 +15,11 @@ export function main(denops: Denops): void {
       rs.set_model(model);
     },
     set_dictionary: async (dictPath: unknown) => {
-      const dict = await Deno.readTextFile(u.ensure(dictPath, u.isString));
-      rs.set_skk_dictionary(JSON.parse(dict));
-    },
-    set_kana_table: (table: unknown) => {
-      rs.set_kana_table(u.ensure(table, u.isRecordOf(u.isString)));
+      const dict = await Deno.readFile(u.ensure(dictPath, u.isString));
+      rs.set_skk_dictionary(dict);
     },
     use_default_kana_table: () => {
-      rs.use_default_kana_table();
+      rs.use_default_segconverter();
     },
     get_default_kana_table: () => {
       console.error("get_default_kana_table is not implemented");

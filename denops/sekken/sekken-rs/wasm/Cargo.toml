@@ -10,9 +10,14 @@ crate-type = ["cdylib"]
 console_error_panic_hook = "0.1.7"
 serde-wasm-bindgen = "0.6.1"
 wasm-bindgen = "0.2.88"
-sekken-model = { path = "../model", features = ["wasm"] }
-sekken-core = { path = "../core" }
 anyhow = "1.0.76"
+
+sekken-converter = { path = "../converter" }
+sekken-core = { path = "../core" }
+sekken-dict = { path = "../dict" }
+sekken-lattice = { path = "../lattice" }
+sekken-model = { path = "../model", features = ["wasm"] }
+sekken-segmenter = { path = "../segmenter" }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3.38"

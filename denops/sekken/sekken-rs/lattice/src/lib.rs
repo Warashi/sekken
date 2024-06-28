@@ -38,6 +38,13 @@ pub trait SegmentConverter {
     fn segconvert(&self, sentence: &String) -> Vec<Node>;
 }
 
+impl<T: SegmentConverter + ?Sized> SegmentConverter for Box<T> {
+    #[inline]
+    fn segconvert(&self, sentence: &String) -> Vec<Node> {
+        (**self).segconvert(sentence)
+    }
+}
+
 pub trait Segmenter {
     fn segment(&self, sentence: &String) -> Vec<Node>;
 }
@@ -50,13 +57,33 @@ pub trait Dict {
     fn get(&self, word: &String) -> Vec<String>;
 }
 
+impl<T: Dict + ?Sized> Dict for Box<T> {
+    #[inline]
+    fn get(&self, sentence: &String) -> Vec<String> {
+        (**self).get(sentence)
+    }
+}
+
 pub trait CostManager {
     fn emission_cost(&self, node: &Node) -> i128;
     fn transition_cost(&self, left: &Node, right: &Node) -> i128;
 }
 
+impl<T: CostManager + ?Sized> CostManager for Box<T> {
+    #[inline]
+    fn emission_cost(&self, node: &Node) -> i128 {
+        (**self).emission_cost(node)
+    }
+
+    #[inline]
+    fn transition_cost(&self, left: &Node, right: &Node) -> i128 {
+        (**self).transition_cost(left, right)
+    }
+}
+
 impl Lattice {
-    pub fn new(sentence: String) -> Result<Self> {
+    pub fn new(sentence: &String) -> Result<Self> {
+        let sentence = sentence.clone();
         let len = sentence.chars().count();
         let begin_nodes = vec![Vec::new(); len + 1];
         let end_nodes = vec![Vec::new(); len + 1];

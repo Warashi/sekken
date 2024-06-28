@@ -3,7 +3,7 @@ use std::fs::File;
 use std::path::Path;
 
 use sekken_converter::kana::KanaTable;
-use sekken_dict::Dict;
+use sekken_dict::BTreeDict;
 use sekken_lattice::Lattice;
 use sekken_model::CompactModel;
 use sekken_segmenter::SKK;
@@ -17,7 +17,7 @@ fn main() -> Result<()> {
     let dict = Path::new(dict);
     let dict = File::open(dict).context("failed to open dictionary file")?;
 
-    let dict = Dict::from_skk_json(dict).context("failed to load dictionary file")?;
+    let dict = BTreeDict::from_skk_json(dict).context("failed to load dictionary file")?;
 
     let model = &args[2];
     let model = Path::new(model);
@@ -29,7 +29,7 @@ fn main() -> Result<()> {
     println!("ready!");
 
     for line in std::io::stdin().lines() {
-        let mut lattice = Lattice::new(line?).context("failed to build lattice")?;
+        let mut lattice = Lattice::new(&line?).context("failed to build lattice")?;
         lattice
             .build(&segconverter, &dict)
             .context("failed to bulid lattice")?;

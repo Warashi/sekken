@@ -254,7 +254,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "daachorse",
+ "sekken-converter",
+ "sekken-dict",
+ "sekken-lattice",
  "sekken-model",
+ "sekken-segmenter",
  "serde",
 ]
 
@@ -313,8 +317,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
+ "sekken-converter",
  "sekken-core",
+ "sekken-dict",
+ "sekken-lattice",
  "sekken-model",
+ "sekken-segmenter",
  "serde-wasm-bindgen",
  "wasm-bindgen",
  "wasm-bindgen-test",
