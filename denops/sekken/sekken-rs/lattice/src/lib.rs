@@ -97,8 +97,8 @@ impl Lattice {
 
     pub fn build(
         self: &mut Self,
-        segconverter: impl SegmentConverter,
-        dict: impl Dict,
+        segconverter: &impl SegmentConverter,
+        dict: &impl Dict,
     ) -> Result<()> {
         let segments = segconverter.segconvert(&self.sentence);
 
@@ -113,7 +113,7 @@ impl Lattice {
         Ok(())
     }
 
-    pub fn viterbi(self: &mut Self, manager: impl CostManager) -> Result<Vec<Node>> {
+    pub fn viterbi(self: &mut Self, manager: &impl CostManager) -> Result<Vec<Node>> {
         let mut bos = self.end_nodes[0][0]
             .try_borrow_mut()
             .context("try borrow mut bos")?;

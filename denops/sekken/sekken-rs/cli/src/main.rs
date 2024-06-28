@@ -31,11 +31,11 @@ fn main() -> Result<()> {
     for line in std::io::stdin().lines() {
         let mut lattice = Lattice::new(line?).context("failed to build lattice")?;
         lattice
-            .build(segconverter.clone(), dict.clone())
+            .build(&segconverter, &dict)
             .context("failed to bulid lattice")?;
 
         let result = lattice
-            .viterbi(model.clone())
+            .viterbi(&model)
             .context("failed to caluclate viterbi path")?;
 
         let result = result
