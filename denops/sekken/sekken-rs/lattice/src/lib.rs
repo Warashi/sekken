@@ -45,10 +45,6 @@ impl<T: SegmentConverter + ?Sized> SegmentConverter for Box<T> {
     }
 }
 
-pub trait Segmenter {
-    fn segment(&self, sentence: &String) -> Vec<Node>;
-}
-
 pub trait Converter {
     fn convert(&self, word: &String) -> Vec<String>;
 }
