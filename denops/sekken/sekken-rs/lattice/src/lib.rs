@@ -10,8 +10,6 @@ pub struct Node {
     pub end: usize,
     pub surface: String,
 
-    // TODO: add middle layer information
-
     min_cost: Option<i128>,
     min_prev: Option<Rc<RefCell<Node>>>,
 }
@@ -34,6 +32,10 @@ pub struct Lattice {
     begin_nodes: Vec<Vec<Rc<RefCell<Node>>>>,
     end_nodes: Vec<Vec<Rc<RefCell<Node>>>>,
     all_nodes: Vec<Rc<RefCell<Node>>>,
+}
+
+pub trait SegmentConverter {
+    fn segconvert(&self, sentence: &String) -> Vec<Node>;
 }
 
 pub trait Segmenter {

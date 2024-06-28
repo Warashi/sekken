@@ -303,6 +303,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "itertools",
+ "sekken-converter",
  "sekken-lattice",
 ]
 

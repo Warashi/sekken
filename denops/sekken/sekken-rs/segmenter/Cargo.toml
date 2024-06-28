@@ -7,3 +7,4 @@ edition = "2021"
 anyhow = "1.0.75"
 itertools = "0.13.0"
 sekken-lattice = { path = "../lattice" }
+sekken-converter = { path = "../converter" }
