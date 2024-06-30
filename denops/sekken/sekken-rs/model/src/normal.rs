@@ -40,6 +40,8 @@ impl NormalModel {
     pub fn compact(&self) -> CompactModel {
         let mut compact = CompactModel::new();
 
+        // TODO: make able to handle 0 < score < inf
+        // we are able to handle 1 <= score < inf now
         for (key, score) in self.unigram_score.iter() {
             let score = (1.0 + score).log2() as u8;
             compact.set_unigram_cost(*key, 255 - score);
