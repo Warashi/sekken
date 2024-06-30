@@ -13,10 +13,10 @@ fn main() -> Result<()> {
     let mut model = NormalModel::new();
 
     for ch in input.into_iter().flatten() {
-        model.increment_unigram_cost(ch);
+        model.increment_unigram_score(ch);
 
         if let Some(p) = pre {
-            model.increment_bigram_cost(p, ch);
+            model.increment_bigram_score(p, ch);
         }
 
         pre = Some(ch);
