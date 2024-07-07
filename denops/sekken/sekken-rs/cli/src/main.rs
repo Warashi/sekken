@@ -35,14 +35,21 @@ fn main() -> Result<()> {
             .context("failed to bulid lattice")?;
 
         let result = lattice
-            .viterbi(&model)
+            .viterbi_n(&model, 5)
             .context("failed to caluclate viterbi path")?;
 
-        let result = result
-            .iter()
-            .map(|n| n.surface.clone())
-            .collect::<Vec<_>>()
-            .concat();
+        let mut result: Vec<_> = result
+            .into_iter()
+            .map(|(c, n)| {
+                let s = n
+                    .iter()
+                    .map(|n| n.surface.clone())
+                    .collect::<Vec<_>>()
+                    .concat();
+                return (c, s);
+            })
+            .collect();
+        result.sort();
 
         println!("{:?}", result);
     }

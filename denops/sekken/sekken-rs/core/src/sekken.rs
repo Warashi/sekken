@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use anyhow::{Context, Result};
 
-use sekken_lattice::{Lattice, SegmentConverter, Dict, CostManager};
+use sekken_lattice::{CostManager, Dict, Lattice, SegmentConverter};
 
 pub struct Sekken {
     segconverter: RefCell<Option<Box<dyn SegmentConverter>>>,
@@ -37,7 +37,7 @@ impl Sekken {
         self.model.replace(Some(model));
     }
 
-    pub fn henkan(&self, roman: &String, _top_n: usize) -> Result<Vec<String>> {
+    pub fn henkan(&self, roman: &String, top_n: usize) -> Result<Vec<String>> {
         let segconverter = self
             .segconverter
             .try_borrow()
@@ -59,15 +59,24 @@ impl Sekken {
             .context("failed to bulid lattice")?;
 
         let result = lattice
-            .viterbi(model)
+            .viterbi_n(model, top_n)
             .context("failed to caluclate viterbi path")?;
 
-        let result = result
-            .iter()
-            .map(|n| n.surface.clone())
-            .collect::<Vec<_>>()
-            .concat();
+        let mut result: Vec<_> = result
+            .into_iter()
+            .map(|(c, n)| {
+                let s = n
+                    .iter()
+                    .map(|n| n.surface.clone())
+                    .collect::<Vec<_>>()
+                    .concat();
+                return (c, s);
+            })
+            .collect();
+        result.sort();
 
-        return Ok(vec![result]);
+        let result = result.into_iter().map(|(_, s)| s).collect();
+
+        return Ok(result);
     }
 }

@@ -135,7 +135,11 @@ impl Lattice {
         Ok(())
     }
 
-    pub fn viterbi(self: &mut Self, manager: &impl CostManager) -> Result<Vec<Node>> {
+    pub fn viterbi_n(
+        self: &mut Self,
+        manager: &impl CostManager,
+        n: usize,
+    ) -> Result<Vec<(i128, Vec<Node>)>> {
         let mut bos = self.end_nodes[0][0]
             .try_borrow_mut()
             .context("try borrow mut bos")?;
@@ -150,48 +154,59 @@ impl Lattice {
                     let lnodeb = lnode.clone();
                     let lnodeb = lnodeb.try_borrow().context("try borrow lnodeb")?;
 
-                    let Some((&current_cost, _)) = lnodeb.prevs.iter().next() else {
-                        unreachable!()
-                    };
+                    for (&current_cost, _) in lnodeb.prevs.iter().take(n) {
+                        let cost = current_cost
+                            + manager.transition_cost(&lnodeb, &rnode)
+                            + manager.emission_cost(&rnode);
 
-                    let cost = current_cost
-                        + manager.transition_cost(&lnodeb, &rnode)
-                        + manager.emission_cost(&rnode);
-
-                    rnode.prevs.insert(cost, Some(lnode.clone()));
+                        rnode.prevs.insert(cost, Some(lnode.clone()));
+                    }
                 }
             }
         }
 
-        let mut results = Vec::new();
-
-        fn prev(node: Rc<RefCell<Node>>) -> Option<Rc<RefCell<Node>>> {
+        fn prev(node: Rc<RefCell<Node>>, n: usize) -> Option<Rc<RefCell<Node>>> {
             let node = node.clone();
             let Ok(node) = node.try_borrow() else {
                 return None;
             };
-            let Some((_, prev)) = node.prevs.iter().next() else {
-                unreachable!()
+            let Some((_, prev)) = node.prevs.iter().skip(n).next() else {
+                return None;
             };
             return prev.clone();
         }
 
-        let mut push = |node: Rc<RefCell<Node>>| -> Result<()> {
-            let node = node.try_borrow().context("try borrow node")?;
-            results.push(node.clone());
-            return Ok(());
-        };
-
+        let mut out = Vec::new();
         let eos = self.begin_nodes[self.sentence.chars().count()][0].clone();
+        let eos = eos.clone();
+        let Ok(eos) = eos.try_borrow() else {
+            unreachable!()
+        };
+        for (i, (&c, last)) in eos.prevs.iter().take(n).enumerate() {
+            let Some(last) = last else { unreachable!() };
+            let mut results = Vec::new();
 
-        let mut node = eos;
-        while let Some(n) = prev(node.clone()) {
-            push(n.clone()).context("push result")?;
-            node = n;
+            let mut push = |node: Rc<RefCell<Node>>| -> Result<()> {
+                let node = node.try_borrow().context("try borrow node")?;
+                results.push(node.clone());
+                return Ok(());
+            };
+
+            let mut node = last.clone();
+            while let Some(n) = prev(node.clone(), i) {
+                push(n.clone()).context("push result")?;
+                node = n;
+            }
+
+            results.reverse();
+            out.push((c, results));
         }
 
-        results.reverse();
+        return Ok(out);
+    }
 
-        return Ok(results);
+    pub fn viterbi(self: &mut Self, manager: &impl CostManager) -> Result<Vec<Node>> {
+        let result = self.viterbi_n(manager, 1)?;
+        return Ok(result[0].1.clone());
     }
 }
