@@ -193,6 +193,7 @@ impl Lattice {
             };
 
             let mut node = last.clone();
+            push(node.clone()).context("push result")?;
             while let Some(n) = prev(node.clone(), i) {
                 push(n.clone()).context("push result")?;
                 node = n;
