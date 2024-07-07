@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use anyhow::Context as _;
@@ -10,8 +11,7 @@ pub struct Node {
     pub end: usize,
     pub surface: String,
 
-    min_cost: Option<i128>,
-    min_prev: Option<Rc<RefCell<Node>>>,
+    prevs: BTreeMap<i128, Option<Rc<RefCell<Node>>>>,
 }
 
 impl Node {
@@ -20,8 +20,7 @@ impl Node {
             start,
             end,
             surface,
-            min_cost: None,
-            min_prev: None,
+            prevs: BTreeMap::new(),
         };
     }
 }
@@ -140,32 +139,26 @@ impl Lattice {
         let mut bos = self.end_nodes[0][0]
             .try_borrow_mut()
             .context("try borrow mut bos")?;
-        bos.min_cost = Some(0);
+        bos.prevs.insert(0, None);
         drop(bos);
 
         for i in 0..=self.sentence.chars().count() {
             for rnode in &self.begin_nodes[i] {
                 let mut rnode = rnode.try_borrow_mut().context("try borrow mut rnode")?;
-                rnode.min_cost = Some(i128::MAX);
 
                 for lnode in &self.end_nodes[i] {
                     let lnodeb = lnode.clone();
                     let lnodeb = lnodeb.try_borrow().context("try borrow lnodeb")?;
 
-                    let current_cost = lnodeb.min_cost.unwrap();
-
-                    if current_cost == i128::MAX {
+                    let Some((&current_cost, _)) = lnodeb.prevs.iter().next() else {
                         unreachable!()
-                    }
+                    };
 
                     let cost = current_cost
                         + manager.transition_cost(&lnodeb, &rnode)
                         + manager.emission_cost(&rnode);
 
-                    if cost < rnode.min_cost.unwrap() {
-                        rnode.min_cost = Some(cost);
-                        rnode.min_prev = Some(lnode.clone());
-                    }
+                    rnode.prevs.insert(cost, Some(lnode.clone()));
                 }
             }
         }
@@ -177,7 +170,10 @@ impl Lattice {
             let Ok(node) = node.try_borrow() else {
                 return None;
             };
-            return node.min_prev.clone();
+            let Some((_, prev)) = node.prevs.iter().next() else {
+                unreachable!()
+            };
+            return prev.clone();
         }
 
         let mut push = |node: Rc<RefCell<Node>>| -> Result<()> {
