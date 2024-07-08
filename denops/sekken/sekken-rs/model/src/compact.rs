@@ -49,10 +49,7 @@ impl sekken_lattice::CostManager for CompactModel {
         let Some(right_head) = right.surface.clone().chars().next() else {
             return 255;
         };
-        return *(self
-            .bigram_cost
-            .get(&((left_tail as u64) << 32 | (right_head as u64)))
-            .unwrap_or(&255)) as i128;
+        return self.get_bigram_cost(left_tail, right_head) as i128;
     }
 }
 
