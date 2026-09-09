@@ -3,7 +3,7 @@
 ;; SPDX-License-Identifier: MIT
 
 ;;; Commentary:
-;; Rust 側と同じ share/kana-table.tsv を読み、最長一致で変換する。
+;; Rust 側と同じ share/kana-table.tsv（実体は sekken-rs/core/kana-table.tsv）を読み、最長一致で変換する。
 ;; 入力中のかな表示はこのファイルだけで完結し、エンジンを呼ばない。
 
 ;;; Code:

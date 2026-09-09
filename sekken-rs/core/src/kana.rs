@@ -5,11 +5,13 @@ pub struct KanaTable {
     entries: Vec<(String, String)>,
 }
 
-/// `share/kana-table.tsv` の既定表の本文。逆引き表を作る側もこれを読む。
-pub const DEFAULT_TABLE_TSV: &str = include_str!("../../../share/kana-table.tsv");
+/// 既定の変換表（`kana-table.tsv`）の本文。逆引き表を作る側もこれを読む。
+// git 依存として vendor されるときは crate のディレクトリしか写されないので、
+// 表の実体は crate の中に置き、share/ からは symlink で指す。
+pub const DEFAULT_TABLE_TSV: &str = include_str!("../kana-table.tsv");
 
 impl KanaTable {
-    /// `share/kana-table.tsv` の既定表を読み込む。
+    /// 既定の変換表を読み込む。
     pub fn default_table() -> KanaTable {
         Self::parse_tsv(DEFAULT_TABLE_TSV)
     }

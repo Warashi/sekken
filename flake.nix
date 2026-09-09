@@ -22,13 +22,12 @@
         rust-toolchain = fenix.packages.${system}.stable.toolchain;
         pkgs = nixpkgs.legacyPackages.${system};
         craneLib = (crane.mkLib pkgs).overrideToolchain rust-toolchain;
-        # Rust 側は ../share/kana-table.tsv を include_str! するので、
-        # src の起点はリポジトリ直下にしたうえで必要なものだけに絞る。
+        # core は kana-table.tsv を include_str! するので、Cargo の source に足す。
         src = pkgs.lib.fileset.toSource {
           root = ./.;
           fileset = pkgs.lib.fileset.unions [
             (craneLib.fileset.commonCargoSources ./sekken-rs)
-            ./share/kana-table.tsv
+            ./sekken-rs/core/kana-table.tsv
           ];
         };
         commonArgs = {
@@ -62,9 +61,10 @@
           version = "0.1.0";
           src = ./lisp;
           # sekken-kana.el は自身の場所から ../share/kana-table.tsv を読む。
+          # share/ の実体は symlink なので、core にある本体を写す。
           postInstall = ''
             mkdir -p $out/share/emacs/share
-            cp ${./share/kana-table.tsv} $out/share/emacs/share/kana-table.tsv
+            cp ${./sekken-rs/core/kana-table.tsv} $out/share/emacs/share/kana-table.tsv
           '';
         };
       in {
@@ -79,7 +79,8 @@
             nativeBuildInputs = [pkgs.emacs-nox];
           } ''
             cp -r ${./lisp} lisp
-            cp -r ${./share} share
+            mkdir share
+            cp ${./sekken-rs/core/kana-table.tsv} share/kana-table.tsv
             chmod -R u+w lisp
             cd lisp
             bash test/run.sh

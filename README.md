@@ -8,7 +8,7 @@ SKK 風の一括変換による Emacs 用日本語入力。
 
 - `sekken-rs/` — 変換エンジン（Rust）。コマンドラインでの変換と、Emacs から使う JSON-RPC サーバー
 - `lisp/` — Emacs 側（`sekken-mode`）
-- `share/kana-table.tsv` — ローマ字かな変換表。Rust と Emacs Lisp の両方が読む
+- `share/kana-table.tsv` — ローマ字かな変換表。Rust と Emacs Lisp の両方が読む（実体は `sekken-rs/core/kana-table.tsv`）
 
 ## 入力の規約
 
