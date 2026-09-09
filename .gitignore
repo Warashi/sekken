@@ -1,0 +1,4 @@
+/target
+/sekken-rs/target
+.direnv
+/result

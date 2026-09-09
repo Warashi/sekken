@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["core", "model", "lm", "cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+encoding_rs = "0.8"
+
+# gemm-f16 は aarch64 の最適化なしビルドで fullfp16 の命令を組めず失敗するため、
+# dev でも最適化して組む。
+[profile.dev.package.gemm-f16]
+opt-level = 3

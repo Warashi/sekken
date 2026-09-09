@@ -1,0 +1,15 @@
+[package]
+name = "sekken-lm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+# candle の CPU 行列積が使っているものと同じ版。NEON の無い環境の行列積に使う。
+gemm = "0.19"
+rayon = "1"
+postcard = { version = "1", features = ["use-std"] }
+sekken-core = { path = "../core" }
+serde = { version = "1", features = ["derive"] }
+zstd = "0.14"
