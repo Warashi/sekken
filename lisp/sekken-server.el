@@ -40,17 +40,27 @@
   "変換要求の応答を待つ秒数。"
   :type 'number)
 
+(defcustom sekken-server-prewarm-delay 1
+  "起動後に変換エンジンを先読みするまでのアイドル秒数。"
+  :type 'number)
+
 (defconst sekken-server-version "0.1.0"
   "この Lisp が想定するエンジンのバージョン。")
 
 (defconst sekken-server--max-crashes 3
   "自動再起動をやめるまでの連続異常終了回数。")
 
+(defconst sekken-server--input-canceled 'sekken-server-input-canceled
+  "打鍵によって JSON-RPC 要求を中断したことを表す値。")
+
 (defvar sekken-server--connection nil
   "エンジンとの `jsonrpc-process-connection'。")
 
 (defvar sekken-server--crashes 0
   "直近の連続異常終了回数。正常応答で 0 に戻す。")
+
+(defvar sekken-server--prewarm-timer nil
+  "変換エンジンを先読みする idle timer。")
 
 (defun sekken-server--command ()
   "エンジンを起動するコマンドライン。設定が欠けていればエラーにする。"
@@ -76,26 +86,42 @@
                 :noquery t
                 :stderr (get-buffer-create " *sekken stderr*")))
 
-(defun sekken-server--on-shutdown (_conn)
+(defun sekken-server--on-shutdown (conn)
   "接続が閉じたときの後始末。"
-  (setq sekken-server--connection nil))
+  (when (eq conn sekken-server--connection)
+    (setq sekken-server--connection nil)))
 
-(defun sekken-server--connect ()
+(defun sekken-server--connect (&optional cancel-on-input)
   "接続を作り、バージョンを照合して返す。"
   (let ((conn (make-instance 'jsonrpc-process-connection
                              :name "sekken"
                              :process #'sekken-server--make-process
-                             :on-shutdown #'sekken-server--on-shutdown)))
-    (let ((version (plist-get (jsonrpc-request conn :version nil
-                                               :timeout sekken-server-timeout)
-                              :version)))
-      (unless (equal version sekken-server-version)
-        (display-warning 'sekken
-                         (format "エンジンのバージョン %s は想定 %s と異なります"
-                                 version sekken-server-version))))
-    conn))
+                             :on-shutdown #'sekken-server--on-shutdown))
+        connected)
+    (setq sekken-server--connection conn)
+    (unwind-protect
+        (let* ((result (jsonrpc-request
+                        conn :version nil
+                        :timeout sekken-server-timeout
+                        :cancel-on-input cancel-on-input
+                        :cancel-on-input-retval sekken-server--input-canceled))
+               (version
+                (if (eq result sekken-server--input-canceled)
+                    (signal 'quit '("sekken: engine startup canceled"))
+                  (plist-get result :version))))
+          (unless (equal version sekken-server-version)
+            (display-warning
+             'sekken
+             (format "エンジンのバージョン %s は想定 %s と異なります"
+                     version sekken-server-version)))
+          (setq connected t)
+          conn)
+      (unless connected
+        (when (eq conn sekken-server--connection)
+          (setq sekken-server--connection nil))
+        (ignore-errors (jsonrpc-shutdown conn))))))
 
-(defun sekken-server-connection ()
+(defun sekken-server-connection (&optional cancel-on-input)
   "動いている接続を返す。無ければ起動する。"
   (when (and sekken-server--connection
              (not (jsonrpc-running-p sekken-server--connection)))
@@ -104,16 +130,22 @@
       (progn
         (when (>= sekken-server--crashes sekken-server--max-crashes)
           (user-error "sekken: エンジンが連続して落ちました。M-x sekken-server-restart で再起動してください"))
-        (setq sekken-server--connection (sekken-server--connect)))))
+        (sekken-server--connect cancel-on-input))))
 
-(defun sekken-server-henkan (input top)
+(defun sekken-server-henkan (input top &optional cancel-on-input)
   "INPUT を変換し、候補文字列のリストを最大 TOP 個返す。"
   (condition-case err
-      (let ((result (jsonrpc-request (sekken-server-connection) :henkan
-                                     (list :input input :top top)
-                                     :timeout sekken-server-timeout)))
+      (let ((result
+             (jsonrpc-request
+              (sekken-server-connection cancel-on-input) :henkan
+              (list :input input :top top)
+              :timeout sekken-server-timeout
+              :cancel-on-input cancel-on-input
+              :cancel-on-input-retval sekken-server--input-canceled)))
         (setq sekken-server--crashes 0)
-        (append (plist-get result :candidates) nil))
+        (if (eq result sekken-server--input-canceled)
+            result
+          (append (plist-get result :candidates) nil)))
     (error
      ;; エンジンの異常終了もタイムアウトも jsonrpc-error で届くので、
      ;; エラーの種類ではなくプロセスが死んだかどうかで数える。
@@ -122,9 +154,44 @@
        (setq sekken-server--crashes (1+ sekken-server--crashes)))
      (signal (car err) (cdr err)))))
 
+(defun sekken-server--configured-p ()
+  "必須のエンジン設定がすべて揃っていれば non-nil を返す。"
+  (and sekken-server-program
+       sekken-server-dic
+       sekken-server-model
+       sekken-server-jisyo))
+
+(defun sekken-server--prewarm-attempt ()
+  "入力が無い間に本番と同じ変換要求まで通す。
+打鍵によって中断された場合は nil、完了した場合は t を返す。"
+  (condition-case nil
+      (not (eq (sekken-server-henkan "Kana" 1 t)
+               sekken-server--input-canceled))
+    (quit nil)))
+
+(defun sekken-server--run-prewarm ()
+  "予約された先読みを実行し、中断された場合は予約し直す。"
+  (setq sekken-server--prewarm-timer nil)
+  (when (sekken-server--configured-p)
+    (unless (sekken-server--prewarm-attempt)
+      (sekken-server-schedule-prewarm))))
+
+(defun sekken-server-schedule-prewarm ()
+  "変換エンジンの先読みを予約する。
+設定値は timer の実行時に確認するため、設定より前に呼んでもよい。"
+  (when (and (not sekken-server--prewarm-timer)
+             (not (and sekken-server--connection
+                       (jsonrpc-running-p sekken-server--connection))))
+    (setq sekken-server--prewarm-timer
+          (run-with-idle-timer sekken-server-prewarm-delay nil
+                               #'sekken-server--run-prewarm))))
+
 (defun sekken-server-shutdown ()
   "エンジンを止める。"
   (interactive)
+  (when sekken-server--prewarm-timer
+    (cancel-timer sekken-server--prewarm-timer)
+    (setq sekken-server--prewarm-timer nil))
   (when sekken-server--connection
     (let ((conn sekken-server--connection))
       (setq sekken-server--connection nil)
@@ -142,6 +209,9 @@
   (sekken-server-connection))
 
 (add-hook 'kill-emacs-hook #'sekken-server-shutdown)
+(if after-init-time
+    (sekken-server-schedule-prewarm)
+  (add-hook 'emacs-startup-hook #'sekken-server-schedule-prewarm))
 
 (provide 'sekken-server)
 ;;; sekken-server.el ends here
