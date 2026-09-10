@@ -1,6 +1,5 @@
 //! SKK 辞書（SKK-JISYO 形式）の読み込みと検索。
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Context as _, Result};
@@ -8,18 +7,45 @@ use anyhow::{Context as _, Result};
 /// 見出し語から候補への写像。okuri-ari は `かk` のように末尾に送りの子音を持つ。
 #[derive(Debug, Default, Clone)]
 pub struct Dictionary {
-    okuri_ari: BTreeMap<String, Vec<String>>,
-    okuri_nasi: BTreeMap<String, Vec<String>>,
+    okuri_ari: Index,
+    okuri_nasi: Index,
+}
+
+#[derive(Debug, Default, Clone)]
+struct Index {
+    entries: Vec<(String, Vec<String>)>,
+}
+
+impl Index {
+    fn from_entries(mut entries: Vec<(String, Vec<String>)>) -> Index {
+        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+        entries.dedup_by(|next, current| {
+            if next.0 == current.0 {
+                current.1.append(&mut next.1);
+                true
+            } else {
+                false
+            }
+        });
+        Index { entries }
+    }
+
+    fn exact_match(&self, key: &str) -> &[String] {
+        self.entries
+            .binary_search_by(|(entry, _)| entry.as_str().cmp(key))
+            .map_or(&[], |index| self.entries[index].1.as_slice())
+    }
 }
 
 impl Dictionary {
     /// SKK-JISYO 形式のテキストを解析する。
     pub fn parse(text: &str) -> Dictionary {
-        let mut dict = Dictionary::default();
-        let mut okuri_ari = true;
+        let mut okuri_ari_entries = Vec::new();
+        let mut okuri_nasi_entries = Vec::new();
+        let mut in_okuri_ari = true;
         for line in text.lines() {
             if line.starts_with(";; okuri-nasi") {
-                okuri_ari = false;
+                in_okuri_ari = false;
                 continue;
             }
             if line.starts_with(';') || line.is_empty() {
@@ -32,14 +58,17 @@ impl Dictionary {
             if candidates.is_empty() {
                 continue;
             }
-            let map = if okuri_ari {
-                &mut dict.okuri_ari
+            let entries = if in_okuri_ari {
+                &mut okuri_ari_entries
             } else {
-                &mut dict.okuri_nasi
+                &mut okuri_nasi_entries
             };
-            map.entry(key.to_string()).or_default().extend(candidates);
+            entries.push((key.to_string(), candidates));
         }
-        dict
+        Dictionary {
+            okuri_ari: Index::from_entries(okuri_ari_entries),
+            okuri_nasi: Index::from_entries(okuri_nasi_entries),
+        }
     }
 
     /// EUC-JP または UTF-8 の辞書ファイルを読む。
@@ -54,21 +83,27 @@ impl Dictionary {
 
     /// 送りなしの候補。
     pub fn okuri_nasi(&self, yomi: &str) -> &[String] {
-        self.okuri_nasi.get(yomi).map_or(&[], Vec::as_slice)
+        self.okuri_nasi.exact_match(yomi)
     }
 
     /// 送りありの候補。`yomi` は語幹のかな、`okuri` は送り仮名の先頭子音。
     pub fn okuri_ari(&self, yomi: &str, okuri: char) -> &[String] {
         let key = format!("{yomi}{okuri}");
-        self.okuri_ari.get(&key).map_or(&[], Vec::as_slice)
+        self.okuri_ari.exact_match(&key)
     }
 
     pub fn okuri_nasi_entries(&self) -> impl Iterator<Item = (&String, &Vec<String>)> {
-        self.okuri_nasi.iter()
+        self.okuri_nasi
+            .entries
+            .iter()
+            .map(|(key, candidates)| (key, candidates))
     }
 
     pub fn okuri_ari_entries(&self) -> impl Iterator<Item = (&String, &Vec<String>)> {
-        self.okuri_ari.iter()
+        self.okuri_ari
+            .entries
+            .iter()
+            .map(|(key, candidates)| (key, candidates))
     }
 }
 
@@ -105,6 +140,19 @@ GPL /GNU General Public License;(concat \"http:\\057\\057www.gnu.org\")/(concat 
         assert_eq!(d.okuri_nasi("にほんご"), ["日本語"]);
         assert_eq!(d.okuri_nasi("わがはい"), ["我輩", "吾輩"]);
         assert!(d.okuri_nasi("ない").is_empty());
+    }
+
+    #[test]
+    fn 重複する見出しの候補を辞書順にまとめる() {
+        let d = Dictionary::parse(
+            "\
+;; okuri-nasi entries.
+ねこ /猫/
+いぬ /犬/
+ねこ /ネコ/
+",
+        );
+        assert_eq!(d.okuri_nasi("ねこ"), ["猫", "ネコ"]);
     }
 
     #[test]
