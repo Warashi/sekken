@@ -206,7 +206,8 @@ nil の間はモデルの読み込み中とみなし、`sekken-server-startup-ti
 設定値は timer の実行時に確認するため、設定より前に呼んでもよい。"
   (when (and (not sekken-server--prewarm-timer)
              (not (and sekken-server--connection
-                       (jsonrpc-running-p sekken-server--connection))))
+                       (jsonrpc-running-p sekken-server--connection)
+                       sekken-server--warmed)))
     (setq sekken-server--prewarm-timer
           (run-with-idle-timer sekken-server-prewarm-delay nil
                                #'sekken-server--run-prewarm))))
