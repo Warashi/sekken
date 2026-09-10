@@ -3,6 +3,7 @@
 //! モデルの読み込みには数秒かかるので別スレッドで進め、読み込み中でも
 //! `version` と `shutdown` には即応答する。`henkan` は読み込みの完了を待つ。
 
+use std::io::Write as _;
 use std::thread::JoinHandle;
 
 use anyhow::{Result, anyhow};
@@ -34,7 +35,8 @@ impl EngineLoader {
         EngineLoader::Loading(std::thread::spawn(move || {
             let engine = build();
             if let Err(err) = &engine {
-                eprintln!("sekken: failed to load engine: {err:#}");
+                // stderr が閉じていても panic せず、理由を JSON-RPC 側に残す。
+                let _ = writeln!(std::io::stderr(), "sekken: failed to load engine: {err:#}");
             }
             engine
         }))
