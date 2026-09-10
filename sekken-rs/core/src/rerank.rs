@@ -10,7 +10,8 @@ pub trait SentenceScorer {
 
 /// 格子のコストと文全体のコストを合成して並べ替える。
 pub struct Reranker {
-    pub scorer: Box<dyn SentenceScorer>,
+    /// `Send` は、サーバーが別スレッドで組み立てたエンジンを受け取るため。
+    pub scorer: Box<dyn SentenceScorer + Send>,
     /// 文全体のコストに掛ける重み。格子のコストは重み 1。
     pub weight: f64,
     /// 並べ替えの対象にする N-best の本数。

@@ -18,7 +18,8 @@ use crate::scorer::Scorer;
 use crate::verify::{Verdict, Verifier, VerifySession};
 
 pub struct Speculator {
-    pub verifier: Box<dyn Verifier>,
+    /// `Send` は、サーバーが別スレッドで組み立てたエンジンを受け取るため。
+    pub verifier: Box<dyn Verifier + Send>,
     /// 検証器のコストに掛ける重み。格子のコストは 1。
     pub weight: f64,
     /// 提案と再探索を繰り返す上限。0 なら格子の先頭候補をそのまま返す。
