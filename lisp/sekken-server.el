@@ -91,8 +91,10 @@
   (when (eq conn sekken-server--connection)
     (setq sekken-server--connection nil)))
 
-(defun sekken-server--connect (&optional cancel-on-input)
-  "接続を作り、バージョンを照合して返す。"
+(defun sekken-server--connect ()
+  "接続を作り、バージョンを照合して返す。
+エンジンはモデルの読み込み中でも version に即応答するので、打鍵で
+取り消さない。取り消すと読み込み中のプロセスを kill してしまう。"
   (let ((conn (make-instance 'jsonrpc-process-connection
                              :name "sekken"
                              :process #'sekken-server--make-process
@@ -100,15 +102,10 @@
         connected)
     (setq sekken-server--connection conn)
     (unwind-protect
-        (let* ((result (jsonrpc-request
-                        conn :version nil
-                        :timeout sekken-server-timeout
-                        :cancel-on-input cancel-on-input
-                        :cancel-on-input-retval sekken-server--input-canceled))
-               (version
-                (if (eq result sekken-server--input-canceled)
-                    (signal 'quit '("sekken: engine startup canceled"))
-                  (plist-get result :version))))
+        (let ((version (plist-get (jsonrpc-request
+                                   conn :version nil
+                                   :timeout sekken-server-timeout)
+                                  :version)))
           (unless (equal version sekken-server-version)
             (display-warning
              'sekken
@@ -121,7 +118,7 @@
           (setq sekken-server--connection nil))
         (ignore-errors (jsonrpc-shutdown conn))))))
 
-(defun sekken-server-connection (&optional cancel-on-input)
+(defun sekken-server-connection ()
   "動いている接続を返す。無ければ起動する。"
   (when (and sekken-server--connection
              (not (jsonrpc-running-p sekken-server--connection)))
@@ -130,14 +127,14 @@
       (progn
         (when (>= sekken-server--crashes sekken-server--max-crashes)
           (user-error "sekken: エンジンが連続して落ちました。M-x sekken-server-restart で再起動してください"))
-        (sekken-server--connect cancel-on-input))))
+        (sekken-server--connect))))
 
 (defun sekken-server-henkan (input top &optional cancel-on-input)
   "INPUT を変換し、候補文字列のリストを最大 TOP 個返す。"
   (condition-case err
       (let ((result
              (jsonrpc-request
-              (sekken-server-connection cancel-on-input) :henkan
+              (sekken-server-connection) :henkan
               (list :input input :top top)
               :timeout sekken-server-timeout
               :cancel-on-input cancel-on-input
