@@ -4,7 +4,10 @@ SKK 風の一括変換による Emacs 用日本語入力。
 
 漢字とかなの境界を大文字で示した roman 列（例: `WagahaihaNekodearu.`）を
 そのまま打ち、変換キー 1 つで「吾輩は猫である。」に置き換える。
-入力モードの切り替えや未確定状態を持たない。
+かな・カナなどの内部モードや未確定状態を持たない。
+
+大文字の代わりに `;` でも境界を示せる。`;wagahai;ha;neko;dearu.` は
+同じ文になり、リテラルの `;` は `;;` と打つ。
 
 - `sekken-rs/` — 変換エンジン（Rust）。コマンドラインでの変換と、Emacs から使う JSON-RPC サーバー
 - `lisp/` — Emacs 側（`sekken-mode`）
@@ -50,14 +53,16 @@ nix build
 (setq sekken-server-program "/path/to/sekken"
       sekken-server-dic "~/.config/sekken/system.dic.zst"
       sekken-server-model "~/.config/sekken/model.zst"
-      sekken-server-jisyo "~/.config/sekken/SKK-JISYO.L")
-(add-hook 'text-mode-hook #'sekken-mode)
+      sekken-server-jisyo "~/.config/sekken/SKK-JISYO.L"
+      default-input-method "japanese-sekken")
+(require 'sekken)
 ;; 言語モデルで並べ替えるなら（1 変換あたり 150 ms ほど遅くなる）
 ;; (setq sekken-server-lm "~/.config/sekken/lm.zst")
 ```
 
-`sekken-mode` を有効にしたバッファでは、入力中の語が overlay でかな表示され、
-大文字境界は `▽` で示される。`C-j`（`sekken-convert-key`。`require` より前に設定する）で変換する。
+`C-\` で sekken を有効・無効にする。有効なバッファでは mode-line 左端に
+`-かな:-` が出て、入力中の語が overlay でかな表示され、変換境界は `▽` で示される。
+`C-j`（`sekken-convert-key`。`require` より前に設定する）で変換する。
 ポイント直前に変換する入力が無ければ、そのキーの元のコマンド（改行など）が動く。
 
 - 大文字を含まない語は、その場でひらがなに置き換わる
@@ -65,6 +70,8 @@ nix build
 - 同じ候補を `completion-at-point-functions` にも提供するので、`corfu-auto` なら入力中にも出る
 
 エンジンは最初の変換時にサブプロセスとして起動し、Emacs 終了時に止まる。
+起動後の idle 時に本番と同じ変換を一度通すため、通常は最初の入力より前に
+辞書とモデルの読み込みが終わる。打鍵で先読みが中断された場合は次の idle 時に再試行する。
 落ちた場合は次の変換で再起動し、連続して落ちたら `M-x sekken-server-restart` を待つ。
 
 ## ライセンス
