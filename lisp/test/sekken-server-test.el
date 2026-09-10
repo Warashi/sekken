@@ -34,6 +34,18 @@
   (let ((sekken-server-dic nil))
     (should-error (sekken-server--command) :type 'user-error)))
 
+(ert-deftest sekken-server/stderrはjsonrpcが期待する名前のバッファに繋ぐ ()
+  (let ((sekken-server-program "/opt/sekken")
+        (sekken-server-dic "/d/system.dic.zst")
+        (sekken-server-model "/d/model.zst")
+        (sekken-server-jisyo "/d/SKK-JISYO.L")
+        process-args)
+    (cl-letf (((symbol-function 'make-process)
+               (lambda (&rest args) (setq process-args args) 'process)))
+      (sekken-server--make-process))
+    (should (equal (buffer-name (plist-get process-args :stderr))
+                   "*sekken stderr*"))))
+
 (ert-deftest sekken-server/プロセスが死んで失敗したら連続異常終了として数える ()
   (require 'cl-lib)
   (let ((sekken-server--connection nil)

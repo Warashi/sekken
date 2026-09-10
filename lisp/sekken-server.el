@@ -98,7 +98,10 @@ nil の間はモデルの読み込み中とみなし、`sekken-server-startup-ti
                 :connection-type 'pipe
                 :coding 'utf-8-unix
                 :noquery t
-                :stderr (get-buffer-create " *sekken stderr*")))
+                ;; jsonrpc.el は "*NAME stderr*" という名前のバッファを自分で作り、
+                ;; プロセス生成後に隠し名へ rename する。別名を渡すと jsonrpc.el が
+                ;; 隠し名の既存バッファを kill し、stderr のパイプが閉じる。
+                :stderr (get-buffer-create "*sekken stderr*")))
 
 (defun sekken-server--on-shutdown (conn)
   "接続が閉じたときの後始末。"
