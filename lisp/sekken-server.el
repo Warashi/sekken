@@ -49,7 +49,7 @@
   "起動後に変換エンジンを先読みするまでのアイドル秒数。"
   :type 'number)
 
-(defconst sekken-server-version "0.1.0"
+(defconst sekken-server-version "0.2.0"
   "この Lisp が想定するエンジンのバージョン。")
 
 (defconst sekken-server--max-crashes 3
