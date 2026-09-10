@@ -51,7 +51,14 @@ impl EngineLoader {
             };
             let engine = match handle.join() {
                 Ok(engine) => engine,
-                Err(_) => Err(anyhow!("engine loader thread panicked")),
+                Err(payload) => {
+                    let reason = payload
+                        .downcast_ref::<String>()
+                        .map(String::as_str)
+                        .or_else(|| payload.downcast_ref::<&str>().copied())
+                        .unwrap_or("unknown panic");
+                    Err(anyhow!("engine loader thread panicked: {reason}"))
+                }
             };
             *self = EngineLoader::Loaded(Box::new(engine));
         }
@@ -191,7 +198,9 @@ mod tests {
             json!(1),
             &request("henkan", json!({ "input": "Neko" })),
         );
-        assert_eq!(reply.response.error.map(|e| e.code), Some(LOAD_FAILED));
+        let error = reply.response.error.expect("error response");
+        assert_eq!(error.code, LOAD_FAILED);
+        assert!(error.message.contains("boom"), "{}", error.message);
         assert!(reply.exit);
     }
 }
