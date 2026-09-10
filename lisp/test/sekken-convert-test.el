@@ -30,7 +30,11 @@
       (sekken-convert-test--with-engine '("猫" "ねこ")
         (cl-letf (((symbol-function 'completion-in-region)
                    (lambda (start end table &optional _pred)
-                     (setq called (list start end (all-completions "" table))))))
+                     (setq called
+                           (list start end
+                                 (all-completions
+                                  (buffer-substring-no-properties start end)
+                                  table))))))
           (sekken-convert)))
       (should (equal called '(1 5 ("猫" "ねこ")))))))
 
@@ -49,7 +53,7 @@
     (should (equal (try-completion "Neko" #'sekken-convert-table) "Neko"))
     (should (test-completion "猫" #'sekken-convert-table))))
 
-(ert-deftest sekken-convert/capf_は大文字境界を含む語だけに反応する ()
+(ert-deftest sekken-convert/capf_は変換境界を含む語だけに反応する ()
   (with-temp-buffer
     (insert "neko")
     (should (null (sekken-completion-at-point)))
@@ -57,7 +61,40 @@
     (let ((capf (sekken-completion-at-point)))
       (should (= (nth 0 capf) 6))
       (should (= (nth 1 capf) 10))
-      (should (eq (nth 2 capf) #'sekken-convert-table)))))
+      (should (eq (nth 2 capf) #'sekken-convert-table))
+      (should (eq (plist-get (nthcdr 3 capf) :exclusive) t))
+      (should (eq (plist-get (nthcdr 3 capf) :company-prefix-length) t)))))
+
+(ert-deftest sekken-convert/sticky_境界を変換候補に渡す ()
+  (with-temp-buffer
+    (insert ";shokai;kougi")
+    (let (called)
+      (sekken-convert-test--with-engine '("初回講義")
+        (cl-letf (((symbol-function 'completion-in-region)
+                   (lambda (start end table &optional _pred)
+                     (setq called
+                           (list (buffer-substring-no-properties start end)
+                                 (all-completions
+                                  (buffer-substring-no-properties start end)
+                                  table))))))
+          (sekken-convert)))
+      (should (equal called '(";shokai;kougi" ("初回講義")))))))
+
+(ert-deftest sekken-convert/sticky_待機中は候補を出さない ()
+  (with-temp-buffer
+    (insert ";")
+    (should-not (sekken-completion-at-point))
+    (sekken-convert-test--with-engine
+        (error "境界だけでエンジンを呼んではならない")
+      (should (equal (all-completions ";" #'sekken-convert-table) nil)))
+    (should-error (sekken-convert) :type 'user-error)))
+
+(ert-deftest sekken-convert/二重セミコロンはリテラルとして確定する ()
+  (with-temp-buffer
+    (insert "semi;;koron")
+    (sekken-convert-test--with-engine nil
+      (sekken-convert))
+    (should (equal (buffer-string) "せみ;ころん"))))
 
 (provide 'sekken-convert-test)
 ;;; sekken-convert-test.el ends here

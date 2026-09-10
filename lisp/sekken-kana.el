@@ -65,7 +65,8 @@
 `n' は単独で「ん」になるため例外とする。"
   (let ((len (length roman)))
     (if (and (> len 0)
-             (string-match-p "[b-df-mp-z]" (substring roman (1- len))))
+             (string-match-p "[bcdfghjklmpqrstvwxyz]"
+                             (substring roman (1- len))))
         (concat (sekken-kana-roman-to-kana (substring roman 0 (1- len)))
                 (substring roman (1- len)))
       (sekken-kana-roman-to-kana roman))))

@@ -13,9 +13,19 @@ pub struct Segmented {
 pub fn segment(roman: &str) -> Segmented {
     let mut prefix = String::new();
     let mut segments: Vec<String> = Vec::new();
-    for c in roman.chars() {
+    let mut chars = roman.chars().peekable();
+    while let Some(c) = chars.next() {
         if c.is_ascii_uppercase() {
             segments.push(c.to_ascii_lowercase().to_string());
+        } else if c == ';' && chars.peek() == Some(&';') {
+            chars.next();
+            if let Some(last) = segments.last_mut() {
+                last.push(';');
+            } else {
+                prefix.push(';');
+            }
+        } else if c == ';' {
+            segments.push(String::new());
         } else if let Some(last) = segments.last_mut() {
             last.push(c);
         } else {
@@ -55,5 +65,22 @@ mod tests {
     #[test]
     fn 大文字が無ければ全体が_prefix() {
         assert_eq!(segment("konnnichiha"), seg("konnnichiha", &[]));
+    }
+
+    #[test]
+    fn セミコロンを大文字と同じ境界として扱う() {
+        assert_eq!(
+            segment(";shokai;kougi"),
+            seg("", &["shokai", "kougi"])
+        );
+    }
+
+    #[test]
+    fn 二重セミコロンはリテラルのセミコロンになる() {
+        assert_eq!(segment("semi;;koron"), seg("semi;koron", &[]));
+        assert_eq!(
+            segment(";semi;;koron"),
+            seg("", &["semi;koron"])
+        );
     }
 }

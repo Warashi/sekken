@@ -24,7 +24,8 @@
 (ert-deftest sekken-kana/表示用は末尾の子音を変換せずに残す ()
   (should (equal (sekken-kana-display "nek") "ねk"))
   (should (equal (sekken-kana-display "kan") "かん"))
-  (should (equal (sekken-kana-display "neko") "ねこ")))
+  (should (equal (sekken-kana-display "neko") "ねこ"))
+  (should (equal (sekken-kana-display "kougi") "こうぎ")))
 
 (provide 'sekken-kana-test)
 ;;; sekken-kana-test.el ends here

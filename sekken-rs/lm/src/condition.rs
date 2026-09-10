@@ -1,6 +1,7 @@
 //! 条件付きモデルが採点する文に前置する入力の種類。
 
 use sekken_core::kana::{KanaTable, hira2kata};
+use sekken_core::segment::segment;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -20,16 +21,32 @@ impl Condition {
     pub fn prefix(self, table: &KanaTable, input: &str) -> Option<String> {
         match self {
             Condition::None => None,
-            Condition::Roman => Some(input.to_string()),
+            Condition::Roman => Some(canonical_roman(input)),
             Condition::Katakana => Some(roman_to_katakana(table, input)),
         }
     }
 }
 
+/// `;` 境界を、旧モデルが学習した大文字境界へ正規化する。
+fn canonical_roman(input: &str) -> String {
+    let segmented = segment(input);
+    let mut output = segmented.prefix;
+    for segment in segmented.segments {
+        let mut chars = segment.chars();
+        if let Some(first) = chars.next() {
+            output.push(first.to_ascii_uppercase());
+            output.extend(chars);
+        }
+    }
+    output
+}
+
 /// 大文字境界付きのローマ字入力をカタカナ読みにする。学習データを作るときと
 /// 採点するときの両方がこれを使い、同じ形になるようにする。
 pub fn roman_to_katakana(table: &KanaTable, input: &str) -> String {
-    hira2kata(&table.roman2kana(&input.to_lowercase()))
+    let segmented = segment(input);
+    let roman = segmented.prefix + &segmented.segments.concat();
+    hira2kata(&table.roman2kana(&roman))
 }
 
 #[cfg(test)]
@@ -52,6 +69,12 @@ mod tests {
                 .as_deref(),
             Some("NekogaNaku")
         );
+        assert_eq!(
+            Condition::Roman
+                .prefix(&KanaTable::default_table(), ";neko;ga;naku")
+                .as_deref(),
+            Some("NekoGaNaku")
+        );
     }
 
     #[test]
@@ -66,6 +89,12 @@ mod tests {
         assert_eq!(
             Condition::Katakana
                 .prefix(&t, "Ge-ruMojiwoKaxtuta")
+                .as_deref(),
+            Some("ゲールモジヲカッタ")
+        );
+        assert_eq!(
+            Condition::Katakana
+                .prefix(&t, ";ge-ru;mojiwo;kaxtuta")
                 .as_deref(),
             Some("ゲールモジヲカッタ")
         );

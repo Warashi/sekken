@@ -183,6 +183,17 @@ mod tests {
     }
 
     #[test]
+    fn セミコロン境界の文を変換する() {
+        let r = sekken().henkan(";wagahai;ha;neko;dearu.", 3);
+        assert_eq!(r[0], "我輩は猫である。");
+    }
+
+    #[test]
+    fn 二重セミコロンをリテラルとしてかなにする() {
+        assert_eq!(sekken().henkan("semi;;koron", 1)[0], "せみ;ころん");
+    }
+
+    #[test]
     fn 先頭の小文字はかなとして先頭に付く() {
         let r = sekken().henkan("soreHaNekoDa", 1);
         assert_eq!(r[0], "それは猫だ");

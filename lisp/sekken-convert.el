@@ -44,9 +44,12 @@ capf を呼び直さず table を使い回すため、候補を閉じ込める�
                (display-sort-function . identity)
                (cycle-sort-function . identity)))
    ((eq (car-safe action) 'boundaries) nil)
-   ((eq action t) (sekken-convert--candidates string))
+   ((eq action t)
+    (when (sekken-input-ready-p string)
+      (sekken-convert--candidates string)))
    ((null action) string)
-   ((eq action 'lambda) (and (member string (sekken-convert--candidates string)) t))
+   ((eq action 'lambda)
+    (and (member string (cdr sekken-convert--cache)) t))
    (t nil)))
 
 (defvar sekken-mode)
@@ -73,20 +76,24 @@ capf を呼び直さず table を使い回すため、候補を閉じ込める�
     (let* ((start (car bounds))
            (end (cdr bounds))
            (roman (buffer-substring-no-properties start end)))
-      (if (sekken-input-has-upper-p roman)
-          (completion-in-region start end #'sekken-convert-table)
+      (if (sekken-input-has-boundary-p roman)
+          (if (sekken-input-ready-p roman)
+              (completion-in-region start end #'sekken-convert-table)
+            (user-error "sekken: 変換境界の後に読みがありません"))
         (delete-region start end)
         (goto-char start)
-        (insert (sekken-kana-roman-to-kana roman))))))
+        (insert (sekken-kana-roman-to-kana
+                 (car (sekken-input-segment roman))))))))
 
 (defun sekken-completion-at-point ()
-  "大文字境界を含む入力中の語の変換候補を capf として返す。"
+  "変換境界を含む入力中の語の変換候補を capf として返す。"
   (let ((bounds (sekken-input-bounds)))
     (when (and bounds
-               (sekken-input-has-upper-p
+               (sekken-input-ready-p
                 (buffer-substring-no-properties (car bounds) (cdr bounds))))
       (list (car bounds) (cdr bounds) #'sekken-convert-table
-            :exclusive 'no))))
+            :exclusive t
+            :company-prefix-length t))))
 
 (provide 'sekken-convert)
 ;;; sekken-convert.el ends here
