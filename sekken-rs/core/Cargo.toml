@@ -6,4 +6,5 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+daachorse = "5.0.0"
 encoding_rs.workspace = true

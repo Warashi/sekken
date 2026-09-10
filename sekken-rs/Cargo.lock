@@ -370,6 +370,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "daachorse"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd10668980c9e7ba8aa2e616207d9ec52f7db66ebb47db857ed1f3c342530dad"
+
+[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1139,6 +1145,7 @@ name = "sekken-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "daachorse",
  "encoding_rs",
 ]
 
