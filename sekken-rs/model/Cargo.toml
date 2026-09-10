@@ -9,5 +9,3 @@ anyhow.workspace = true
 sekken-core = { path = "../core" }
 vibrato = "0.5"
 zstd = "0.14"
-serde = { version = "1", features = ["derive"] }
-postcard = { version = "1", features = ["use-std"] }

@@ -21,10 +21,17 @@ impl Segmenter for crate::tokenizer::Tokenizer {
     }
 }
 
+/// 表層形を分けた 1 語。id の引き当ては二分探索なので、表層形ごとに一度だけ行う。
+#[derive(Clone, Copy)]
+struct Word {
+    id: Option<u32>,
+    chars: usize,
+}
+
 pub struct NgramScorer<S: Segmenter> {
     model: NgramModel,
     segmenter: S,
-    cache: RefCell<HashMap<String, Vec<String>>>,
+    cache: RefCell<HashMap<String, Vec<Word>>>,
 }
 
 impl<S: Segmenter> NgramScorer<S> {
@@ -36,25 +43,33 @@ impl<S: Segmenter> NgramScorer<S> {
         }
     }
 
-    fn tokens(&self, surface: &str) -> Vec<String> {
-        if let Some(t) = self.cache.borrow().get(surface) {
-            return t.clone();
+    fn words(&self, surface: &str) -> Vec<Word> {
+        if let Some(w) = self.cache.borrow().get(surface) {
+            return w.clone();
         }
-        let t = self.segmenter.split(surface);
+        let words: Vec<Word> = self
+            .segmenter
+            .split(surface)
+            .iter()
+            .map(|t| Word {
+                id: self.model.id(t),
+                chars: t.chars().count(),
+            })
+            .collect();
         self.cache
             .borrow_mut()
-            .insert(surface.to_string(), t.clone());
-        t
+            .insert(surface.to_string(), words.clone());
+        words
     }
 
-    fn cost(&self, prev: Option<&str>, next: Option<&str>) -> f64 {
+    fn cost(&self, prev: Option<Word>, next: Option<Word>) -> f64 {
         let prev_id = match prev {
             None => Some(crate::ngram::BOS),
-            Some(p) => self.model.id(p),
+            Some(p) => p.id,
         };
         let (next_id, chars) = match next {
             None => (Some(crate::ngram::EOS), 0),
-            Some(n) => (self.model.id(n), n.chars().count()),
+            Some(n) => (n.id, n.chars),
         };
         self.model.transition_cost(prev_id, next_id, chars)
     }
@@ -62,24 +77,15 @@ impl<S: Segmenter> NgramScorer<S> {
 
 impl<S: Segmenter> Scorer for NgramScorer<S> {
     fn unigram(&self, surface: &str) -> f64 {
-        let tokens = self.tokens(surface);
-        tokens
+        self.words(surface)
             .windows(2)
-            .map(|w| self.cost(Some(&w[0]), Some(&w[1])))
+            .map(|w| self.cost(Some(w[0]), Some(w[1])))
             .sum()
     }
 
     fn bigram(&self, left: Option<&str>, right: Option<&str>) -> f64 {
-        let left_tokens = left.map(|s| self.tokens(s));
-        let right_tokens = right.map(|s| self.tokens(s));
-        let prev = left_tokens
-            .as_ref()
-            .and_then(|t| t.last())
-            .map(String::as_str);
-        let next = right_tokens
-            .as_ref()
-            .and_then(|t| t.first())
-            .map(String::as_str);
+        let prev = left.and_then(|s| self.words(s).last().copied());
+        let next = right.and_then(|s| self.words(s).first().copied());
         // 左が文頭なら prev は None（BOS）。左があるのに語が無いことは無い。
         self.cost(prev, next)
     }
@@ -88,6 +94,7 @@ impl<S: Segmenter> Scorer for NgramScorer<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ngram::NgramCounter;
 
     struct CharSegmenter;
     impl Segmenter for CharSegmenter {
@@ -97,7 +104,7 @@ mod tests {
     }
 
     fn scorer() -> NgramScorer<CharSegmenter> {
-        let mut m = NgramModel::new();
+        let mut m = NgramCounter::new();
         // 平滑化の擬似頻度（PRIOR）に埋もれない程度に繰り返す。
         for _ in 0..500 {
             m.add_sentence(["猫", "が", "鳴", "く"]);
@@ -105,7 +112,7 @@ mod tests {
         for _ in 0..100 {
             m.add_sentence(["書", "く"]);
         }
-        NgramScorer::new(m, CharSegmenter)
+        NgramScorer::new(m.freeze().unwrap(), CharSegmenter)
     }
 
     #[test]

@@ -1167,9 +1167,7 @@ name = "sekken-model"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "postcard",
  "sekken-core",
- "serde",
  "vibrato",
  "zstd",
 ]
