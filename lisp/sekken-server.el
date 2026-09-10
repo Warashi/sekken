@@ -40,6 +40,11 @@
   "変換要求の応答を待つ秒数。"
   :type 'number)
 
+(defcustom sekken-server-startup-timeout 60
+  "起動後、初回の変換が成功するまでの間、変換要求の応答を待つ秒数。
+エンジンはモデルの読み込みを終えるまで変換に応答しない。"
+  :type 'number)
+
 (defcustom sekken-server-prewarm-delay 1
   "起動後に変換エンジンを先読みするまでのアイドル秒数。"
   :type 'number)
@@ -53,8 +58,17 @@
 (defconst sekken-server--input-canceled 'sekken-server-input-canceled
   "打鍵によって JSON-RPC 要求を中断したことを表す値。")
 
+(defconst sekken-server--load-failed-code -32000
+  "エンジンがモデルの読み込みに失敗したときの JSON-RPC エラーコード。
+エンジンはこの応答を書いた直後に終了するが、Emacs 側が応答を処理する
+時点ではまだプロセスが生きて見えることがあるので、コードで判定する。")
+
 (defvar sekken-server--connection nil
   "エンジンとの `jsonrpc-process-connection'。")
+
+(defvar sekken-server--warmed nil
+  "現在の接続で変換が一度でも成功していれば non-nil。
+nil の間はモデルの読み込み中とみなし、`sekken-server-startup-timeout' で待つ。")
 
 (defvar sekken-server--crashes 0
   "直近の連続異常終了回数。正常応答で 0 に戻す。")
@@ -100,7 +114,8 @@
                              :process #'sekken-server--make-process
                              :on-shutdown #'sekken-server--on-shutdown))
         connected)
-    (setq sekken-server--connection conn)
+    (setq sekken-server--connection conn
+          sekken-server--warmed nil)
     (unwind-protect
         (let ((version (plist-get (jsonrpc-request
                                    conn :version nil
@@ -129,6 +144,19 @@
           (user-error "sekken: エンジンが連続して落ちました。M-x sekken-server-restart で再起動してください"))
         (sekken-server--connect))))
 
+(defun sekken-server--henkan-timeout ()
+  "変換要求の応答を待つ秒数。初回の変換が成功するまでは起動中として長く待つ。"
+  (if sekken-server--warmed
+      sekken-server-timeout
+    sekken-server-startup-timeout))
+
+(defun sekken-server--crash-p (err)
+  "変換要求の失敗 ERR をエンジンの異常終了として数えるなら non-nil。"
+  (or (not (and sekken-server--connection
+                (jsonrpc-running-p sekken-server--connection)))
+      (eql (alist-get 'jsonrpc-error-code (cdr err))
+           sekken-server--load-failed-code)))
+
 (defun sekken-server-henkan (input top &optional cancel-on-input)
   "INPUT を変換し、候補文字列のリストを最大 TOP 個返す。"
   (condition-case err
@@ -136,18 +164,18 @@
              (jsonrpc-request
               (sekken-server-connection) :henkan
               (list :input input :top top)
-              :timeout sekken-server-timeout
+              :timeout (sekken-server--henkan-timeout)
               :cancel-on-input cancel-on-input
               :cancel-on-input-retval sekken-server--input-canceled)))
         (setq sekken-server--crashes 0)
         (if (eq result sekken-server--input-canceled)
             result
+          (setq sekken-server--warmed t)
           (append (plist-get result :candidates) nil)))
     (error
      ;; エンジンの異常終了もタイムアウトも jsonrpc-error で届くので、
      ;; エラーの種類ではなくプロセスが死んだかどうかで数える。
-     (unless (and sekken-server--connection
-                  (jsonrpc-running-p sekken-server--connection))
+     (when (sekken-server--crash-p err)
        (setq sekken-server--crashes (1+ sekken-server--crashes)))
      (signal (car err) (cdr err)))))
 
