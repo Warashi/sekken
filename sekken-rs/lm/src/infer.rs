@@ -336,8 +336,6 @@ impl Infer {
         let (hs, rest) = state.split_at_mut(p * n);
         let (vp, phi) = rest.split_at_mut(p * n);
 
-        let b_n = rms_normalized(b);
-        let c_n = rms_normalized(c);
         let mut b_rot = [0.0f32; MAX_STATE];
         let mut c_rot = [0.0f32; MAX_STATE];
         let delta = softplus(dt[hd] + blk.dt_bias[hd]);
@@ -345,18 +343,34 @@ impl Infer {
         let lambda = sigmoid(lam[hd] + blk.lambda_bias[hd]);
         let gamma = lambda * delta;
         let beta = (1.0 - lambda) * delta * alpha;
-        for j in 0..n / 2 {
-            phi[j] += (theta[hd * n / 2 + j] + blk.theta_bias[hd * n / 2 + j]) * delta;
-            let (sin, cos) = phi[j].sin_cos();
-            let b0 = b_n[2 * j] + blk.b_bias[hd * n + 2 * j];
-            let b1 = b_n[2 * j + 1] + blk.b_bias[hd * n + 2 * j + 1];
-            b_rot[2 * j] = b0 * cos + b1 * sin;
-            b_rot[2 * j + 1] = b1 * cos - b0 * sin;
-            let c0 = c_n[2 * j] + blk.c_bias[hd * n + 2 * j];
-            let c1 = c_n[2 * j + 1] + blk.c_bias[hd * n + 2 * j + 1];
-            c_rot[2 * j] = c0 * cos + c1 * sin;
-            c_rot[2 * j + 1] = c1 * cos - c0 * sin;
+        let mut dtheta = [0.0f32; MAX_STATE / 2];
+        for (d, (t, tb)) in dtheta.iter_mut().zip(
+            theta[hd * n / 2..(hd + 1) * n / 2]
+                .iter()
+                .zip(&blk.theta_bias[hd * n / 2..]),
+        ) {
+            *d = (t + tb) * delta;
         }
+        let mut sin = [0.0f32; MAX_STATE / 2];
+        let mut cos = [0.0f32; MAX_STATE / 2];
+        simd::advance_angles(phi, &dtheta[..n / 2], &mut sin[..n / 2], &mut cos[..n / 2]);
+        let bias = hd * n..(hd + 1) * n;
+        simd::rotate_pairs(
+            b,
+            rms_scale(b),
+            &blk.b_bias[bias.clone()],
+            &sin[..n / 2],
+            &cos[..n / 2],
+            &mut b_rot[..n],
+        );
+        simd::rotate_pairs(
+            c,
+            rms_scale(c),
+            &blk.c_bias[bias],
+            &sin[..n / 2],
+            &cos[..n / 2],
+            &mut c_rot[..n],
+        );
         let xh = &x[hd * p..(hd + 1) * p];
         let mut y = y;
         for pi in 0..p {
@@ -639,11 +653,10 @@ fn softplus(x: f32) -> f32 {
     x.max(0.0) + (1.0 + (-x.abs()).exp()).ln()
 }
 
-/// 最後の次元で RMS を 1 にする（candle 側の `rms_normalize` と同じ式）。
-fn rms_normalized(x: &[f32]) -> Vec<f32> {
+/// RMS を 1 にする倍率（candle 側の `rms_normalize` と同じ式）。
+fn rms_scale(x: &[f32]) -> f32 {
     let ms = x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32;
-    let s = 1.0 / (ms + 1e-6).sqrt();
-    x.iter().map(|v| v * s).collect()
+    1.0 / (ms + 1e-6).sqrt()
 }
 
 /// 行ごとに RMS を 1 にして重みを掛ける。
