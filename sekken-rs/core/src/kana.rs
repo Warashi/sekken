@@ -142,12 +142,15 @@ mod tests {
 
 /// ひらがなをカタカナにする。ひらがな以外はそのまま。
 pub fn hira2kata(s: &str) -> String {
-    s.chars()
-        .map(|c| match c as u32 {
-            0x3041..=0x3096 => char::from_u32(c as u32 + 0x60).unwrap_or(c),
-            _ => c,
-        })
-        .collect()
+    s.chars().map(hira2kata_char).collect()
+}
+
+/// ひらがな 1 字をカタカナにする。ひらがな以外はそのまま。
+pub fn hira2kata_char(c: char) -> char {
+    match c as u32 {
+        0x3041..=0x3096 => char::from_u32(c as u32 + 0x60).unwrap_or(c),
+        _ => c,
+    }
 }
 
 #[cfg(test)]

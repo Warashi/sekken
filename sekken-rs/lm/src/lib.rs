@@ -2,6 +2,7 @@ pub mod condition;
 pub mod config;
 pub mod file;
 pub mod infer;
+pub mod interleave;
 pub mod scorer;
 pub mod session;
 mod simd;
