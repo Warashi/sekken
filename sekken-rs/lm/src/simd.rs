@@ -63,19 +63,30 @@ mod neon {
             let n = vrndnq_f32(vmulq_f32(x, vdupq_n_f32(std::f32::consts::LOG2_E)));
             let r = vfmsq_f32(x, n, vdupq_n_f32(0.693_359_4));
             let r = vfmsq_f32(r, n, vdupq_n_f32(-2.121_944_4e-4));
-            let mut p = vdupq_n_f32(1.987_569_2e-4);
-            p = vfmaq_f32(vdupq_n_f32(1.398_2e-3), p, r);
-            p = vfmaq_f32(vdupq_n_f32(8.333_452e-3), p, r);
-            p = vfmaq_f32(vdupq_n_f32(4.166_579_6e-2), p, r);
-            p = vfmaq_f32(vdupq_n_f32(1.666_666_5e-1), p, r);
-            p = vfmaq_f32(vdupq_n_f32(0.5), p, r);
+            // 多項式は依存の鎖を短くするため Estrin の形で評価する
             let r2 = vmulq_f32(r, r);
-            p = vfmaq_f32(r, p, r2);
-            p = vaddq_f32(p, vdupq_n_f32(1.0));
+            let r4 = vmulq_f32(r2, r2);
+            let p01 = vfmaq_f32(vdupq_n_f32(0.5), vdupq_n_f32(1.666_666_5e-1), r);
+            let p23 = vfmaq_f32(vdupq_n_f32(4.166_579_6e-2), vdupq_n_f32(8.333_452e-3), r);
+            let p45 = vfmaq_f32(vdupq_n_f32(1.398_2e-3), vdupq_n_f32(1.987_569_2e-4), r);
+            let p = vfmaq_f32(vfmaq_f32(p01, p23, r2), p45, r4);
+            let p = vfmaq_f32(r, p, r2);
+            let p = vaddq_f32(p, vdupq_n_f32(1.0));
             // 2^n を指数部に置く
             let e = vshlq_n_s32::<23>(vaddq_s32(vcvtq_s32_f32(n), vdupq_n_s32(127)));
             vmulq_f32(p, vreinterpretq_f32_s32(e))
         }
+    }
+
+    /// 独立な 4 本の exp。依存の鎖が長いので、並べて out-of-order に重ねる。
+    #[inline(always)]
+    pub unsafe fn exp4x4(x: [float32x4_t; 4]) -> [float32x4_t; 4] {
+        unsafe { std::array::from_fn(|i| exp4(x[i])) }
+    }
+
+    #[inline(always)]
+    pub unsafe fn silu4x4(x: [float32x4_t; 4]) -> [float32x4_t; 4] {
+        unsafe { std::array::from_fn(|i| silu4(x[i])) }
     }
 
     /// 4 要素の silu。exp の丸めで分母が頭打ちになる大きな負の入力は、
@@ -139,13 +150,16 @@ mod neon {
 #[cfg(target_arch = "aarch64")]
 fn silu_mul_impl(g: &mut [f32], u: &[f32]) {
     use std::arch::aarch64::*;
-    let (g4, gr) = g.as_chunks_mut::<4>();
-    let (u4, ur) = u.as_chunks::<4>();
-    // 添字は両方の配列の長さに収めている。
+    // 1 要素ずつの依存の鎖が長いので、4 本を並べて out-of-order に重ねる。
+    let (g16, gr) = g.as_chunks_mut::<16>();
+    let (u16, ur) = u.as_chunks::<16>();
     unsafe {
-        for (a, b) in g4.iter_mut().zip(u4) {
-            let v = vmulq_f32(neon::silu4(vld1q_f32(a.as_ptr())), vld1q_f32(b.as_ptr()));
-            vst1q_f32(a.as_mut_ptr(), v);
+        for (a, b) in g16.iter_mut().zip(u16) {
+            let x: [float32x4_t; 4] = std::array::from_fn(|i| vld1q_f32(a.as_ptr().add(i * 4)));
+            for (i, y) in neon::silu4x4(x).into_iter().enumerate() {
+                let v = vmulq_f32(y, vld1q_f32(b.as_ptr().add(i * 4)));
+                vst1q_f32(a.as_mut_ptr().add(i * 4), v);
+            }
         }
     }
     for (a, b) in gr.iter_mut().zip(ur) {
@@ -156,13 +170,16 @@ fn silu_mul_impl(g: &mut [f32], u: &[f32]) {
 #[cfg(target_arch = "aarch64")]
 fn mul_silu_impl(dst: &mut [f32], s: &[f32], z: &[f32]) {
     use std::arch::aarch64::*;
-    let (d4, dr) = dst.as_chunks_mut::<4>();
-    let (s4, sr) = s.as_chunks::<4>();
-    let (z4, zr) = z.as_chunks::<4>();
+    let (d16, dr) = dst.as_chunks_mut::<16>();
+    let (s16, sr) = s.as_chunks::<16>();
+    let (z16, zr) = z.as_chunks::<16>();
     unsafe {
-        for ((d, a), b) in d4.iter_mut().zip(s4).zip(z4) {
-            let v = vmulq_f32(vld1q_f32(a.as_ptr()), neon::silu4(vld1q_f32(b.as_ptr())));
-            vst1q_f32(d.as_mut_ptr(), v);
+        for ((d, a), b) in d16.iter_mut().zip(s16).zip(z16) {
+            let x: [float32x4_t; 4] = std::array::from_fn(|i| vld1q_f32(b.as_ptr().add(i * 4)));
+            for (i, y) in neon::silu4x4(x).into_iter().enumerate() {
+                let v = vmulq_f32(vld1q_f32(a.as_ptr().add(i * 4)), y);
+                vst1q_f32(d.as_mut_ptr().add(i * 4), v);
+            }
         }
     }
     for ((d, a), b) in dr.iter_mut().zip(sr).zip(zr) {
@@ -233,14 +250,21 @@ fn rotate_pairs_impl(
 #[cfg(target_arch = "aarch64")]
 fn sum_exp_shifted(row: &[f32], max: f32) -> f32 {
     use std::arch::aarch64::*;
-    let (r4, rr) = row.as_chunks::<4>();
+    let (r16, rr) = row.as_chunks::<16>();
     let mut total = unsafe {
         let m = vdupq_n_f32(max);
-        let mut acc = vdupq_n_f32(0.0);
-        for v in r4 {
-            acc = vaddq_f32(acc, neon::exp4(vsubq_f32(vld1q_f32(v.as_ptr()), m)));
+        let mut acc = [vdupq_n_f32(0.0); 4];
+        for v in r16 {
+            let x: [float32x4_t; 4] =
+                std::array::from_fn(|i| vsubq_f32(vld1q_f32(v.as_ptr().add(i * 4)), m));
+            for (a, e) in acc.iter_mut().zip(neon::exp4x4(x)) {
+                *a = vaddq_f32(*a, e);
+            }
         }
-        vaddvq_f32(acc)
+        vaddvq_f32(vaddq_f32(
+            vaddq_f32(acc[0], acc[1]),
+            vaddq_f32(acc[2], acc[3]),
+        ))
     };
     for v in rr {
         total += (v - max).exp();
