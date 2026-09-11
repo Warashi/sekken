@@ -49,9 +49,10 @@ impl<S: Segmenter> NgramScorer<S> {
         }
     }
 
-    fn words(&self, surface: &str) -> Vec<Word> {
+    /// `surface` の語の列に `f` を適用する。列を複製せずに済ませるため。
+    fn with_words<R>(&self, surface: &str, f: impl FnOnce(&[Word]) -> R) -> R {
         if let Some(w) = self.cache.borrow().get(surface) {
-            return w.clone();
+            return f(w);
         }
         let words: Vec<Word> = self
             .segmenter
@@ -62,12 +63,13 @@ impl<S: Segmenter> NgramScorer<S> {
                 chars: t.chars().count(),
             })
             .collect();
+        let r = f(&words);
         let mut cache = self.cache.borrow_mut();
         if cache.len() >= CACHE_LIMIT {
             cache.clear();
         }
-        cache.insert(surface.to_string(), words.clone());
-        words
+        cache.insert(surface.to_string(), words);
+        r
     }
 
     fn id(&self, token: &str) -> Option<u32> {
@@ -98,15 +100,17 @@ impl<S: Segmenter> NgramScorer<S> {
 
 impl<S: Segmenter> Scorer for NgramScorer<S> {
     fn unigram(&self, surface: &str) -> f64 {
-        self.words(surface)
-            .windows(2)
-            .map(|w| self.cost(Some(w[0]), Some(w[1])))
-            .sum()
+        self.with_words(surface, |words| {
+            words
+                .windows(2)
+                .map(|w| self.cost(Some(w[0]), Some(w[1])))
+                .sum()
+        })
     }
 
     fn bigram(&self, left: Option<&str>, right: Option<&str>) -> f64 {
-        let prev = left.and_then(|s| self.words(s).last().copied());
-        let next = right.and_then(|s| self.words(s).first().copied());
+        let prev = left.and_then(|s| self.with_words(s, |w| w.last().copied()));
+        let next = right.and_then(|s| self.with_words(s, |w| w.first().copied()));
         // 左が文頭なら prev は None（BOS）。左があるのに語が無いことは無い。
         self.cost(prev, next)
     }
