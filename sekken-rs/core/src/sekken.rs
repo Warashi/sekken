@@ -33,13 +33,14 @@ impl<S: Scorer> Sekken<S> {
                 .collect(),
         };
         if let Some(speculator) = &self.speculator {
-            let mut result: Vec<String> = speculator
-                .decode(&lattice, &self.scorer, roman, &prefix)
+            let decoded = speculator.decode(&lattice, &self.scorer, roman, &prefix, top_n);
+            let mut result: Vec<String> = decoded
+                .scored
                 .into_iter()
                 .map(|path| prefix.clone() + &path.surfaces.concat())
                 .collect();
             // 反復で得た経路だけでは足りないので、残りは格子の順位で埋める。
-            for path in lattice.nbest(&self.scorer, top_n) {
+            for path in decoded.lattice {
                 let s = prefix.clone() + &path.surfaces.concat();
                 if !result.contains(&s) {
                     result.push(s);

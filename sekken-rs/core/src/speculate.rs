@@ -40,6 +40,15 @@ struct Site {
     alternatives: Vec<(char, usize)>,
 }
 
+/// 投機的な変換の結果。
+pub struct Decoded {
+    /// 反復で採点した経路。合成コストの小さい順。
+    pub scored: Vec<Path>,
+    /// 反復 0 回目の格子の上位（`top_n` 本まで、格子の順位）。採点した経路の
+    /// 後ろを埋めるのに使う。同じ格子を探索し直さずに済ませるため一緒に返す。
+    pub lattice: Vec<Path>,
+}
+
 /// 採点済みの経路。`cost` は格子と検証器の合成コスト。
 struct Scored {
     path: Path,
@@ -50,13 +59,15 @@ struct Scored {
 impl Speculator {
     /// 反復で得た経路を合成コストの小さい順に返す。`input` は変換前のローマ字入力、
     /// `head` は格子の外で文頭に付くかなで、検証器に渡す文に前置する。
+    /// `top_n` は一緒に返す格子の上位の本数。
     pub fn decode(
         &self,
         lattice: &Lattice,
         scorer: &dyn Scorer,
         input: &str,
         head: &str,
-    ) -> Vec<Path> {
+        top_n: usize,
+    ) -> Decoded {
         let head_len = head.chars().count();
         let mut seen: HashSet<Vec<String>> = HashSet::new();
         let mut tried: HashSet<Constraint> = HashSet::new();
@@ -67,12 +78,19 @@ impl Speculator {
         let scorer = Memo::new(scorer);
         let scorer = &scorer;
         let mut session = self.verifier.begin(input);
-        for _ in 0..=self.rounds {
-            let paths: Vec<Path> = lattice
-                .nbest_constrained(scorer, self.width, &constraint)
-                .into_iter()
-                .filter(|p| seen.insert(p.surfaces.clone()))
-                .collect();
+        let mut first: Vec<Path> = Vec::new();
+        for round in 0..=self.rounds {
+            let mut paths: Vec<Path>;
+            if round == 0 {
+                // 制約の無い探索は格子の順位そのものなので、多めに取って
+                // 先頭 `width` 本を採点し、全体は埋め草として返す。
+                first = lattice.nbest_constrained(scorer, self.width.max(top_n), &constraint);
+                paths = first.iter().take(self.width).cloned().collect();
+                first.truncate(top_n);
+            } else {
+                paths = lattice.nbest_constrained(scorer, self.width, &constraint);
+            }
+            paths.retain(|p| seen.insert(p.surfaces.clone()));
             if !paths.is_empty() {
                 let scored = self.score(lattice, &mut *session, head, head_len, paths);
                 for s in scored {
@@ -98,7 +116,10 @@ impl Speculator {
             constraint = next;
         }
         results.sort_by(|a, b| a.cost.total_cmp(&b.cost));
-        results
+        Decoded {
+            scored: results,
+            lattice: first,
+        }
     }
 
     /// 経路をまとめて採点し、次の提案に使う位置の情報を付ける。
@@ -362,7 +383,7 @@ mod tests {
     #[test]
     fn 検証器が下書きに同意すれば格子の先頭候補のまま() {
         let s = speculator(vec![(0, '法')], "法貨", 3);
-        let result = s.decode(&lattice(), &scorer(), "", "");
+        let result = s.decode(&lattice(), &scorer(), "", "", 1).scored;
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].surfaces, ["法貨", "と"]);
     }
@@ -370,7 +391,7 @@ mod tests {
     #[test]
     fn 検証器が別の字を好めばその字で始まる候補に置き換わる() {
         let s = speculator(vec![(0, '放')], "放火", 3);
-        let result = s.decode(&lattice(), &scorer(), "", "");
+        let result = s.decode(&lattice(), &scorer(), "", "", 1).scored;
         assert_eq!(result[0].surfaces, ["放火", "と"]);
         assert_eq!(result[1].surfaces, ["法貨", "と"]);
     }
@@ -378,7 +399,7 @@ mod tests {
     #[test]
     fn 反復_0_回なら格子の先頭候補のまま() {
         let s = speculator(vec![(0, '放')], "放火", 0);
-        let result = s.decode(&lattice(), &scorer(), "", "");
+        let result = s.decode(&lattice(), &scorer(), "", "", 1).scored;
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].surfaces, ["法貨", "と"]);
     }
@@ -387,7 +408,7 @@ mod tests {
     fn 提案した経路の合成コストが悪ければ元の下書きを先頭に保つ() {
         // 字の提案は 放 だが、文全体では 法貨 のほうが良いと言う検証器。
         let s = speculator(vec![(0, '放')], "法貨", 3);
-        let result = s.decode(&lattice(), &scorer(), "", "");
+        let result = s.decode(&lattice(), &scorer(), "", "", 1).scored;
         assert_eq!(result[0].surfaces, ["法貨", "と"]);
         assert_eq!(result[1].surfaces, ["放火", "と"]);
     }
@@ -396,7 +417,7 @@ mod tests {
     fn 退けた提案は繰り返さず次に差の大きい提案に移る() {
         // 放 の提案は文全体で退けられるので、次は ほ の提案を試す。
         let s = speculator(vec![(0, '放'), (0, 'ほ')], "ほうか", 3);
-        let result = s.decode(&lattice(), &scorer(), "", "");
+        let result = s.decode(&lattice(), &scorer(), "", "", 1).scored;
         assert_eq!(result[0].surfaces, ["ほうか", "と"]);
         assert_eq!(result.len(), 3);
     }
@@ -405,7 +426,7 @@ mod tests {
     fn 文頭のかなの分だけ位置がずれる() {
         // 「それは」が前置されるので 放 は位置 3 にある。
         let s = speculator(vec![(3, '放')], "放火", 3);
-        let result = s.decode(&lattice(), &scorer(), "", "それは");
+        let result = s.decode(&lattice(), &scorer(), "", "それは", 1).scored;
         assert_eq!(result[0].surfaces, ["放火", "と"]);
     }
 
@@ -416,7 +437,7 @@ mod tests {
         };
         let scorer = MapScorer(HashMap::from([("学習", 1.0), ("学修", 2.0)]));
         let s = speculator(vec![(1, '修')], "学修", 3);
-        let result = s.decode(&lattice, &scorer, "", "");
+        let result = s.decode(&lattice, &scorer, "", "", 1).scored;
         assert_eq!(result[0].surfaces, ["学修"]);
     }
 
@@ -436,15 +457,23 @@ mod tests {
         ]));
         let mut s = speculator(vec![(0, '放')], "放火戸", 1);
         s.width = 2;
-        let result = s.decode(&lattice, &scorer, "", "");
+        let result = s.decode(&lattice, &scorer, "", "", 1).scored;
         // 提案 放 の制約で 放火と・放火戸 の 2 本を採点し、文全体で良い 放火戸 が先頭。
         assert_eq!(result[0].surfaces, ["放火", "戸"]);
     }
 
     #[test]
+    fn 格子の順位の経路も返し_別に探索したのと同じ() {
+        let s = speculator(vec![(0, '放')], "放火", 3);
+        let d = s.decode(&lattice(), &scorer(), "", "", 2);
+        assert_eq!(d.lattice, lattice().nbest(&scorer(), 2));
+        assert_eq!(d.scored[0].surfaces, ["放火", "と"]);
+    }
+
+    #[test]
     fn 経路は重複しない() {
         let s = speculator(vec![(0, '放'), (0, '法')], "法貨", 5);
-        let result = s.decode(&lattice(), &scorer(), "", "");
+        let result = s.decode(&lattice(), &scorer(), "", "", 1).scored;
         let mut seen = std::collections::HashSet::new();
         assert!(result.iter().all(|p| seen.insert(p.surfaces.clone())));
     }
