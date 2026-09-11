@@ -476,7 +476,7 @@ fn step_row4(
 }
 
 /// `dst` (m × n) = `x` (m × k) · `w` (n × k)^T。出力の列（重みの行）をスレッドで分け、
-/// 各スレッドは自分の列の塊に全行を掛ける。重みの塊は L2、入力は L1 に収まる。
+/// 各スレッドは自分の列の塊に全行を掛ける。
 #[doc(hidden)]
 pub fn matmul_t(
     x: &[f32],
@@ -517,12 +517,15 @@ pub fn matmul_t(
 const TILE: usize = 4;
 
 /// `matmul_t` の 1 スレッド分。行と列を TILE ずつの組に分けて内積を取る。
+/// 列の組を外側にし、重みの各行は 1 度だけ読む。内側で回る入力の全行は
+/// L1 に収まる大きさで、重みの組（4 行 × k）は L1 に留まったまま入力の
+/// 行の組を順に掛ける。
 #[cfg(target_arch = "aarch64")]
 fn matmul_t_chunk(x: &[f32], m: usize, k: usize, w: &[f32], n: usize, dst: &mut [f32]) {
-    for r0 in (0..m).step_by(TILE) {
-        let rows = (m - r0).min(TILE);
-        for c0 in (0..n).step_by(TILE) {
-            let cols = (n - c0).min(TILE);
+    for c0 in (0..n).step_by(TILE) {
+        let cols = (n - c0).min(TILE);
+        for r0 in (0..m).step_by(TILE) {
+            let rows = (m - r0).min(TILE);
             let mut out = [[0.0f32; TILE]; TILE];
             match (rows, cols) {
                 (4, 4) => tile::<4, 4>(x, r0, k, w, c0, &mut out),
