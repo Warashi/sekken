@@ -15,6 +15,7 @@
 use anyhow::{Context as _, Result, bail};
 
 use crate::config::{ModelConfig, Weight};
+use crate::simd;
 
 struct Block {
     norm1: Vec<f32>,
@@ -253,9 +254,7 @@ impl Infer {
                 for hd in 0..h {
                     let src = &y_heads[(hd * rows + r) * p..(hd * rows + r + 1) * p];
                     let dst = &mut y[r * inner + hd * p..r * inner + (hd + 1) * p];
-                    for ((d, s), zi) in dst.iter_mut().zip(src).zip(&z[hd * p..(hd + 1) * p]) {
-                        *d = s * silu(*zi);
-                    }
+                    simd::mul_silu(dst, src, &z[hd * p..(hd + 1) * p]);
                 }
             }
             self.linear(&y, rows, &blk.out_proj, &mut out);
@@ -265,9 +264,7 @@ impl Infer {
             rms_norm_rows(&x, &blk.norm2, &mut xn, d);
             self.linear(&xn, rows, &blk.gate, &mut g);
             self.linear(&xn, rows, &blk.up, &mut u);
-            for (a, b) in g.iter_mut().zip(&u) {
-                *a = silu(*a) * b;
-            }
+            simd::silu_mul(&mut g, &u);
             self.linear(&g, rows, &blk.down, &mut out);
             for (a, b) in x.iter_mut().zip(&out) {
                 *a += b;
@@ -278,9 +275,9 @@ impl Infer {
         self.linear(&xn, rows, &self.head, &mut logits);
         let lse: Vec<f32> = if self.threads > 1 {
             use rayon::prelude::*;
-            logits.par_chunks_exact(v).map(log_sum_exp).collect()
+            logits.par_chunks_exact(v).map(simd::log_sum_exp).collect()
         } else {
-            logits.chunks_exact(v).map(log_sum_exp).collect()
+            logits.chunks_exact(v).map(simd::log_sum_exp).collect()
         };
         Read {
             proj: proj_all,
@@ -633,10 +630,6 @@ fn dot(a: &[f32], b: &[f32]) -> f32 {
     acc[0] + acc[1] + acc[2] + acc[3] + ar.iter().zip(br).map(|(x, y)| x * y).sum::<f32>()
 }
 
-fn silu(x: f32) -> f32 {
-    x * sigmoid(x)
-}
-
 fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + (-x).exp())
 }
@@ -662,11 +655,6 @@ fn rms_norm_rows(x: &[f32], weight: &[f32], dst: &mut [f32], d: usize) {
             *o = v * s * w;
         }
     }
-}
-
-fn log_sum_exp(row: &[f32]) -> f32 {
-    let max = row.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-    max + row.iter().map(|v| (v - max).exp()).sum::<f32>().ln()
 }
 
 #[cfg(test)]
