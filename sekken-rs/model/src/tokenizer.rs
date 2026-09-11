@@ -1,8 +1,10 @@
 //! vibrato による分かち書き。
 
+use std::cell::RefCell;
 use std::path::Path;
 
 use anyhow::{Context as _, Result};
+use vibrato::tokenizer::worker::Worker;
 use vibrato::{Dictionary, Tokenizer as VibratoTokenizer};
 
 /// 分かち書きした 1 語。
@@ -14,7 +16,12 @@ pub struct Token {
 }
 
 pub struct Tokenizer {
-    inner: VibratoTokenizer,
+    /// vibrato の `Worker` は `Tokenizer` への参照を持つので、同じ構造体に
+    /// 入れるには辞書を process の寿命まで持たせる。辞書は 1 process に
+    /// 1 度しか読まないので、解放しないことによる損は無い。
+    inner: &'static VibratoTokenizer,
+    /// 使い回す作業領域。1 語ごとに作ると割り当てが分かち書きと同じだけかかる。
+    worker: RefCell<Worker<'static>>,
 }
 
 impl Tokenizer {
@@ -23,9 +30,22 @@ impl Tokenizer {
         let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
         let reader = zstd::Decoder::new(file).context("zstd decoder")?;
         let dict = Dictionary::read(reader).context("read vibrato dictionary")?;
+        let inner: &'static VibratoTokenizer = Box::leak(Box::new(VibratoTokenizer::new(dict)));
         Ok(Tokenizer {
-            inner: VibratoTokenizer::new(dict),
+            inner,
+            worker: RefCell::new(inner.new_worker()),
         })
+    }
+
+    /// 表層形だけに分ける。素性を読まず、作業領域を使い回す。
+    pub fn surfaces(&self, text: &str) -> Vec<String> {
+        let mut worker = self.worker.borrow_mut();
+        worker.reset_sentence(text);
+        worker.tokenize();
+        worker
+            .token_iter()
+            .map(|t| t.surface().to_string())
+            .collect()
     }
 
     pub fn tokenize(&self, text: &str) -> Vec<Token> {
@@ -71,6 +91,22 @@ mod tests {
         assert_eq!(surfaces, ["吾輩", "は", "猫", "で", "ある", "。"]);
         assert_eq!(tokens[0].reading.as_deref(), Some("ワガハイ"));
         assert_eq!(tokens[2].reading.as_deref(), Some("ネコ"));
+    }
+
+    #[test]
+    fn 表層形だけに分けても同じ切れ目になる() {
+        let Some(t) = tokenizer() else {
+            eprintln!("SEKKEN_VIBRATO_DIC が無いので skip");
+            return;
+        };
+        let expected: Vec<String> = t
+            .tokenize("吾輩は猫である。")
+            .into_iter()
+            .map(|t| t.surface)
+            .collect();
+        assert_eq!(t.surfaces("吾輩は猫である。"), expected);
+        // 2 度目も作業領域を使い回して同じ結果になる。
+        assert_eq!(t.surfaces("吾輩は猫である。"), expected);
     }
 
     #[test]

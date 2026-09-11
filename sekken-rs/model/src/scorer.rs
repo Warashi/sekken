@@ -14,10 +14,7 @@ pub trait Segmenter {
 
 impl Segmenter for crate::tokenizer::Tokenizer {
     fn split(&self, surface: &str) -> Vec<String> {
-        self.tokenize(surface)
-            .into_iter()
-            .map(|t| t.surface)
-            .collect()
+        self.surfaces(surface)
     }
 }
 
@@ -28,10 +25,18 @@ struct Word {
     chars: usize,
 }
 
+/// 覚える表層形と語の数の上限。超えたら全部忘れる。1 変換で数百〜数千の
+/// 表層形を引くので、上限が無いと長く動く server の常駐メモリが増え続ける。
+const CACHE_LIMIT: usize = 1 << 18;
+
 pub struct NgramScorer<S: Segmenter> {
     model: NgramModel,
     segmenter: S,
+    /// 表層形 → 語の列。
     cache: RefCell<HashMap<String, Vec<Word>>>,
+    /// 語 → id。id の引き当ては語彙の二分探索で 1 µs ほどかかり、
+    /// 同じ語（助詞など）が多くの表層形に現れるので表層形をまたいで覚える。
+    ids: RefCell<HashMap<String, Option<u32>>>,
 }
 
 impl<S: Segmenter> NgramScorer<S> {
@@ -40,6 +45,7 @@ impl<S: Segmenter> NgramScorer<S> {
             model,
             segmenter,
             cache: RefCell::new(HashMap::new()),
+            ids: RefCell::new(HashMap::new()),
         }
     }
 
@@ -52,14 +58,29 @@ impl<S: Segmenter> NgramScorer<S> {
             .split(surface)
             .iter()
             .map(|t| Word {
-                id: self.model.id(t),
+                id: self.id(t),
                 chars: t.chars().count(),
             })
             .collect();
-        self.cache
-            .borrow_mut()
-            .insert(surface.to_string(), words.clone());
+        let mut cache = self.cache.borrow_mut();
+        if cache.len() >= CACHE_LIMIT {
+            cache.clear();
+        }
+        cache.insert(surface.to_string(), words.clone());
         words
+    }
+
+    fn id(&self, token: &str) -> Option<u32> {
+        if let Some(&id) = self.ids.borrow().get(token) {
+            return id;
+        }
+        let id = self.model.id(token);
+        let mut ids = self.ids.borrow_mut();
+        if ids.len() >= CACHE_LIMIT {
+            ids.clear();
+        }
+        ids.insert(token.to_string(), id);
+        id
     }
 
     fn cost(&self, prev: Option<Word>, next: Option<Word>) -> f64 {
