@@ -11,6 +11,8 @@
 //! 表層と読みの文字列だけから決まるので、学習データを作る側と採点する側が
 //! 同じ規則で揃う。
 
+use std::collections::HashSet;
+
 use sekken_core::kana::hira2kata_char;
 
 /// 区間の読みの前に置く字。
@@ -25,17 +27,31 @@ struct Run {
 }
 
 /// 読みにそのまま現れず、変換で決まる字か。漢字と、漢字扱いの記号・小書きのカ・ケ。
-fn is_converted(c: char) -> bool {
+fn is_kanji(c: char) -> bool {
     matches!(
         c as u32,
         0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0x3005 | 0x3006 | 0x3007 | 0x30F5 | 0x30F6
     )
 }
 
-fn runs(surface: &str) -> Vec<Run> {
+/// かなと長音か（中黒は含めない）。
+fn is_kana(c: char) -> bool {
+    matches!(c as u32, 0x3041..=0x3096 | 0x309D | 0x309E | 0x30A1..=0x30FA | 0x30FC..=0x30FE)
+        && !is_kanji(c)
+}
+
+/// 読みに現れないことがある記号か（中黒や感嘆符は読みから落ちることがある）。
+fn is_symbol(c: char) -> bool {
+    !is_kana(c) && !is_kanji(c) && !c.is_alphanumeric()
+}
+
+/// 表層を並びに分ける。数字や英字は読みにそのまま現れることも（英語の綴り）
+/// 読みが付くことも（1993 → センキュウヒャクキュウジュウサン）あるので、
+/// `words_converted` で漢字と同じ扱いにするか選ぶ。
+fn runs(surface: &str, words_converted: bool) -> Vec<Run> {
     let mut runs: Vec<Run> = Vec::new();
     for c in surface.chars() {
-        let converted = is_converted(c);
+        let converted = is_kanji(c) || (words_converted && !is_kana(c) && !is_symbol(c));
         match runs.last_mut() {
             Some(run) if run.converted == converted => run.chars.push(c),
             _ => runs.push(Run {
@@ -47,47 +63,101 @@ fn runs(surface: &str) -> Vec<Run> {
     runs
 }
 
-/// `runs[i..]` を `reading[pos..]` に当て、各並びが消費した読みの長さを返す。
-/// そのまま現れる並びは字ごとに一致させ、変換される並びは短い方から試す。
-fn matches(runs: &[Run], reading: &[char], pos: usize) -> Option<Vec<usize>> {
-    let Some(run) = runs.first() else {
-        return (pos == reading.len()).then(Vec::new);
-    };
-    if !run.converted {
-        let n = run.chars.len();
-        if pos + n > reading.len() {
+/// 当てはめの 1 要素。そのまま現れる並びは字ごと、変換される並びは並びごと。
+enum Elem {
+    Literal(char),
+    Converted,
+}
+
+/// 並びを読みに当てる。要素と読みの位置の組で失敗を覚え、同じ組を二度探さない。
+struct Matcher<'a> {
+    /// (並びの番号, 要素)。
+    elems: Vec<(usize, Elem)>,
+    reading: &'a [char],
+    failed: HashSet<(usize, usize)>,
+}
+
+impl Matcher<'_> {
+    /// `elems[i..]` を `reading[pos..]` に当て、各要素が消費した長さを返す。
+    /// そのまま現れる字は一致させ（記号は読みに無ければ飛ばす）、
+    /// 変換される並びは短い方から試す。
+    fn go(&mut self, i: usize, pos: usize) -> Option<Vec<usize>> {
+        let Some((_, elem)) = self.elems.get(i) else {
+            return (pos == self.reading.len()).then(Vec::new);
+        };
+        if self.failed.contains(&(i, pos)) {
             return None;
         }
-        let literal = run
-            .chars
-            .iter()
-            .zip(&reading[pos..pos + n])
-            .all(|(&s, &r)| hira2kata_char(s) == r);
-        if !literal {
-            return None;
+        let found = match elem {
+            Elem::Literal(c) => {
+                let c = *c;
+                let matched = self.reading.get(pos) == Some(&hira2kata_char(c));
+                let found = matched.then(|| self.go(i + 1, pos + 1)).flatten();
+                match found {
+                    Some(mut v) => {
+                        v.insert(0, 1);
+                        Some(v)
+                    }
+                    None if is_symbol(c) => self.go(i + 1, pos).map(|mut v| {
+                        v.insert(0, 0);
+                        v
+                    }),
+                    None => None,
+                }
+            }
+            Elem::Converted => (1..=(self.reading.len() - pos)).find_map(|n| {
+                let mut v = self.go(i + 1, pos + n)?;
+                v.insert(0, n);
+                Some(v)
+            }),
+        };
+        if found.is_none() {
+            self.failed.insert((i, pos));
         }
-        let mut rest = matches(&runs[1..], reading, pos + n)?;
-        rest.insert(0, n);
-        return Some(rest);
+        found
     }
-    for n in 1..=(reading.len() - pos) {
-        if let Some(mut rest) = matches(&runs[1..], reading, pos + n) {
-            rest.insert(0, n);
-            return Some(rest);
+
+    /// 各並びが消費した読みの長さ。
+    fn run_lengths(&mut self, run_count: usize) -> Option<Vec<usize>> {
+        let consumed = self.go(0, 0)?;
+        let mut lengths = vec![0; run_count];
+        for ((run, _), n) in self.elems.iter().zip(consumed) {
+            lengths[*run] += n;
+        }
+        Some(lengths)
+    }
+}
+
+fn match_runs(runs: &[Run], reading: &[char]) -> Option<Vec<usize>> {
+    let mut elems = Vec::new();
+    for (k, run) in runs.iter().enumerate() {
+        if run.converted {
+            elems.push((k, Elem::Converted));
+        } else {
+            elems.extend(run.chars.iter().map(|&c| (k, Elem::Literal(c))));
         }
     }
-    None
+    Matcher {
+        elems,
+        reading,
+        failed: HashSet::new(),
+    }
+    .run_lengths(runs.len())
 }
 
 /// 表層 `surface` と読み `reading`（カタカナ）を区間に分け、(読み, 表層) の列を返す。
 /// 読みが表層に当てはまらなければ `None`。
 pub fn align(surface: &str, reading: &str) -> Option<Vec<(String, String)>> {
-    let runs = runs(surface);
     let reading: Vec<char> = reading.chars().collect();
-    if runs.is_empty() || reading.is_empty() {
+    if surface.is_empty() || reading.is_empty() {
         return None;
     }
-    let lengths = matches(&runs, &reading, 0)?;
+    // 数字や英字はまずそのまま現れるものとして当て、駄目なら読みが付くものとして当てる。
+    let (runs, lengths) = [false, true].into_iter().find_map(|words_converted| {
+        let runs = runs(surface, words_converted);
+        let lengths = match_runs(&runs, &reading)?;
+        Some((runs, lengths))
+    })?;
     let mut segments: Vec<(String, String)> = Vec::new();
     let mut pos = 0;
     for (run, n) in runs.iter().zip(lengths) {
@@ -110,21 +180,28 @@ pub fn align(surface: &str, reading: &str) -> Option<Vec<(String, String)>> {
 /// 学習・採点に使う 1 行。区間ごとに `READING` 読み `OUTPUT` 出力を並べる。
 /// 読みが表層に当てはまらなければ全体を 1 区間にする。
 pub fn build(reading: &str, output: &str) -> String {
-    let segments =
-        align(output, reading).unwrap_or_else(|| vec![(reading.to_string(), output.to_string())]);
+    try_build(reading, output).unwrap_or_else(|| join(&[(reading, output)]))
+}
+
+/// 読みが表層に当てはまるときだけ `build` と同じ行を返す。
+pub fn try_build(reading: &str, output: &str) -> Option<String> {
+    let segments = align(output, reading)?;
+    let segments: Vec<(&str, &str)> = segments
+        .iter()
+        .map(|(r, s)| (r.as_str(), s.as_str()))
+        .collect();
+    Some(join(&segments))
+}
+
+fn join(segments: &[(&str, &str)]) -> String {
     let mut line = String::new();
     for (read, text) in segments {
         line.push(READING);
-        line.push_str(&read);
+        line.push_str(read);
         line.push(OUTPUT);
-        line.push_str(&text);
+        line.push_str(text);
     }
     line
-}
-
-/// `build` が返す行を 1 区間だけで作ったか（当てはまらなかった行）。
-pub fn is_fallback(line: &str) -> bool {
-    line.chars().filter(|&c| c == READING).count() == 1
 }
 
 /// 行の中で出力の字がある位置（出力の i 文字目 → 行の何文字目か）。
@@ -232,6 +309,32 @@ mod tests {
     }
 
     #[test]
+    fn 数字と英字はそのまま現れなければ読みの付く字として当てる() {
+        let v = aligned("1993年に、", "センキュウヒャクキュウジュウサンネンニ、");
+        assert_eq!(
+            pairs(&v),
+            [("センキュウヒャクキュウジュウサンネンニ、", "1993年に、")]
+        );
+        let v = aligned("(Die sieben Raben)や", "(Die sieben Raben)ヤ");
+        assert_eq!(
+            pairs(&v),
+            [("(Die sieben Raben)ヤ", "(Die sieben Raben)や")]
+        );
+        let v = aligned("ZZトップの", "ジージートップノ");
+        assert_eq!(pairs(&v), [("ジージートップノ", "ZZトップの")]);
+    }
+
+    #[test]
+    fn 読みから落ちた記号は飛ばして当てる() {
+        let v = aligned("ナチス・ドイツの", "ナチスドイツノ");
+        assert_eq!(pairs(&v), [("ナチスドイツノ", "ナチス・ドイツの")]);
+        let v = aligned("ナチス・ドイツの", "ナチス・ドイツノ");
+        assert_eq!(pairs(&v), [("ナチス・ドイツノ", "ナチス・ドイツの")]);
+        let v = aligned("「パタリロ!」が", "「パタリロ」ガ");
+        assert_eq!(pairs(&v), [("「パタリロ」ガ", "「パタリロ!」が")]);
+    }
+
+    #[test]
     fn 小書きのケは変換される字として扱う() {
         let v = aligned("霞ヶ関へ", "カスミガセキヘ");
         assert_eq!(pairs(&v), [("カスミガセキヘ", "霞ヶ関へ")]);
@@ -255,10 +358,15 @@ mod tests {
 
     #[test]
     fn 当てはまらない行は全体を_1_区間にする() {
-        let line = build("ネコノナク", "猫が鳴く");
-        assert_eq!(line, "\u{1e}ネコノナク\t猫が鳴く");
-        assert!(is_fallback(&line));
-        assert!(!is_fallback(&build("ソレハネコダ", "それは猫だ")));
+        assert_eq!(
+            build("ネコノナク", "猫が鳴く"),
+            "\u{1e}ネコノナク\t猫が鳴く"
+        );
+        assert_eq!(try_build("ネコノナク", "猫が鳴く"), None);
+        assert_eq!(
+            try_build("ネコダ", "猫だ").as_deref(),
+            Some("\u{1e}ネコダ\t猫だ")
+        );
     }
 
     #[test]
