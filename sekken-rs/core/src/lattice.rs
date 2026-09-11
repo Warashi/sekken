@@ -256,8 +256,27 @@ fn same_surfaces(nodes: &[Node], a: usize, b: usize) -> bool {
     true
 }
 
+/// コストの小さい順に並べ、表層形の同じ経路を 1 本にまとめて `keep` 本残す。
+///
+/// 経路は同じコストなら節の番号が小さいほうを先にする。節の番号は作った順で、
+/// 途中で並べ替えても同じコストの相対順は変わらないので、安定ソートと同じ順になる。
+/// 1 セグメントごとに候補数 × ビーム幅の経路が入るので、全部を並べ替えずに
+/// 小さいほうから余裕を持って取り出し、まとめた後に足りなければ全部を並べ替える。
 fn prune(nodes: &[Node], paths: &mut Vec<usize>, keep: usize) {
-    paths.sort_by(|&a, &b| nodes[a].cost.total_cmp(&nodes[b].cost));
+    let by = |&a: &usize, &b: &usize| nodes[a].cost.total_cmp(&nodes[b].cost).then(a.cmp(&b));
+    let margin = keep * 2;
+    if paths.len() > margin {
+        paths.select_nth_unstable_by(margin - 1, by);
+        let mut top = paths[..margin].to_vec();
+        top.sort_unstable_by(by);
+        top.dedup_by(|&mut a, &mut b| same_surfaces(nodes, a, b));
+        if top.len() >= keep {
+            top.truncate(keep);
+            *paths = top;
+            return;
+        }
+    }
+    paths.sort_unstable_by(by);
     paths.dedup_by(|&mut a, &mut b| same_surfaces(nodes, a, b));
     paths.truncate(keep);
 }
@@ -478,6 +497,33 @@ mod tests {
         assert_eq!(result[1].surfaces, ["か", "く"]);
         assert_eq!(result[1].spans, [1, 1]);
         assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn 刈り込みは同じコストなら先に作った経路を残す() {
+        // 全候補のコストが同じ格子。ビーム幅より多い経路ができ、残るのは
+        // 作成順（2 番目の候補が外側、1 番目の経路が内側）の先頭になる。
+        let cands: Vec<Candidate> = (0..30)
+            .map(|i| Candidate {
+                surface: format!("候補{i}"),
+                span: 1,
+                rank: 0,
+                kana: false,
+            })
+            .collect();
+        let lattice = Lattice {
+            candidates: vec![cands.clone(), cands],
+        };
+        let scorer = MapScorer {
+            uni: HashMap::new(),
+            bi: HashMap::new(),
+        };
+        let result = lattice.nbest(&scorer, 5);
+        let want: Vec<Vec<String>> = (0..5)
+            .map(|i| vec![format!("候補{i}"), "候補0".to_string()])
+            .collect();
+        let got: Vec<Vec<String>> = result.into_iter().map(|p| p.surfaces).collect();
+        assert_eq!(got, want);
     }
 
     #[test]
