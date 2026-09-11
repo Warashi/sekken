@@ -15,8 +15,12 @@ pub fn mul_silu(dst: &mut [f32], s: &[f32], z: &[f32]) {
     mul_silu_impl(dst, s, z);
 }
 
+/// NEON の sin・cos の範囲縮小が数 ulp に収まる角の上限。これを超える角は
+/// libm に任せる（Mamba-3 の累積角は 1 文で 1000 rad ほど）。
+#[cfg(target_arch = "aarch64")]
+const MAX_ANGLE: f32 = 8192.0;
+
 /// 累積角を進めて sin と cos を求める。`phi[j] += dtheta[j]`。
-/// 角は 8192 rad までを想定する（Mamba-3 の累積角は 1 文で 1000 rad ほど）。
 pub fn advance_angles(phi: &mut [f32], dtheta: &[f32], sin: &mut [f32], cos: &mut [f32]) {
     advance_angles_impl(phi, dtheta, sin, cos);
 }
@@ -199,6 +203,12 @@ fn advance_angles_impl(phi: &mut [f32], dtheta: &[f32], sin: &mut [f32], cos: &m
                 vld1q_f32(dtheta.as_ptr().add(i * 4)),
             );
             vst1q_f32(phi.as_mut_ptr().add(i * 4), p);
+            if vmaxvq_f32(vabsq_f32(p)) > MAX_ANGLE {
+                for j in i * 4..i * 4 + 4 {
+                    (sin[j], cos[j]) = phi[j].sin_cos();
+                }
+                continue;
+            }
             let (s, c) = neon::sincos4(p);
             vst1q_f32(sin.as_mut_ptr().add(i * 4), s);
             vst1q_f32(cos.as_mut_ptr().add(i * 4), c);
@@ -399,6 +409,14 @@ mod tests {
                     cos[j]
                 );
             }
+        }
+        // 上限を超える角は libm と同じ値になる
+        let mut phi = vec![9000.0f32, -9000.5, 1.0, 2.0];
+        let dtheta = vec![0.0f32; 4];
+        let (mut sin, mut cos) = (vec![0.0f32; 4], vec![0.0f32; 4]);
+        advance_angles(&mut phi, &dtheta, &mut sin, &mut cos);
+        for j in 0..4 {
+            assert_eq!((sin[j], cos[j]), phi[j].sin_cos());
         }
         // 負の角
         let mut phi = vec![-1.0f32, -2.0, -3.0, -1000.5, -0.1];
