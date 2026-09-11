@@ -10,7 +10,6 @@
 //! 1 文字分の先入観（「なお、」の次は「枚」より「マ」）に引きずられて
 //! 戻れなくなるので、固定は累積させず、試した提案は記録して繰り返さない。
 
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use crate::lattice::{Constraint, Lattice, Path};
@@ -74,9 +73,8 @@ impl Speculator {
         let mut results: Vec<Path> = Vec::new();
         let mut best: Option<Scored> = None;
         let mut constraint = Constraint::default();
-        // 制約を変えて同じ格子を何度も探索するので、格子側のコストは覚えておく。
-        let scorer = Memo::new(scorer);
-        let scorer = &scorer;
+        // 制約を変えて同じ格子を何度も探索するので、1 つの場で引き直しを省く。
+        let search = lattice.search(scorer);
         let mut session = self.verifier.begin(input);
         let mut first: Vec<Path> = Vec::new();
         for round in 0..=self.rounds {
@@ -84,11 +82,11 @@ impl Speculator {
             if round == 0 {
                 // 制約の無い探索は格子の順位そのものなので、多めに取って
                 // 先頭 `width` 本を採点し、全体は埋め草として返す。
-                first = lattice.nbest_constrained(scorer, self.width.max(top_n), &constraint);
+                first = search.nbest_constrained(self.width.max(top_n), &constraint);
                 paths = first.iter().take(self.width).cloned().collect();
                 first.truncate(top_n);
             } else {
-                paths = lattice.nbest_constrained(scorer, self.width, &constraint);
+                paths = search.nbest_constrained(self.width, &constraint);
             }
             paths.retain(|p| seen.insert(p.surfaces.clone()));
             if !paths.is_empty() {
@@ -206,51 +204,6 @@ impl Speculator {
             seg_pos += draft.spans[k];
         }
         (queries, sites)
-    }
-}
-
-/// 格子のスコアラーの結果を覚える。反復のたびに同じ候補と接続を引き直すので、
-/// 形態素解析を伴う引き直しを省く。
-struct Memo<'a> {
-    inner: &'a dyn Scorer,
-    unigram: RefCell<HashMap<String, f64>>,
-    /// 左 → 右 → コスト。文頭・文末は空文字列で表す（表層形は空にならない）。
-    /// 2 段にして、引くときに文字列を作らずに済ませる。
-    bigram: RefCell<HashMap<String, HashMap<String, f64>>>,
-}
-
-impl<'a> Memo<'a> {
-    fn new(inner: &'a dyn Scorer) -> Memo<'a> {
-        Memo {
-            inner,
-            unigram: RefCell::new(HashMap::new()),
-            bigram: RefCell::new(HashMap::new()),
-        }
-    }
-}
-
-impl Scorer for Memo<'_> {
-    fn unigram(&self, surface: &str) -> f64 {
-        if let Some(&c) = self.unigram.borrow().get(surface) {
-            return c;
-        }
-        let c = self.inner.unigram(surface);
-        self.unigram.borrow_mut().insert(surface.to_string(), c);
-        c
-    }
-
-    fn bigram(&self, left: Option<&str>, right: Option<&str>) -> f64 {
-        let (l, r) = (left.unwrap_or(""), right.unwrap_or(""));
-        if let Some(&c) = self.bigram.borrow().get(l).and_then(|m| m.get(r)) {
-            return c;
-        }
-        let c = self.inner.bigram(left, right);
-        self.bigram
-            .borrow_mut()
-            .entry(l.to_string())
-            .or_default()
-            .insert(r.to_string(), c);
-        c
     }
 }
 
