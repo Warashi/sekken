@@ -22,22 +22,27 @@
 (defvar sekken-convert--cache nil
   "直近の (入力 . 候補)。補完テーブルは同じ文字列で何度も呼ばれる。")
 
-(defun sekken-convert--candidates (roman)
-  "ROMAN の変換候補。直近の結果と同じ入力なら引き直さない。"
+(defun sekken-convert--candidates (roman &optional cancel-on-input)
+  "ROMAN の変換候補。直近の結果と同じ入力なら引き直さない。
+CANCEL-ON-INPUT が non-nil なら打鍵で待つのをやめ、候補なしとして nil を返す。
+中断した結果は覚えないので、次に呼ばれたときに引き直す。"
   (if (equal roman (car sekken-convert--cache))
       (cdr sekken-convert--cache)
-    (let ((candidates (sekken-server-henkan roman sekken-convert-max-candidates)))
-      (setq sekken-convert--cache (cons roman candidates))
-      candidates)))
+    (let ((candidates (sekken-server-henkan roman sekken-convert-max-candidates
+                                            cancel-on-input)))
+      (unless (eq candidates sekken-server--input-canceled)
+        (setq sekken-convert--cache (cons roman candidates))
+        candidates))))
 
-(defun sekken-convert-table (string _pred action)
-  "変換候補を素通しする completion table。
+(defun sekken-convert--complete (string action cancel-on-input)
+  "変換候補を素通しする completion table の本体。
 
 候補は漢字かなで入力はローマ字なので、通常の table だと補完スタイルに
 全部落とされる。`all-completions' (ACTION が t) で無条件に全件返す。
 `try-completion' は STRING をそのまま返し、入力が候補の断片に置き換わる
 のを避ける。候補は呼ばれた時点の STRING で引き直す。corfu は popup 中に
-capf を呼び直さず table を使い回すため、候補を閉じ込めると追従しない。"
+capf を呼び直さず table を使い回すため、候補を閉じ込めると追従しない。
+CANCEL-ON-INPUT が non-nil なら、引き直しを打鍵で中断する。"
   (cond
    ((eq action 'metadata)
     '(metadata (category . sekken)
@@ -46,11 +51,22 @@ capf を呼び直さず table を使い回すため、候補を閉じ込める�
    ((eq (car-safe action) 'boundaries) nil)
    ((eq action t)
     (when (sekken-input-ready-p string)
-      (sekken-convert--candidates string)))
+      (sekken-convert--candidates string cancel-on-input)))
    ((null action) string)
    ((eq action 'lambda)
     (and (member string (cdr sekken-convert--cache)) t))
    (t nil)))
+
+(defun sekken-convert-table (string _pred action)
+  "変換候補を素通しする completion table。応答を待つ。
+明示的な変換（`sekken-convert'）で使う。"
+  (sekken-convert--complete string action nil))
+
+(defun sekken-convert-auto-table (string _pred action)
+  "変換候補を素通しする completion table。打鍵で待つのをやめる。
+corfu-auto など入力中の補完で使う。中断したときは候補なしになり、
+次の idle で引き直される。"
+  (sekken-convert--complete string action t))
 
 (defvar sekken-mode)
 
@@ -91,7 +107,7 @@ capf を呼び直さず table を使い回すため、候補を閉じ込める�
     (when (and bounds
                (sekken-input-ready-p
                 (buffer-substring-no-properties (car bounds) (cdr bounds))))
-      (list (car bounds) (cdr bounds) #'sekken-convert-table
+      (list (car bounds) (cdr bounds) #'sekken-convert-auto-table
             :exclusive t
             :company-prefix-length t))))
 
