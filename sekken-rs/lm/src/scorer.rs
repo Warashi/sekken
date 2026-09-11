@@ -5,9 +5,10 @@
 //! 文字の半分以上が他の候補と接頭辞を共有するので、候補ごとに全文を読むより
 //! 計算が半分近くで済む。
 //!
-//! 入力中は 1 字打つごとに変換が来て、入力側は前回の延長になる。直前の
-//! 入力側の読み（`\t` の手前まで）の係数を残し、延長なら伸びた分と `\t`
-//! だけを読む。
+//! 入力中は 1 字打つごとに変換が来て、入力側は前回と長い接頭辞を共有する
+//! （`Wagah` → `ワガh`、`Wagaha` → `ワガハ` のように末尾は入れ替わる）。
+//! 直前の入力側の読み（`\t` の手前まで）の係数を残し、共有する接頭辞の
+//! 状態を係数から作って、その先と `\t` だけを読む。
 
 use std::cell::RefCell;
 
@@ -34,10 +35,14 @@ struct PrefixCache {
     ids: Vec<u32>,
     /// `ids` の各位置の係数（位置 × n_layers × proj_width）。
     proj: Vec<f32>,
-    /// `ids` を読み終えた状態。読んだ直後は持たず、延長で必要になったときに
-    /// 係数から作る（延長が来ない変換に作る費用を掛けない）。
-    state: Option<Vec<f32>>,
+    /// (`ids` の先頭 n 個を読み終えた状態) を n の昇順に持つ。読んだ直後は
+    /// 持たず、続きを読んだときに残す（続きが来ない変換に作る費用を掛けない）。
+    /// 末尾が入れ替わる打鍵では 1 つ前の状態から進めるので、直近の 2 つを持つ。
+    checkpoints: Vec<(usize, Vec<f32>)>,
 }
+
+/// 残す状態の数。
+const CHECKPOINTS: usize = 2;
 
 /// 1 回の変換の間の採点。入力側を読み終えた状態と、読んだ候補を持ち回る。
 pub struct Scoring<'a> {
@@ -91,8 +96,9 @@ impl LmScorer {
         }
     }
 
-    /// 入力側の id 列を読んで場を開く。`\t` の手前までが直前の入力側の延長なら、
-    /// 伸びた分と `\t` だけを読む。結果は最初から読んだのと同じになる。
+    /// 入力側の id 列を読んで場を開く。`\t` の手前までが直前の入力側と接頭辞を
+    /// 共有するなら、共有する分の状態を係数から作り、その先と `\t` だけを読む。
+    /// 結果は最初から読んだのと同じになる。
     fn open(&self, ids: &[u32]) -> Session<'_> {
         let body = &ids[..ids.len() - 1];
         if body.is_empty() {
@@ -100,30 +106,44 @@ impl LmScorer {
         }
         let stride = self.infer.config().n_layers * self.infer.proj_width();
         let mut cache = self.prefix.borrow_mut();
-        if let Some(c) = cache.as_mut()
-            && body.starts_with(&c.ids)
-        {
-            let state = c.state.take().unwrap_or_else(|| {
-                let mut state = self.infer.init_state();
-                self.infer.rescan(&mut state, &c.proj);
-                state
-            });
-            let tail = &ids[c.ids.len()..];
-            let (session, proj) = Session::open_from(&self.infer, &state, tail);
-            let grown = tail.len() - 1;
-            let mut state = state;
-            self.infer.rescan(&mut state, &proj[..grown * stride]);
-            c.ids.extend_from_slice(&tail[..grown]);
-            c.proj.extend_from_slice(&proj[..grown * stride]);
-            c.state = Some(state);
+        let c = cache.get_or_insert_with(|| PrefixCache {
+            ids: Vec::new(),
+            proj: Vec::new(),
+            checkpoints: Vec::new(),
+        });
+        let shared = c.ids.iter().zip(body).take_while(|(a, b)| a == b).count();
+        // BOS しか共有しなければ最初から読む。
+        if shared < 2 {
+            let (session, proj) = Session::open_from(&self.infer, &self.infer.init_state(), ids);
+            c.ids = body.to_vec();
+            c.proj = proj[..body.len() * stride].to_vec();
+            c.checkpoints.clear();
             return session;
         }
-        let (session, proj) = Session::open_from(&self.infer, &self.infer.init_state(), ids);
-        *cache = Some(PrefixCache {
-            ids: body.to_vec(),
-            proj: proj[..body.len() * stride].to_vec(),
-            state: None,
-        });
+        // 共有する分を読み終えた状態を、それ以下で最も長い状態から係数で進めて作る。
+        let (mut done, mut state) = c
+            .checkpoints
+            .iter()
+            .rev()
+            .find(|(n, _)| *n <= shared)
+            .map(|(n, s)| (*n, s.clone()))
+            .unwrap_or_else(|| (0, self.infer.init_state()));
+        self.infer
+            .rescan(&mut state, &c.proj[done * stride..shared * stride]);
+        done = shared;
+        let tail = &ids[shared..];
+        let (session, proj) = Session::open_from(&self.infer, &state, tail);
+        let grown = tail.len() - 1;
+        self.infer.rescan(&mut state, &proj[..grown * stride]);
+        c.ids.truncate(done);
+        c.ids.extend_from_slice(&tail[..grown]);
+        c.proj.truncate(done * stride);
+        c.proj.extend_from_slice(&proj[..grown * stride]);
+        c.checkpoints.retain(|(n, _)| *n <= done);
+        c.checkpoints.push((body.len(), state));
+        if c.checkpoints.len() > CHECKPOINTS {
+            c.checkpoints.remove(0);
+        }
         session
     }
 
