@@ -487,7 +487,7 @@ fn step_row4(
 }
 
 /// `dst` (m × n) = `x` (m × k) · `w` (n × k)^T。出力の列（重みの行）をスレッドで分け、
-/// 各スレッドは自分の列の塊に全行を掛ける。
+/// 各スレッドは自分の列の塊に全行を掛けて `dst` の自分の列に直接書く。
 #[doc(hidden)]
 pub fn matmul_t(
     x: &[f32],
@@ -498,67 +498,78 @@ pub fn matmul_t(
     dst: &mut [f32],
     threads: usize,
 ) {
+    assert!(dst.len() >= m * n && w.len() >= n * k && x.len() >= m * k);
+    let out = Out {
+        ptr: dst.as_mut_ptr(),
+        stride: n,
+    };
     // 塊は TILE の倍数にして、塊の境目で端数の組を作らない。
     let chunk = n.div_ceil(threads).div_ceil(TILE) * TILE;
     if threads <= 1 || chunk >= n {
-        matmul_t_chunk(x, m, k, w, n, dst);
+        matmul_t_chunk(x, m, k, w, n, out, 0);
         return;
     }
     use rayon::prelude::*;
-    let parts: Vec<Vec<f32>> = w
-        .par_chunks(chunk * k)
-        .map(|wp| {
-            let cols = wp.len() / k;
-            let mut out = vec![0.0f32; m * cols];
-            matmul_t_chunk(x, m, k, wp, cols, &mut out);
-            out
-        })
-        .collect();
-    let mut col = 0;
-    for part in parts {
-        let cols = part.len() / m;
-        for r in 0..m {
-            dst[r * n + col..r * n + col + cols].copy_from_slice(&part[r * cols..(r + 1) * cols]);
-        }
-        col += cols;
-    }
+    w.par_chunks(chunk * k).enumerate().for_each(|(i, wp)| {
+        matmul_t_chunk(x, m, k, wp, wp.len() / k, out, i * chunk);
+    });
 }
+
+/// 行列積の出力先。行の間隔が `stride` の行優先で、スレッドごとに互いに
+/// 重ならない列の範囲だけに書くので、同じ出力先を複数のスレッドが持てる。
+#[derive(Clone, Copy)]
+struct Out {
+    ptr: *mut f32,
+    stride: usize,
+}
+
+// 書く範囲は matmul_t が列で分けており、スレッド間で重ならない。
+unsafe impl Send for Out {}
+unsafe impl Sync for Out {}
 
 /// 1 つの組で扱う行数と列数。4 × 4 の累算器 16 本と入力・重み各 4 本でレジスタに収まる。
 const TILE: usize = 4;
 
-/// `matmul_t` の 1 スレッド分。行と列を TILE ずつの組に分けて内積を取る。
-/// 列の組を外側にし、重みの各行は 1 度だけ読む。内側で回る入力の全行は
-/// L1 に収まる大きさで、重みの組（4 行 × k）は L1 に留まったまま入力の
-/// 行の組を順に掛ける。
+/// `matmul_t` の 1 スレッド分。`w` の `n` 行を `out` の列 `c0..c0 + n` に書く。
+/// 行と列を TILE ずつの組に分けて内積を取る。列の組を外側にし、重みの各行は
+/// 1 度だけ読む。内側で回る入力の全行は L1 に収まる大きさで、重みの組
+/// （4 行 × k）は L1 に留まったまま入力の行の組を順に掛ける。
 #[cfg(target_arch = "aarch64")]
-fn matmul_t_chunk(x: &[f32], m: usize, k: usize, w: &[f32], n: usize, dst: &mut [f32]) {
-    for c0 in (0..n).step_by(TILE) {
-        let cols = (n - c0).min(TILE);
+fn matmul_t_chunk(x: &[f32], m: usize, k: usize, w: &[f32], n: usize, out: Out, c0: usize) {
+    for cb in (0..n).step_by(TILE) {
+        let cols = (n - cb).min(TILE);
         for r0 in (0..m).step_by(TILE) {
             let rows = (m - r0).min(TILE);
-            let mut out = [[0.0f32; TILE]; TILE];
+            let mut acc = [[0.0f32; TILE]; TILE];
             match (rows, cols) {
-                (4, 4) => tile::<4, 4>(x, r0, k, w, c0, &mut out),
-                (4, 3) => tile::<4, 3>(x, r0, k, w, c0, &mut out),
-                (4, 2) => tile::<4, 2>(x, r0, k, w, c0, &mut out),
-                (4, 1) => tile::<4, 1>(x, r0, k, w, c0, &mut out),
-                (3, 4) => tile::<3, 4>(x, r0, k, w, c0, &mut out),
-                (3, 3) => tile::<3, 3>(x, r0, k, w, c0, &mut out),
-                (3, 2) => tile::<3, 2>(x, r0, k, w, c0, &mut out),
-                (3, 1) => tile::<3, 1>(x, r0, k, w, c0, &mut out),
-                (2, 4) => tile::<2, 4>(x, r0, k, w, c0, &mut out),
-                (2, 3) => tile::<2, 3>(x, r0, k, w, c0, &mut out),
-                (2, 2) => tile::<2, 2>(x, r0, k, w, c0, &mut out),
-                (2, 1) => tile::<2, 1>(x, r0, k, w, c0, &mut out),
-                (1, 4) => tile::<1, 4>(x, r0, k, w, c0, &mut out),
-                (1, 3) => tile::<1, 3>(x, r0, k, w, c0, &mut out),
-                (1, 2) => tile::<1, 2>(x, r0, k, w, c0, &mut out),
-                (1, 1) => tile::<1, 1>(x, r0, k, w, c0, &mut out),
+                (4, 4) => tile::<4, 4>(x, r0, k, w, cb, &mut acc),
+                (4, 3) => tile::<4, 3>(x, r0, k, w, cb, &mut acc),
+                (4, 2) => tile::<4, 2>(x, r0, k, w, cb, &mut acc),
+                (4, 1) => tile::<4, 1>(x, r0, k, w, cb, &mut acc),
+                (3, 4) => tile::<3, 4>(x, r0, k, w, cb, &mut acc),
+                (3, 3) => tile::<3, 3>(x, r0, k, w, cb, &mut acc),
+                (3, 2) => tile::<3, 2>(x, r0, k, w, cb, &mut acc),
+                (3, 1) => tile::<3, 1>(x, r0, k, w, cb, &mut acc),
+                (2, 4) => tile::<2, 4>(x, r0, k, w, cb, &mut acc),
+                (2, 3) => tile::<2, 3>(x, r0, k, w, cb, &mut acc),
+                (2, 2) => tile::<2, 2>(x, r0, k, w, cb, &mut acc),
+                (2, 1) => tile::<2, 1>(x, r0, k, w, cb, &mut acc),
+                (1, 4) => tile::<1, 4>(x, r0, k, w, cb, &mut acc),
+                (1, 3) => tile::<1, 3>(x, r0, k, w, cb, &mut acc),
+                (1, 2) => tile::<1, 2>(x, r0, k, w, cb, &mut acc),
+                (1, 1) => tile::<1, 1>(x, r0, k, w, cb, &mut acc),
                 _ => unreachable!("tile size"),
             }
-            for r in 0..rows {
-                dst[(r0 + r) * n + c0..(r0 + r) * n + c0 + cols].copy_from_slice(&out[r][..cols]);
+            for (r, row) in acc.iter().enumerate().take(rows) {
+                // 書く先は matmul_t が確かめた dst の中で、列 c0 + cb.. は
+                // このスレッドの担当。
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        row.as_ptr(),
+                        out.ptr.add((r0 + r) * out.stride + c0 + cb),
+                        cols,
+                    );
+                }
             }
         }
     }
@@ -566,15 +577,15 @@ fn matmul_t_chunk(x: &[f32], m: usize, k: usize, w: &[f32], n: usize, dst: &mut 
 
 /// NEON の無い環境では gemm crate（candle の CPU 行列積と同じもの）に任せる。
 #[cfg(not(target_arch = "aarch64"))]
-fn matmul_t_chunk(x: &[f32], m: usize, k: usize, w: &[f32], n: usize, dst: &mut [f32]) {
+fn matmul_t_chunk(x: &[f32], m: usize, k: usize, w: &[f32], n: usize, out: Out, c0: usize) {
     unsafe {
         gemm::gemm(
             m,
             n,
             k,
-            dst.as_mut_ptr(),
+            out.ptr.add(c0),
             1,
-            n as isize,
+            out.stride as isize,
             false,
             x.as_ptr(),
             1,
