@@ -4,21 +4,36 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::interleave::loss_mask;
+
 pub const BOS: u32 = 0;
 pub const EOS: u32 = 1;
 pub const UNK: u32 = 2;
 
-/// 符号化した 1 系列。`start` より前の正解位置は損失に入れない。
-/// 条件付き学習では入力部分（`\t` まで）がそこにあたる。
+/// 符号化した 1 系列。`mask[i]` は `ids[i + 1]` を正解として損失に入れるか。
+/// 条件付き学習では読みの字がそこから外れる。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Seq {
     pub ids: Vec<u32>,
-    pub start: usize,
+    pub mask: Vec<bool>,
 }
 
 impl Seq {
+    /// 全部の正解位置を損失に入れる系列。
     pub fn new(ids: Vec<u32>) -> Seq {
-        Seq { ids, start: 0 }
+        let mask = vec![true; ids.len().saturating_sub(1)];
+        Seq { ids, mask }
+    }
+
+    /// 先頭 `len` 個の id に切り詰める。
+    pub fn truncate(&mut self, len: usize) {
+        self.ids.truncate(len);
+        self.mask.truncate(len.saturating_sub(1));
+    }
+
+    /// 損失に入る正解位置の数。
+    pub fn loss_count(&self) -> usize {
+        self.mask.iter().filter(|&&m| m).count()
     }
 }
 
@@ -86,13 +101,14 @@ impl Vocab {
             .collect()
     }
 
-    /// 1 行を符号化する。`\t` があれば「入力 \t 出力」の条件付きの行として、
-    /// 損失を出力から数える。`\t` も普通の文字として id を持つ。
+    /// 1 行を符号化する。損失に入る位置は行の形（`interleave::loss_mask`）で決まり、
+    /// 末尾の EOS は常に入る。区切りの字も普通の文字として id を持つ。
     pub fn encode_line(&self, line: &str) -> Seq {
-        let start = line.find('\t').map_or(0, |i| line[..i].chars().count() + 1);
+        let mut mask = loss_mask(line);
+        mask.push(true);
         Seq {
             ids: self.encode(line),
-            start,
+            mask,
         }
     }
 }
@@ -123,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn タブの無い行は損失を先頭から数える() {
+    fn タブの無い行は全部を損失に入れる() {
         let v = Vocab::build(["猫犬"], 1);
         assert_eq!(v.encode_line("犬"), Seq::new(vec![BOS, v.id('犬'), EOS]));
     }
@@ -136,8 +152,28 @@ mod tests {
             seq.ids,
             [BOS, v.id('犬'), v.id('猫'), v.id('\t'), v.id('猫'), EOS]
         );
-        // targets = ids[1..] で、index 3 が最初の出力「猫」。
-        assert_eq!(seq.start, 3);
+        // targets = ids[1..] で、index 3 が最初の出力「猫」、index 4 が EOS。
+        assert_eq!(seq.mask, [false, false, false, true, true]);
+        assert_eq!(seq.loss_count(), 2);
+    }
+
+    #[test]
+    fn 交互の行は出力の字と区間の終わりと_eos_を損失に入れる() {
+        let v = Vocab::build(["猫犬\t\u{1e}"], 1);
+        let seq = v.encode_line("\u{1e}犬\t猫\u{1e}犬\t犬");
+        assert_eq!(seq.ids.len(), 10);
+        assert_eq!(
+            seq.mask,
+            [true, false, false, true, true, false, false, true, true]
+        );
+    }
+
+    #[test]
+    fn 切り詰めると損失の印も揃って短くなる() {
+        let mut seq = Seq::new(vec![BOS, 3, 4, 5, EOS]);
+        seq.truncate(3);
+        assert_eq!(seq.ids, [BOS, 3, 4]);
+        assert_eq!(seq.mask, [true, true]);
     }
 
     #[test]
