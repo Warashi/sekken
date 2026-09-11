@@ -127,6 +127,26 @@ pub fn is_fallback(line: &str) -> bool {
     line.chars().filter(|&c| c == READING).count() == 1
 }
 
+/// 行の中で出力の字がある位置（出力の i 文字目 → 行の何文字目か）。
+/// 交互でない行は全部の字が出力。
+pub fn output_positions(line: &str) -> Vec<usize> {
+    let chars: Vec<char> = line.chars().collect();
+    if !chars.contains(&READING) {
+        return (0..chars.len()).collect();
+    }
+    let mut in_output = false;
+    let mut positions = Vec::new();
+    for (i, &c) in chars.iter().enumerate() {
+        match c {
+            READING => in_output = false,
+            OUTPUT => in_output = true,
+            _ if in_output => positions.push(i),
+            _ => {}
+        }
+    }
+    positions
+}
+
 /// 行の各字が損失（採点）に入るか。出力の字と、区間の終わりを示す `READING` は
 /// 入り、読みの字と `OUTPUT` は入らない。`READING` の無い行は `OUTPUT` の後ろ
 /// だけ、どちらも無い行は全部が入る。
@@ -248,6 +268,12 @@ mod tests {
             loss_mask(line),
             [true, false, false, false, true, true, false, false, true]
         );
+    }
+
+    #[test]
+    fn 出力の字の位置を引ける() {
+        assert_eq!(output_positions("\u{1e}ネコ\t猫\u{1e}ガ\tが"), [4, 8]);
+        assert_eq!(output_positions("猫が"), [0, 1]);
     }
 
     #[test]

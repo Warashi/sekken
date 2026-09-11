@@ -17,6 +17,7 @@ use sekken_core::rerank::SentenceScorer;
 
 use crate::condition::Condition;
 use crate::infer::Infer;
+use crate::interleave::{build, loss_mask, output_positions};
 use crate::session::Session;
 use crate::vocab::{BOS, Vocab};
 
@@ -48,14 +49,20 @@ const CHECKPOINTS: usize = 2;
 pub struct Scoring<'a> {
     scorer: &'a LmScorer,
     session: Session<'a>,
+    /// 交互形なら、文ごとに区間に分けて挟むカタカナ読み。
+    reading: Option<String>,
 }
 
-/// 1 文の採点。`path[i]` は文の i 文字目まで読んだ節で、`path[i]` の次の字の
-/// 対数確率を `Scoring::log_prob` で引ける（i 文字目を予測する節は `path[i - 1]`、
-/// 先頭は根）。
+/// 1 文の採点。`path[i]` は列の i 番目まで読んだ節で、`path[i]` の次の字の
+/// 対数確率を `Scoring::log_prob` で引ける（i 番目を予測する節は `path[i - 1]`、
+/// 先頭は根）。交互形では列に読みと区切りが混ざる。
 pub struct Scored {
     pub ids: Vec<u32>,
     pub path: Vec<usize>,
+    /// `ids[i]` をコストに数えるか。交互形では読みの字と出力の区切りが外れる。
+    counted: Vec<bool>,
+    /// 文の i 文字目（出力の字）の `ids` での位置。
+    output: Vec<usize>,
 }
 
 impl LmScorer {
@@ -93,6 +100,7 @@ impl LmScorer {
         Scoring {
             scorer: self,
             session: self.open(&self.prefix_ids(input)),
+            reading: self.condition.interleaved_reading(&self.table, input),
         }
     }
 
@@ -163,32 +171,49 @@ impl<'a> Scoring<'a> {
         self.scorer
     }
 
-    /// 各文を読む。既に読んだ接頭辞は読み直さない。
+    /// 各文を読む。既に読んだ接頭辞は読み直さない。交互形なら文を読みと
+    /// 区間ごとに並べた列にして読む。
     pub fn score(&mut self, sentences: &[String]) -> Vec<Scored> {
-        let ids: Vec<Vec<u32>> = sentences
+        let lines: Vec<String> = match &self.reading {
+            Some(reading) => sentences.iter().map(|s| build(reading, s)).collect(),
+            None => sentences.to_vec(),
+        };
+        let ids: Vec<Vec<u32>> = lines
             .iter()
             .map(|s| s.chars().map(|c| self.scorer.vocab.id(c)).collect())
             .collect();
         let paths = self.session.read(&ids);
         ids.into_iter()
             .zip(paths)
-            .map(|(ids, path)| Scored { ids, path })
+            .zip(&lines)
+            .map(|((ids, path), line)| {
+                let (counted, output) = match self.reading {
+                    Some(_) => (loss_mask(line), output_positions(line)),
+                    None => (vec![true; ids.len()], (0..ids.len()).collect()),
+                };
+                Scored {
+                    ids,
+                    path,
+                    counted,
+                    output,
+                }
+            })
             .collect()
     }
 
-    /// 文全体（EOS まで）の負の対数尤度。
+    /// 文全体（EOS まで）の負の対数尤度。交互形では出力側の字と区間の終わりだけ数える。
     pub fn nll(&self, scored: &Scored) -> f64 {
-        self.session.nll(&scored.path, &scored.ids)
+        self.session
+            .nll_counted(&scored.path, &scored.ids, &scored.counted)
     }
 
     /// 文の先頭 `pos` 文字の次に `id` が来るコスト。`pos` が文の長さを超えたら無限大。
     pub fn char_cost(&self, scored: &Scored, pos: usize, id: u32) -> f64 {
-        let node = match pos {
-            0 => 0,
-            _ => match scored.path.get(pos - 1) {
-                Some(&node) => node,
-                None => return f64::INFINITY,
-            },
+        let node = match scored.output.get(pos) {
+            Some(0) => 0,
+            Some(&i) => scored.path[i - 1],
+            None if pos == scored.output.len() => scored.path.last().copied().unwrap_or(0),
+            None => return f64::INFINITY,
         };
         -f64::from(self.session.log_prob(node, id))
     }
@@ -303,6 +328,69 @@ pub(crate) mod tests {
         let expected = reference(&s, &prefix, &ids(&vocab, "猫が鳴く"));
         let cost = s.costs("NekogaNaku", &["猫が鳴く".to_string()])[0];
         assert!((cost - expected).abs() < 1e-4);
+    }
+
+    /// 交互形の列を 1 本で読み、数える位置だけの負の対数尤度と、位置ごとの対数確率。
+    fn reference_interleaved(s: &LmScorer, line: &str) -> (f64, Vec<f64>) {
+        let mut whole = vec![BOS];
+        whole.extend(ids(&s.vocab, line));
+        let read = s.infer.read(&[Chain {
+            state: &s.infer.init_state(),
+            ids: &whole,
+        }]);
+        let d = s.infer.config().d_model;
+        let log_prob = |pos: usize, id: u32| {
+            f64::from(
+                s.infer
+                    .log_prob(&read.hidden[pos * d..(pos + 1) * d], read.lse[pos], id),
+            )
+        };
+        let mut total = 0.0;
+        let counted = crate::interleave::loss_mask(line);
+        let mut per_char = Vec::new();
+        for (i, &id) in whole[1..].iter().enumerate() {
+            per_char.push(-log_prob(i, id));
+            if counted[i] {
+                total -= log_prob(i, id);
+            }
+        }
+        total -= log_prob(whole.len() - 1, EOS);
+        (total, per_char)
+    }
+
+    #[test]
+    fn 交互形のコストは読みを区間に挟んだ列の出力側だけの値と一致する() {
+        let vocab = Vocab::build(["猫が鳴く\tネコガナク\u{1e}"], 1);
+        let s = scorer_with(vocab, Condition::Interleaved);
+        let cost = s.costs("NekogaNaku", &["猫が鳴く".to_string()])[0];
+        let line = "\u{1e}ネコガ\t猫が\u{1e}ナク\t鳴く";
+        let (expected, _) = reference_interleaved(&s, line);
+        assert!((cost - expected).abs() < 1e-4, "{cost} vs {expected}");
+        // 読みが違えばコストも変わる。
+        assert_ne!(cost, s.costs("InugaNaku", &["猫が鳴く".to_string()])[0]);
+    }
+
+    #[test]
+    fn 交互形の字の問い合わせは出力の字の位置で引く() {
+        let vocab = Vocab::build(["猫が鳴く\tネコガナク\u{1e}"], 1);
+        let s = scorer_with(vocab.clone(), Condition::Interleaved);
+        let mut scoring = s.begin("NekogaNaku");
+        let scored = scoring.score(&["猫が鳴く".to_string()]);
+        let line = "\u{1e}ネコガ\t猫が\u{1e}ナク\t鳴く";
+        let (_, per_char) = reference_interleaved(&s, line);
+        // 出力の字は列の 5, 6, 11, 12 番目。
+        for (pos, i) in [(0, 5), (1, 6), (2, 11), (3, 12)] {
+            let c = line.chars().nth(i).unwrap();
+            let got = scoring.char_cost(&scored[0], pos, vocab.id(c));
+            assert!(
+                (got - per_char[i]).abs() < 1e-4,
+                "{pos}: {got} vs {}",
+                per_char[i]
+            );
+        }
+        // 文の長さの位置は末尾の次、それより先は無限大。
+        assert!(scoring.char_cost(&scored[0], 4, EOS).is_finite());
+        assert!(scoring.char_cost(&scored[0], 5, EOS).is_infinite());
     }
 
     #[test]

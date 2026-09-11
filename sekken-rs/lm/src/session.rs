@@ -137,10 +137,18 @@ impl<'a> Session<'a> {
 
     /// 候補（`read` が返した節の列と id 列）の EOS までの負の対数尤度。
     pub fn nll(&self, path: &[usize], ids: &[u32]) -> f64 {
+        self.nll_counted(path, ids, &vec![true; ids.len()])
+    }
+
+    /// `counted[i]` が立つ id と EOS だけを数えた負の対数尤度。読みを挟んだ列で
+    /// 出力側だけを数えるのに使う。
+    pub fn nll_counted(&self, path: &[usize], ids: &[u32], counted: &[bool]) -> f64 {
         let mut node = 0;
         let mut total = 0.0;
-        for (&next, &id) in path.iter().zip(ids) {
-            total -= f64::from(self.log_prob(node, id));
+        for ((&next, &id), &counted) in path.iter().zip(ids).zip(counted) {
+            if counted {
+                total -= f64::from(self.log_prob(node, id));
+            }
             node = next;
         }
         total - f64::from(self.log_prob(node, EOS))

@@ -14,15 +14,27 @@ pub enum Condition {
     Roman,
     /// `pairs` / `zenz-pairs` が出すカタカナ読みを前置する。ローマ字入力はカタカナに直す。
     Katakana,
+    /// カタカナ読みと出力を漢字の並びごとに交互に並べる（`interleave`）。
+    /// 前置する入力は無く、採点する文ごとに読みを区間に分けて挟む。
+    Interleaved,
 }
 
 impl Condition {
-    /// 変換前のローマ字入力を、モデルが学習した形にする。
+    /// 変換前のローマ字入力を、モデルが学習した形で前置する文字列にする。
+    /// 前置しない種類なら `None`。
     pub fn prefix(self, table: &KanaTable, input: &str) -> Option<String> {
         match self {
-            Condition::None => None,
+            Condition::None | Condition::Interleaved => None,
             Condition::Roman => Some(canonical_roman(input)),
             Condition::Katakana => Some(roman_to_katakana(table, input)),
+        }
+    }
+
+    /// 交互形なら、採点する文に区間ごとに挟むカタカナ読み。
+    pub fn interleaved_reading(self, table: &KanaTable, input: &str) -> Option<String> {
+        match self {
+            Condition::Interleaved => Some(roman_to_katakana(table, input)),
+            _ => None,
         }
     }
 }
@@ -59,6 +71,19 @@ mod tests {
             Condition::None.prefix(&KanaTable::default_table(), "Neko"),
             None
         );
+    }
+
+    #[test]
+    fn 交互形は前置せず区間に挟む読みを返す() {
+        let t = KanaTable::default_table();
+        assert_eq!(Condition::Interleaved.prefix(&t, "Neko"), None);
+        assert_eq!(
+            Condition::Interleaved
+                .interleaved_reading(&t, "NekogaNaku")
+                .as_deref(),
+            Some("ネコガナク")
+        );
+        assert_eq!(Condition::Katakana.interleaved_reading(&t, "Neko"), None);
     }
 
     #[test]
