@@ -37,15 +37,22 @@ impl Tokenizer {
         })
     }
 
-    /// 表層形だけに分ける。素性を読まず、作業領域を使い回す。
-    pub fn surfaces(&self, text: &str) -> Vec<String> {
+    /// 表層形だけに分けて順に `f` に渡す。素性を読まず、作業領域を使い回し、
+    /// 表層形を複製しない。
+    pub fn for_each_surface(&self, text: &str, mut f: impl FnMut(&str)) {
         let mut worker = self.worker.borrow_mut();
         worker.reset_sentence(text);
         worker.tokenize();
-        worker
-            .token_iter()
-            .map(|t| t.surface().to_string())
-            .collect()
+        for t in worker.token_iter() {
+            f(t.surface());
+        }
+    }
+
+    /// 表層形だけに分ける。
+    pub fn surfaces(&self, text: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        self.for_each_surface(text, |s| out.push(s.to_string()));
+        out
     }
 
     pub fn tokenize(&self, text: &str) -> Vec<Token> {

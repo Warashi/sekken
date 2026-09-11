@@ -9,12 +9,13 @@ use crate::ngram::NgramModel;
 
 /// 表層形を語に分ける。実運用は vibrato、テストは単純な分割で差し替える。
 pub trait Segmenter {
-    fn split(&self, surface: &str) -> Vec<String>;
+    /// `surface` を語に分けて順に `f` に渡す。語を複製せずに済ませるため。
+    fn split(&self, surface: &str, f: &mut dyn FnMut(&str));
 }
 
 impl Segmenter for crate::tokenizer::Tokenizer {
-    fn split(&self, surface: &str) -> Vec<String> {
-        self.surfaces(surface)
+    fn split(&self, surface: &str, f: &mut dyn FnMut(&str)) {
+        self.for_each_surface(surface, f);
     }
 }
 
@@ -54,15 +55,13 @@ impl<S: Segmenter> NgramScorer<S> {
         if let Some(w) = self.cache.borrow().get(surface) {
             return f(w);
         }
-        let words: Vec<Word> = self
-            .segmenter
-            .split(surface)
-            .iter()
-            .map(|t| Word {
+        let mut words: Vec<Word> = Vec::new();
+        self.segmenter.split(surface, &mut |t| {
+            words.push(Word {
                 id: self.id(t),
                 chars: t.chars().count(),
             })
-            .collect();
+        });
         let r = f(&words);
         let mut cache = self.cache.borrow_mut();
         if cache.len() >= CACHE_LIMIT {
@@ -123,8 +122,10 @@ mod tests {
 
     struct CharSegmenter;
     impl Segmenter for CharSegmenter {
-        fn split(&self, s: &str) -> Vec<String> {
-            s.chars().map(|c| c.to_string()).collect()
+        fn split(&self, s: &str, f: &mut dyn FnMut(&str)) {
+            for (i, c) in s.char_indices() {
+                f(&s[i..i + c.len_utf8()]);
+            }
         }
     }
 
