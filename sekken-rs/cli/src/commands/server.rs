@@ -2,8 +2,13 @@
 //!
 //! モデルの読み込みには数秒かかるので別スレッドで進め、読み込み中でも
 //! `version` と `shutdown` には即応答する。`henkan` は読み込みの完了を待つ。
+//!
+//! 入力中の補完は打鍵ごとに `henkan` を送り、Emacs 側は打鍵で待つのをやめる。
+//! 変換は 1 つずつしか処理できないので、溜まった `henkan` のうち後ろに
+//! 別の `henkan` があるものは変換せずに捨て、最新の入力だけを変換する。
 
 use std::io::Write as _;
+use std::sync::mpsc;
 use std::thread::JoinHandle;
 
 use anyhow::{Result, anyhow};
@@ -23,6 +28,9 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// エンジンの読み込みに失敗したときの JSON-RPC エラーコード。
 /// Emacs 側はこのコードでプロセスの生死に関係なく異常終了として数える。
 pub const LOAD_FAILED: i64 = -32000;
+
+/// 後から来た `henkan` に置き換えられて変換しなかったときの JSON-RPC エラーコード。
+pub const SUPERSEDED: i64 = -32001;
 
 /// 別スレッドで読み込み中のエンジン。初回利用時に完了を待つ。
 pub enum EngineLoader {
@@ -95,25 +103,76 @@ impl Reply {
 
 pub fn run(args: Args) -> Result<()> {
     let mut loader = EngineLoader::spawn(move || args.engine.build());
-    let mut stdin = std::io::stdin().lock();
     let mut stdout = std::io::stdout().lock();
-    while let Some(req) = read_message(&mut stdin)? {
-        let Some(id) = req.id.clone() else {
-            // 通知には応答しない。
-            if req.method == "exit" {
-                // モデルと辞書の解放に時間がかかり、jsonrpc.el が待つ猶予
-                // （0.3 秒）を超えて kill されるため、解放せずに終了する。
-                std::process::exit(0);
+    // 変換の間も要求を読み進め、溜まった分をまとめて見られるように読みを分ける。
+    let (tx, rx) = mpsc::channel::<Result<Request>>();
+    std::thread::spawn(move || {
+        let mut stdin = std::io::stdin().lock();
+        loop {
+            match read_message(&mut stdin) {
+                Ok(Some(req)) => {
+                    if tx.send(Ok(req)).is_err() {
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(err) => {
+                    let _ = tx.send(Err(err));
+                    break;
+                }
             }
-            continue;
-        };
-        let reply = handle(&mut loader, id, &req);
-        write_message(&mut stdout, &reply.response)?;
-        if reply.exit {
-            std::process::exit(1);
+        }
+    });
+    while let Ok(first) = rx.recv() {
+        let mut batch = vec![first?];
+        while let Ok(req) = rx.try_recv() {
+            batch.push(req?);
+        }
+        let (batch, stale) = drop_stale(batch);
+        for response in stale {
+            write_message(&mut stdout, &response)?;
+        }
+        for req in batch {
+            let Some(id) = req.id.clone() else {
+                // 通知には応答しない。
+                if req.method == "exit" {
+                    // モデルと辞書の解放に時間がかかり、jsonrpc.el が待つ猶予
+                    // （0.3 秒）を超えて kill されるため、解放せずに終了する。
+                    std::process::exit(0);
+                }
+                continue;
+            };
+            let reply = handle(&mut loader, id, &req);
+            write_message(&mut stdout, &reply.response)?;
+            if reply.exit {
+                std::process::exit(1);
+            }
         }
     }
     Ok(())
+}
+
+/// 溜まった要求のうち、後ろに別の `henkan` がある `henkan` を捨てる。
+/// 残す要求と、捨てた要求への応答を返す。
+pub fn drop_stale(batch: Vec<Request>) -> (Vec<Request>, Vec<Response>) {
+    let is_henkan = |req: &Request| req.method == "henkan" && req.id.is_some();
+    let Some(last) = batch.iter().rposition(is_henkan) else {
+        return (batch, Vec::new());
+    };
+    let mut keep = Vec::with_capacity(batch.len());
+    let mut stale = Vec::new();
+    for (i, req) in batch.into_iter().enumerate() {
+        if i < last && is_henkan(&req) {
+            stale.push(Response::err(
+                req.id.clone().unwrap_or(Value::Null),
+                SUPERSEDED,
+                "superseded by a later henkan request",
+            ));
+        } else {
+            keep.push(req);
+        }
+    }
+    (keep, stale)
 }
 
 pub fn handle(loader: &mut EngineLoader, id: Value, req: &Request) -> Reply {
@@ -155,6 +214,41 @@ mod tests {
             method: method.to_string(),
             params,
         }
+    }
+
+    #[test]
+    fn 溜まった_henkan_は最後の_1_つだけ残す() {
+        let mut batch = vec![
+            request("henkan", json!({ "input": "N" })),
+            request("version", Value::Null),
+            request("henkan", json!({ "input": "Ne" })),
+            request("henkan", json!({ "input": "Nek" })),
+            request("shutdown", Value::Null),
+        ];
+        batch[0].id = Some(json!(10));
+        batch[2].id = Some(json!(12));
+        let (keep, stale) = drop_stale(batch);
+        let methods: Vec<&str> = keep.iter().map(|r| r.method.as_str()).collect();
+        assert_eq!(methods, ["version", "henkan", "shutdown"]);
+        assert_eq!(keep[1].params["input"], "Nek");
+        let ids: Vec<&Value> = stale.iter().map(|r| &r.id).collect();
+        assert_eq!(ids, [&json!(10), &json!(12)]);
+        assert!(
+            stale
+                .iter()
+                .all(|r| r.error.as_ref().unwrap().code == SUPERSEDED)
+        );
+    }
+
+    #[test]
+    fn henkan_が_1_つなら捨てない() {
+        let batch = vec![
+            request("version", Value::Null),
+            request("henkan", json!({ "input": "N" })),
+        ];
+        let (keep, stale) = drop_stale(batch);
+        assert_eq!(keep.len(), 2);
+        assert!(stale.is_empty());
     }
 
     #[test]
