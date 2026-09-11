@@ -477,7 +477,16 @@ fn step_row4(
 
 /// `dst` (m × n) = `x` (m × k) · `w` (n × k)^T。出力の列（重みの行）をスレッドで分け、
 /// 各スレッドは自分の列の塊に全行を掛ける。重みの塊は L2、入力は L1 に収まる。
-fn matmul_t(x: &[f32], m: usize, k: usize, w: &[f32], n: usize, dst: &mut [f32], threads: usize) {
+#[doc(hidden)]
+pub fn matmul_t(
+    x: &[f32],
+    m: usize,
+    k: usize,
+    w: &[f32],
+    n: usize,
+    dst: &mut [f32],
+    threads: usize,
+) {
     // 塊は TILE の倍数にして、塊の境目で端数の組を作らない。
     let chunk = n.div_ceil(threads).div_ceil(TILE) * TILE;
     if threads <= 1 || chunk >= n {
