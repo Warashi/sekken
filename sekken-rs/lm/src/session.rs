@@ -26,20 +26,25 @@ pub struct Session<'a> {
 impl<'a> Session<'a> {
     /// 入力側の id 列（BOS から）を読んで場を開く。
     pub fn open(infer: &'a Infer, prefix: &[u32]) -> Session<'a> {
-        let read = infer.read(&[Chain {
-            state: &infer.init_state(),
-            ids: prefix,
-        }]);
+        Session::open_from(infer, &infer.init_state(), prefix).0
+    }
+
+    /// `state` の続きとして入力側の `ids` を読んで場を開く。読んだ各位置の
+    /// 係数（位置 × n_layers × proj_width）も返し、続きを読むための状態を
+    /// 後から作れるようにする。
+    pub fn open_from(infer: &'a Infer, state: &[f32], ids: &[u32]) -> (Session<'a>, Vec<f32>) {
+        let read = infer.read(&[Chain { state, ids }]);
         let d = infer.config().d_model;
-        let last = prefix.len() - 1;
-        Session {
+        let last = ids.len() - 1;
+        let session = Session {
             infer,
             trie: Trie::new(),
             hidden: read.hidden[last * d..(last + 1) * d].to_vec(),
             lse: vec![read.lse[last]],
             proj: vec![0.0; infer.config().n_layers * infer.proj_width()],
             states: vec![Some(read.states.into_iter().next().unwrap())],
-        }
+        };
+        (session, read.proj)
     }
 
     /// 候補を読み、各候補が通る節（根を除く、候補と同じ長さ）を返す。
@@ -175,7 +180,8 @@ mod tests {
         let mut total = 0.0;
         for (i, &id) in ids.iter().chain(std::iter::once(&EOS)).enumerate() {
             let pos = prefix.len() - 1 + i;
-            total -= f64::from(infer.log_prob(&read.hidden[pos * d..(pos + 1) * d], read.lse[pos], id));
+            total -=
+                f64::from(infer.log_prob(&read.hidden[pos * d..(pos + 1) * d], read.lse[pos], id));
         }
         total
     }
@@ -192,6 +198,22 @@ mod tests {
             let want = reference_nll(&infer, &prefix, ids);
             assert!((got - want).abs() < 1e-3, "got={got} want={want}");
         }
+    }
+
+    #[test]
+    fn 途中の状態から続きを読んで開いても最初から読んだのと同じ() {
+        let infer = infer();
+        let whole = [0u32, 3, 4, 5, 1];
+        let (_, proj) = Session::open_from(&infer, &infer.init_state(), &whole);
+        let stride = infer.config().n_layers * infer.proj_width();
+        // 先頭 3 位置の係数から状態を作り、残りを続きとして読む。
+        let mut state = infer.init_state();
+        infer.rescan(&mut state, &proj[..3 * stride]);
+        let (resumed, _) = Session::open_from(&infer, &state, &whole[3..]);
+        let fresh = Session::open(&infer, &whole);
+        assert_eq!(resumed.hidden, fresh.hidden);
+        assert_eq!(resumed.lse, fresh.lse);
+        assert_eq!(resumed.states, fresh.states);
     }
 
     #[test]

@@ -4,6 +4,12 @@
 //! 候補側は trie にまとめて、共有する接頭辞を一度だけ読む。上位 20 本の候補は
 //! 文字の半分以上が他の候補と接頭辞を共有するので、候補ごとに全文を読むより
 //! 計算が半分近くで済む。
+//!
+//! 入力中は 1 字打つごとに変換が来て、入力側は前回の延長になる。直前の
+//! 入力側の読み（`\t` の手前まで）の係数を残し、延長なら伸びた分と `\t`
+//! だけを読む。
+
+use std::cell::RefCell;
 
 use sekken_core::kana::KanaTable;
 use sekken_core::rerank::SentenceScorer;
@@ -19,6 +25,18 @@ pub struct LmScorer {
     /// 「入力 \t 出力」で学習したモデルなら、採点する文に前置する入力の種類。
     condition: Condition,
     table: KanaTable,
+    /// 直前の入力側の読み。
+    prefix: RefCell<Option<PrefixCache>>,
+}
+
+/// 直前の入力側（BOS から `\t` の手前まで）の読み。
+struct PrefixCache {
+    ids: Vec<u32>,
+    /// `ids` の各位置の係数（位置 × n_layers × proj_width）。
+    proj: Vec<f32>,
+    /// `ids` を読み終えた状態。読んだ直後は持たず、延長で必要になったときに
+    /// 係数から作る（延長が来ない変換に作る費用を掛けない）。
+    state: Option<Vec<f32>>,
 }
 
 /// 1 回の変換の間の採点。入力側を読み終えた状態と、読んだ候補を持ち回る。
@@ -42,6 +60,7 @@ impl LmScorer {
             vocab,
             condition,
             table: KanaTable::default_table(),
+            prefix: RefCell::new(None),
         }
     }
 
@@ -68,8 +87,44 @@ impl LmScorer {
     pub fn begin(&self, input: &str) -> Scoring<'_> {
         Scoring {
             scorer: self,
-            session: Session::open(&self.infer, &self.prefix_ids(input)),
+            session: self.open(&self.prefix_ids(input)),
         }
+    }
+
+    /// 入力側の id 列を読んで場を開く。`\t` の手前までが直前の入力側の延長なら、
+    /// 伸びた分と `\t` だけを読む。結果は最初から読んだのと同じになる。
+    fn open(&self, ids: &[u32]) -> Session<'_> {
+        let body = &ids[..ids.len() - 1];
+        if body.is_empty() {
+            return Session::open(&self.infer, ids);
+        }
+        let stride = self.infer.config().n_layers * self.infer.proj_width();
+        let mut cache = self.prefix.borrow_mut();
+        if let Some(c) = cache.as_mut()
+            && body.starts_with(&c.ids)
+        {
+            let state = c.state.take().unwrap_or_else(|| {
+                let mut state = self.infer.init_state();
+                self.infer.rescan(&mut state, &c.proj);
+                state
+            });
+            let tail = &ids[c.ids.len()..];
+            let (session, proj) = Session::open_from(&self.infer, &state, tail);
+            let grown = tail.len() - 1;
+            let mut state = state;
+            self.infer.rescan(&mut state, &proj[..grown * stride]);
+            c.ids.extend_from_slice(&tail[..grown]);
+            c.proj.extend_from_slice(&proj[..grown * stride]);
+            c.state = Some(state);
+            return session;
+        }
+        let (session, proj) = Session::open_from(&self.infer, &self.infer.init_state(), ids);
+        *cache = Some(PrefixCache {
+            ids: body.to_vec(),
+            proj: proj[..body.len() * stride].to_vec(),
+            state: None,
+        });
+        session
     }
 
     /// 各文の負の対数尤度（EOS まで含む）。
@@ -269,6 +324,30 @@ pub(crate) mod tests {
             assert!(
                 (cost - alone).abs() < 1e-3,
                 "{sentence:?}: {cost} vs {alone}"
+            );
+        }
+    }
+
+    #[test]
+    fn 入力が直前の延長なら続きだけ読んでも同じコストになる() {
+        let vocab = Vocab::build(["猫が鳴く\tネコガナク"], 1);
+        let s = scorer_with(vocab.clone(), Condition::Katakana);
+        let fresh = scorer_with(vocab, Condition::Katakana);
+        let sentence = ["猫が鳴く".to_string()];
+        // 1 字ずつ伸ばす。2 回目以降は直前の延長になる。
+        for input in ["Ne", "Neko", "Nekoga", "NekogaNa", "NekogaNaku"] {
+            assert_eq!(
+                s.costs(input, &sentence),
+                fresh.costs(input, &sentence),
+                "{input}"
+            );
+        }
+        // 延長でない入力も、短くなる入力も、最初から読む。
+        for input in ["Inu", "Ne", "NekogaNaku"] {
+            assert_eq!(
+                s.costs(input, &sentence),
+                fresh.costs(input, &sentence),
+                "{input}"
             );
         }
     }
