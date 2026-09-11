@@ -17,6 +17,10 @@ pub const RANK_WEIGHT: f64 = 1.0;
 /// 最も良かった 2 にした。
 pub const KANA_PENALTY: f64 = 2.0;
 
+/// 途中経路を残す本数の下限。同点や後段の逆転に備え、要求数が少なくても
+/// これだけは残す。
+pub const BEAM: usize = 20;
+
 /// 各セグメント位置から始まる候補の一覧。
 pub struct Lattice {
     pub candidates: Vec<Vec<Candidate>>,
@@ -148,8 +152,7 @@ impl<'a> Search<'a> {
     /// 表層形の列を複製すると割り当てが探索の時間を決めてしまう。
     pub fn nbest_constrained(&self, top_n: usize, constraint: &Constraint) -> Vec<Path> {
         let n = self.lattice.candidates.len();
-        // 同点や後段の逆転に備え、途中経路は要求数より多めに残す。
-        let beam = top_n.max(20);
+        let beam = top_n.max(BEAM);
         let mut nodes = vec![Node {
             cost: 0.0,
             len: 0,

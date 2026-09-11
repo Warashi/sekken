@@ -12,7 +12,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::lattice::{Constraint, Lattice, Path};
+use crate::lattice::{BEAM, Constraint, Lattice, Path};
 use crate::scorer::Scorer;
 use crate::verify::{Verdict, Verifier, VerifySession};
 
@@ -79,9 +79,11 @@ impl Speculator {
         let mut first: Vec<Path> = Vec::new();
         for round in 0..=self.rounds {
             let mut paths: Vec<Path>;
-            if round == 0 {
+            if round == 0 && top_n <= BEAM {
                 // 制約の無い探索は格子の順位そのものなので、多めに取って
-                // 先頭 `width` 本を採点し、全体は埋め草として返す。
+                // 先頭 `width` 本を採点し、全体は埋め草として返す。要求数が
+                // ビーム幅を超えると探索の幅が変わって採点する経路まで変わる
+                // ので、そのときは最後に別に探索する。
                 first = search.nbest_constrained(self.width.max(top_n), &constraint);
                 paths = first.iter().take(self.width).cloned().collect();
                 first.truncate(top_n);
@@ -114,6 +116,9 @@ impl Speculator {
             constraint = next;
         }
         results.sort_by(|a, b| a.cost.total_cmp(&b.cost));
+        if top_n > BEAM {
+            first = search.nbest(top_n);
+        }
         Decoded {
             scored: results,
             lattice: first,
@@ -420,6 +425,14 @@ mod tests {
         let s = speculator(vec![(0, '放')], "放火", 3);
         let d = s.decode(&lattice(), &scorer(), "", "", 2);
         assert_eq!(d.lattice, lattice().nbest(&scorer(), 2));
+        assert_eq!(d.scored[0].surfaces, ["放火", "と"]);
+    }
+
+    #[test]
+    fn 候補数がビーム幅を超えても格子の順位の経路を返す() {
+        let s = speculator(vec![(0, '放')], "放火", 3);
+        let d = s.decode(&lattice(), &scorer(), "", "", BEAM + 5);
+        assert_eq!(d.lattice, lattice().nbest(&scorer(), BEAM + 5));
         assert_eq!(d.scored[0].surfaces, ["放火", "と"]);
     }
 
