@@ -69,18 +69,12 @@ mod tests {
 
     #[test]
     fn セミコロンを大文字と同じ境界として扱う() {
-        assert_eq!(
-            segment(";shokai;kougi"),
-            seg("", &["shokai", "kougi"])
-        );
+        assert_eq!(segment(";shokai;kougi"), seg("", &["shokai", "kougi"]));
     }
 
     #[test]
     fn 二重セミコロンはリテラルのセミコロンになる() {
         assert_eq!(segment("semi;;koron"), seg("semi;koron", &[]));
-        assert_eq!(
-            segment(";semi;;koron"),
-            seg("", &["semi;koron"])
-        );
+        assert_eq!(segment(";semi;;koron"), seg("", &["semi;koron"]));
     }
 }
