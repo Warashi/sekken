@@ -47,6 +47,18 @@ fn split_trailing_symbols(segment: &str) -> (&str, &str) {
     segment.split_at(roman.len())
 }
 
+/// 送り仮名のローマ字から、SKK の送りあり見出しに付ける子音を取り出す。
+/// `xtuta` のように っ を単独で綴った送り仮名は、見出しでは った の t で
+/// 引く（`とt`）ので、っ の綴りを飛ばした先の文字を使う。子音 1 文字も
+/// 表では っ に写る（`k` → っ）が、それは送り仮名の頭そのものなので飛ばさない。
+fn okuri_consonant(table: &KanaTable, okuri_roman: &str) -> Option<char> {
+    let after_sokuon = (2..=okuri_roman.len())
+        .filter(|&n| okuri_roman.is_char_boundary(n))
+        .find(|&n| table.roman2kana(&okuri_roman[..n]) == "っ")
+        .map_or(okuri_roman, |n| &okuri_roman[n..]);
+    after_sokuon.chars().next()
+}
+
 /// 位置 `index` のセグメントから始まる候補をすべて列挙する。
 ///
 /// セグメント `wagahaiha` は「辞書の読み `わがはい` + 残りのかな `は`」のように
@@ -67,7 +79,7 @@ pub fn candidates_at(
         && let Some(next) = segments.get(index + 1)
     {
         let (okuri_roman, okuri_symbols) = split_trailing_symbols(next);
-        if let Some(consonant) = okuri_roman.chars().next() {
+        if let Some(consonant) = okuri_consonant(table, okuri_roman) {
             let okuri = table.roman2kana(okuri_roman) + &table.roman2kana(okuri_symbols);
             for (rank, surface) in dict.okuri_ari(&whole, consonant).iter().enumerate() {
                 out.push(Candidate::ranked(format!("{surface}{okuri}"), 2, rank));
@@ -86,7 +98,7 @@ pub fn candidates_at(
         if yomi.chars().any(|c| c.is_ascii()) || yomi.clone() + &suffix != whole_with_symbols {
             continue;
         }
-        if let Some(consonant) = rest.chars().next() {
+        if let Some(consonant) = okuri_consonant(table, rest) {
             for (rank, surface) in dict.okuri_ari(&yomi, consonant).iter().enumerate() {
                 out.push(Candidate::ranked(format!("{surface}{suffix}"), 1, rank));
                 has_okuri_ari = true;
@@ -118,6 +130,7 @@ mod tests {
     const FIXTURE: &str = "\
 ;; okuri-ari entries.
 かk /書/掛/
+とt /採/取/
 ;; okuri-nasi entries.
 か /可/
 ねこ /猫/
@@ -181,6 +194,23 @@ mod tests {
         let (t, d) = setup();
         let c = candidates_at(&t, &d, &segs(&["neko"]), 0);
         assert!(c.iter().all(|c| !c.okuri_rival));
+    }
+
+    #[test]
+    fn っで始まる送り仮名はっの次の子音で送りあり候補を引く() {
+        let (t, d) = setup();
+        let c = candidates_at(&t, &d, &segs(&["toxtuta"]), 0);
+        assert!(c.contains(&Candidate::ranked("採った", 1, 0)));
+        assert!(c.contains(&Candidate::ranked("取った", 1, 1)));
+        let c = candidates_at(&t, &d, &segs(&["toxtsuta"]), 0);
+        assert!(c.contains(&Candidate::ranked("採った", 1, 0)));
+    }
+
+    #[test]
+    fn 次のセグメントがっで始まっても送りあり候補を引く() {
+        let (t, d) = setup();
+        let c = candidates_at(&t, &d, &segs(&["to", "xtuta"]), 0);
+        assert_eq!(c[0], Candidate::ranked("採った", 2, 0));
     }
 
     #[test]
