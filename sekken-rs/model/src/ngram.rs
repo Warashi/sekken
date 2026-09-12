@@ -84,45 +84,12 @@ impl NgramCounter {
 
     /// 実行時の形に固める。頻度は u32 に収まる必要がある。
     pub fn freeze(&self) -> Result<NgramModel> {
-        let vocab = self.tokens.len();
-        let mut text = String::new();
-        let mut offsets = Vec::with_capacity(vocab + 1);
-        for t in &self.tokens {
-            offsets.push(text.len() as u32);
-            text.push_str(t);
-        }
-        offsets.push(text.len() as u32);
-        let mut sorted: Vec<u32> = (0..vocab as u32).collect();
-        sorted.sort_by(|&a, &b| self.tokens[a as usize].cmp(&self.tokens[b as usize]));
-        let unigram = self
-            .unigram
-            .iter()
-            .map(|&c| u32::try_from(c))
-            .collect::<Result<Vec<_>, _>>()
-            .context("unigram count exceeds u32")?;
-        let mut pairs: Vec<(u32, u32, u32)> = Vec::with_capacity(self.bigram.len());
+        let mut pairs: Vec<(u32, u32, u64)> = Vec::with_capacity(self.bigram.len());
         for (&(prev, next), &c) in &self.bigram {
-            let c = u32::try_from(c).context("bigram count exceeds u32")?;
             pairs.push((prev, next, c));
         }
         pairs.sort_unstable();
-        let mut row_start = vec![0u32; vocab + 1];
-        for &(prev, _, _) in &pairs {
-            row_start[prev as usize + 1] += 1;
-        }
-        for i in 0..vocab {
-            row_start[i + 1] += row_start[i];
-        }
-        Ok(NgramModel {
-            text,
-            offsets,
-            sorted,
-            unigram,
-            row_start,
-            next: pairs.iter().map(|p| p.1).collect(),
-            count: pairs.iter().map(|p| p.2).collect(),
-            total: self.total,
-        })
+        NgramModel::from_counts(&self.tokens, &self.unigram, self.total, pairs)
     }
 
     pub fn save(&self, w: impl Write) -> Result<()> {
@@ -148,6 +115,67 @@ pub struct NgramModel {
 }
 
 impl NgramModel {
+    /// 数え終わった頻度から組む。`bigram` は `(prev, next, count)` を昇順に並べたもの。
+    /// 学習時の計数を RAM に置かずディスクで併合する経路からも呼べるよう、
+    /// 頻度表の持ち方には依存しない。
+    pub fn from_counts(
+        tokens: &[String],
+        unigram: &[u64],
+        total: u64,
+        bigram: impl IntoIterator<Item = (u32, u32, u64)>,
+    ) -> Result<NgramModel> {
+        let vocab = tokens.len();
+        ensure!(
+            unigram.len() == vocab,
+            "unigram length differs from vocabulary"
+        );
+        let mut text = String::new();
+        let mut offsets = Vec::with_capacity(vocab + 1);
+        for t in tokens {
+            offsets.push(text.len() as u32);
+            text.push_str(t);
+        }
+        offsets.push(text.len() as u32);
+        let mut sorted: Vec<u32> = (0..vocab as u32).collect();
+        sorted.sort_by(|&a, &b| tokens[a as usize].cmp(&tokens[b as usize]));
+        let unigram = unigram
+            .iter()
+            .map(|&c| u32::try_from(c))
+            .collect::<Result<Vec<_>, _>>()
+            .context("unigram count exceeds u32")?;
+        let mut row_start = vec![0u32; vocab + 1];
+        let mut next = Vec::new();
+        let mut count = Vec::new();
+        let mut last = None;
+        for (prev, nxt, c) in bigram {
+            ensure!(
+                last.is_none_or(|l| l < (prev, nxt)),
+                "bigram counts must be sorted and unique"
+            );
+            ensure!(
+                (prev as usize) < vocab && (nxt as usize) < vocab,
+                "bigram id out of range"
+            );
+            last = Some((prev, nxt));
+            row_start[prev as usize + 1] += 1;
+            next.push(nxt);
+            count.push(u32::try_from(c).context("bigram count exceeds u32")?);
+        }
+        for i in 0..vocab {
+            row_start[i + 1] += row_start[i];
+        }
+        Ok(NgramModel {
+            text,
+            offsets,
+            sorted,
+            unigram,
+            row_start,
+            next,
+            count,
+            total,
+        })
+    }
+
     fn token(&self, id: u32) -> &str {
         &self.text[self.offsets[id as usize] as usize..self.offsets[id as usize + 1] as usize]
     }
@@ -394,6 +422,29 @@ mod tests {
             assert_eq!(m.bigram(prev, next) as u64, count);
         }
         assert_eq!(m.bigram(m.id("猫").unwrap(), m.id("は").unwrap()), 0);
+    }
+
+    #[test]
+    fn 頻度の列から組んだものは_counter_を固めたものと一致する() {
+        let c = counter();
+        let mut pairs: Vec<_> = c.bigram.iter().map(|(&(p, n), &k)| (p, n, k)).collect();
+        pairs.sort_unstable();
+        let m = NgramModel::from_counts(&c.tokens, &c.unigram, c.total, pairs).unwrap();
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        c.save(&mut a).unwrap();
+        m.save(&mut b).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn 頻度の列が昇順でなければ組めない() {
+        let c = counter();
+        let unsorted = [(BOS, 3, 1), (BOS, 2, 1)];
+        assert!(NgramModel::from_counts(&c.tokens, &c.unigram, c.total, unsorted).is_err());
+        let dup = [(BOS, 2, 1), (BOS, 2, 1)];
+        assert!(NgramModel::from_counts(&c.tokens, &c.unigram, c.total, dup).is_err());
+        let out_of_range = [(BOS, c.tokens.len() as u32, 1)];
+        assert!(NgramModel::from_counts(&c.tokens, &c.unigram, c.total, out_of_range).is_err());
     }
 
     #[test]
