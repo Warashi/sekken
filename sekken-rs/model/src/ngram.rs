@@ -64,6 +64,12 @@ pub enum Lower {
     /// `P(class(next) | class(prev)) · P(next | class(next))`。`fields` はクラス名の
     /// 先頭から使う欄の数、`prior` はクラス遷移の加算平滑化。
     Class { fields: usize, prior: f64 },
+    /// `weight · Class + (1 − weight) · Unigram`。
+    Mixed {
+        fields: usize,
+        prior: f64,
+        weight: f64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -237,6 +243,8 @@ pub fn majority_class(
 struct ClassTable {
     class_of: Vec<u32>,
     n: usize,
+    /// クラスの分布に掛ける重み。残りは unigram に掛ける。1 ならクラスだけ。
+    weight: f32,
     /// `P(next_class | prev_class)`。`n × n` の行優先。
     trans: Vec<f32>,
     /// `P(word | class_of(word))`。
@@ -367,7 +375,18 @@ impl NgramModel {
 
         let class = match params.lower {
             Lower::Unigram => None,
-            Lower::Class { fields, prior } => Some(build_class_table(counts, fields, prior)?),
+            Lower::Class { fields, prior } => Some(build_class_table(counts, fields, prior, 1.0)?),
+            Lower::Mixed {
+                fields,
+                prior,
+                weight,
+            } => {
+                ensure!(
+                    (0.0..=1.0).contains(&weight),
+                    "mix weight must be in [0, 1]"
+                );
+                Some(build_class_table(counts, fields, prior, weight)?)
+            }
         };
         Ok(NgramModel {
             text,
@@ -430,8 +449,10 @@ impl NgramModel {
             None => uni,
             Some(t) => {
                 let (pc, nc) = (t.class_of[prev as usize], t.class_of[next as usize]);
-                t.trans[pc as usize * t.n + nc as usize] as f64
-                    * t.word_in_class[next as usize] as f64
+                let class = t.trans[pc as usize * t.n + nc as usize] as f64
+                    * t.word_in_class[next as usize] as f64;
+                let w = t.weight as f64;
+                w * class + (1.0 - w) * uni
             }
         };
         -(self.num(prev, next) + self.lambda[prev as usize] as f64 * low).ln()
@@ -455,6 +476,7 @@ impl NgramModel {
             None => enc.write_all(&0u32.to_le_bytes())?,
             Some(t) => {
                 enc.write_all(&(t.n as u32).to_le_bytes())?;
+                enc.write_all(&t.weight.to_le_bytes())?;
                 write_u32s(&mut enc, &t.class_of)?;
                 write_f32s(&mut enc, &t.trans)?;
                 write_f32s(&mut enc, &t.word_in_class)?;
@@ -493,6 +515,7 @@ impl NgramModel {
             None
         } else {
             Some(ClassTable {
+                weight: f32::from_bits(read_u32(&mut r)?),
                 class_of: read_u32s(&mut r)?,
                 n,
                 trans: read_f32s(&mut r)?,
@@ -560,7 +583,12 @@ impl NgramModel {
 }
 
 /// クラス名の先頭 `fields` 欄で畳み、遷移とクラス内の語の分布を作る。
-fn build_class_table(counts: &Counts, fields: usize, prior: f64) -> Result<ClassTable> {
+fn build_class_table(
+    counts: &Counts,
+    fields: usize,
+    prior: f64,
+    weight: f64,
+) -> Result<ClassTable> {
     ensure!(fields >= 1, "class must use at least one field");
     ensure!(prior > 0.0, "class prior must be positive");
     ensure!(
@@ -632,6 +660,7 @@ fn build_class_table(counts: &Counts, fields: usize, prior: f64) -> Result<Class
     Ok(ClassTable {
         class_of,
         n,
+        weight: weight as f32,
         trans,
         word_in_class,
     })
@@ -753,6 +782,11 @@ mod tests {
                 Lower::Class {
                     fields: 2,
                     prior: 1.0,
+                },
+                Lower::Mixed {
+                    fields: 2,
+                    prior: 1.0,
+                    weight: 0.5,
                 },
             ] {
                 out.push(BuildParams {
