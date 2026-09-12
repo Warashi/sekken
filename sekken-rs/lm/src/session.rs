@@ -22,8 +22,10 @@ pub struct Session<'a> {
     hidden: Vec<f32>,
     /// 節ごとの logits の log-sum-exp。
     lse: Vec<f32>,
-    /// 節ごとの各層の係数（n_layers × proj_width）。根の分は使わないので 0。
-    proj: Vec<f32>,
+    /// 節ごとの各層の係数（n_layers × proj_width）。根の分は使わないので空。
+    /// 節ごとに別の Vec にして、持ち越すときに写さず移せるようにする
+    /// （1 節 10 KB ほどで、1 変換の節をまとめて写すと数 ms 掛かる）。
+    proj: Vec<Vec<f32>>,
     /// 節ごとの読み終えた状態。連鎖の終わりと分岐点だけ持つ。
     states: Vec<Option<Vec<f32>>>,
     /// この場で読んだ候補が通った節。持ち越した節は通るまで立たない。
@@ -35,7 +37,7 @@ pub struct Carried {
     trie: Trie,
     hidden: Vec<f32>,
     lse: Vec<f32>,
-    proj: Vec<f32>,
+    proj: Vec<Vec<f32>>,
     states: Vec<Option<Vec<f32>>>,
 }
 
@@ -66,17 +68,16 @@ impl<'a> Session<'a> {
     pub fn carry(&mut self) -> Carried {
         let (trie, origin) = self.trie.retain(&self.touched);
         let d = self.infer.config().d_model;
-        let stride = self.infer.config().n_layers * self.infer.proj_width();
-        let gather = |src: &[f32], width: usize| -> Vec<f32> {
-            origin
-                .iter()
-                .flat_map(|&o| src[o * width..(o + 1) * width].iter().copied())
-                .collect()
-        };
         Carried {
-            hidden: gather(&self.hidden, d),
-            lse: gather(&self.lse, 1),
-            proj: gather(&self.proj, stride),
+            hidden: origin
+                .iter()
+                .flat_map(|&o| self.hidden[o * d..(o + 1) * d].iter().copied())
+                .collect(),
+            lse: origin.iter().map(|&o| self.lse[o]).collect(),
+            proj: origin
+                .iter()
+                .map(|&o| std::mem::take(&mut self.proj[o]))
+                .collect(),
             states: origin.iter().map(|&o| self.states[o].take()).collect(),
             trie,
         }
@@ -94,7 +95,7 @@ impl<'a> Session<'a> {
             trie: Trie::new(),
             hidden: read.hidden[last * d..(last + 1) * d].to_vec(),
             lse: vec![read.lse[last]],
-            proj: vec![0.0; infer.config().n_layers * infer.proj_width()],
+            proj: vec![Vec::new()],
             states: vec![Some(read.states.into_iter().next().unwrap())],
             touched: vec![true],
         };
@@ -111,7 +112,7 @@ impl<'a> Session<'a> {
         let stride = self.infer.config().n_layers * self.infer.proj_width();
         self.hidden.resize(n * d, 0.0);
         self.lse.resize(n, 0.0);
-        self.proj.resize(n * stride, 0.0);
+        self.proj.resize(n, Vec::new());
         self.states.resize(n, None);
         self.touched.resize(n, false);
         for node in paths.iter().flatten() {
@@ -155,8 +156,7 @@ impl<'a> Session<'a> {
                     self.hidden[node * d..(node + 1) * d]
                         .copy_from_slice(&read.hidden[r * d..(r + 1) * d]);
                     self.lse[node] = read.lse[r];
-                    self.proj[node * stride..(node + 1) * stride]
-                        .copy_from_slice(&read.proj[r * stride..(r + 1) * stride]);
+                    self.proj[node] = read.proj[r * stride..(r + 1) * stride].to_vec();
                     r += 1;
                 }
                 self.states[*c.last().unwrap()] = Some(state);
@@ -177,11 +177,9 @@ impl<'a> Session<'a> {
             cur = self.trie.parent(cur);
             path.push(cur);
         }
-        let stride = self.infer.config().n_layers * self.infer.proj_width();
         let mut state = self.states[cur].clone().unwrap();
         for &n in path[..path.len() - 1].iter().rev() {
-            self.infer
-                .rescan(&mut state, &self.proj[n * stride..(n + 1) * stride]);
+            self.infer.rescan(&mut state, &self.proj[n]);
         }
         self.states[node] = Some(state);
     }
