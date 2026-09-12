@@ -6,8 +6,8 @@ use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::condition::Condition;
-use crate::infer::Infer;
 use crate::config::{ModelConfig, Weight};
+use crate::infer::Infer;
 use crate::vocab::Vocab;
 
 #[derive(Serialize, Deserialize)]

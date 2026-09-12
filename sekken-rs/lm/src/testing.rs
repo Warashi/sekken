@@ -34,7 +34,12 @@ pub fn random_weights(cfg: &ModelConfig, seed: u64) -> Vec<Weight> {
     for i in 0..cfg.n_layers {
         let p = |s: &str| format!("block{i}.{s}");
         push(p("norm1.weight"), vec![d], 1.0, 1.0);
-        push(p("mixer.in_proj.weight"), vec![proj_width, d], -linear(d), linear(d));
+        push(
+            p("mixer.in_proj.weight"),
+            vec![proj_width, d],
+            -linear(d),
+            linear(d),
+        );
         push(p("mixer.dt_bias"), vec![h], -6.9, -2.25);
         push(p("mixer.a_log"), vec![h], 0.0, 16f32.ln());
         push(p("mixer.theta_bias"), vec![h, n / 2], 0.5, 20.0);
@@ -49,8 +54,18 @@ pub fn random_weights(cfg: &ModelConfig, seed: u64) -> Vec<Weight> {
             linear(inner),
         );
         push(p("norm2.weight"), vec![d], 1.0, 1.0);
-        push(p("mlp.gate.weight"), vec![cfg.mlp_dim, d], -linear(d), linear(d));
-        push(p("mlp.up.weight"), vec![cfg.mlp_dim, d], -linear(d), linear(d));
+        push(
+            p("mlp.gate.weight"),
+            vec![cfg.mlp_dim, d],
+            -linear(d),
+            linear(d),
+        );
+        push(
+            p("mlp.up.weight"),
+            vec![cfg.mlp_dim, d],
+            -linear(d),
+            linear(d),
+        );
         push(
             p("mlp.down.weight"),
             vec![d, cfg.mlp_dim],
@@ -59,7 +74,12 @@ pub fn random_weights(cfg: &ModelConfig, seed: u64) -> Vec<Weight> {
         );
     }
     push("norm.weight".into(), vec![d], 1.0, 1.0);
-    push("head.weight".into(), vec![cfg.vocab_size, d], -linear(d), linear(d));
+    push(
+        "head.weight".into(),
+        vec![cfg.vocab_size, d],
+        -linear(d),
+        linear(d),
+    );
     out
 }
 
