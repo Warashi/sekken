@@ -14,6 +14,8 @@ pub struct Candidate {
     pub rank: usize,
     /// 辞書を引かず読みをそのままかなにした候補か。
     pub kana: bool,
+    /// 同じ位置に送りあり候補がある、かな候補か。
+    pub okuri_rival: bool,
 }
 
 impl Candidate {
@@ -23,6 +25,7 @@ impl Candidate {
             span: 1,
             rank: 0,
             kana: true,
+            okuri_rival: false,
         }
     }
 
@@ -32,6 +35,7 @@ impl Candidate {
             span,
             rank,
             kana: false,
+            okuri_rival: false,
         }
     }
 }
@@ -57,6 +61,7 @@ pub fn candidates_at(
     let (roman, symbols) = split_trailing_symbols(&segments[index]);
     let whole = table.roman2kana(roman);
     let mut out = Vec::new();
+    let mut has_okuri_ari = false;
 
     if symbols.is_empty()
         && let Some(next) = segments.get(index + 1)
@@ -66,6 +71,7 @@ pub fn candidates_at(
             let okuri = table.roman2kana(okuri_roman) + &table.roman2kana(okuri_symbols);
             for (rank, surface) in dict.okuri_ari(&whole, consonant).iter().enumerate() {
                 out.push(Candidate::ranked(format!("{surface}{okuri}"), 2, rank));
+                has_okuri_ari = true;
             }
         }
     }
@@ -83,6 +89,7 @@ pub fn candidates_at(
         if let Some(consonant) = rest.chars().next() {
             for (rank, surface) in dict.okuri_ari(&yomi, consonant).iter().enumerate() {
                 out.push(Candidate::ranked(format!("{surface}{suffix}"), 1, rank));
+                has_okuri_ari = true;
             }
         }
         for (rank, surface) in dict.okuri_nasi(&yomi).iter().enumerate() {
@@ -96,6 +103,11 @@ pub fn candidates_at(
 
     out.push(Candidate::kana(whole_with_symbols.clone()));
     out.push(Candidate::kana(hira2kata(&whole_with_symbols)));
+    if has_okuri_ari {
+        for cand in out.iter_mut().filter(|c| c.kana) {
+            cand.okuri_rival = true;
+        }
+    }
     out
 }
 
@@ -145,6 +157,30 @@ mod tests {
         let c = candidates_at(&t, &d, &segs(&["kakimasu"]), 0);
         assert!(c.contains(&Candidate::ranked("書きます", 1, 0)));
         assert!(c.contains(&Candidate::ranked("可きます", 1, 0)));
+    }
+
+    #[test]
+    fn 送りあり候補と同じ位置のかな候補に印を付ける() {
+        let (t, d) = setup();
+        let c = candidates_at(&t, &d, &segs(&["kakimasu"]), 0);
+        let kana: Vec<&Candidate> = c.iter().filter(|c| c.kana).collect();
+        assert!(!kana.is_empty());
+        assert!(kana.iter().all(|c| c.okuri_rival));
+        assert!(c.iter().filter(|c| !c.kana).all(|c| !c.okuri_rival));
+    }
+
+    #[test]
+    fn 次のセグメントを送り仮名にした送りあり候補でもかな候補に印を付ける() {
+        let (t, d) = setup();
+        let c = candidates_at(&t, &d, &segs(&["ka", "ku"]), 0);
+        assert!(c.iter().filter(|c| c.kana).all(|c| c.okuri_rival));
+    }
+
+    #[test]
+    fn 送りあり候補が無ければかな候補に印を付けない() {
+        let (t, d) = setup();
+        let c = candidates_at(&t, &d, &segs(&["neko"]), 0);
+        assert!(c.iter().all(|c| !c.okuri_rival));
     }
 
     #[test]
