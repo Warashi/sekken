@@ -238,6 +238,10 @@ impl<'a> Scoring<'a> {
 impl Drop for Scoring<'_> {
     /// 読んだ候補の節を次の変換に残す。
     fn drop(&mut self) {
+        // 採点の途中で panic したら場は壊れているので、残さない。
+        if std::thread::panicking() {
+            return;
+        }
         let carried = self.session.carry();
         *self.scorer.carried.borrow_mut() = Some((std::mem::take(&mut self.prefix), carried));
     }
