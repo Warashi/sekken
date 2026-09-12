@@ -48,6 +48,16 @@ impl Tokenizer {
         }
     }
 
+    /// 表層形と素性に分けて順に `f` に渡す。作業領域を使い回し、複製しない。
+    pub fn for_each_token(&self, text: &str, mut f: impl FnMut(&str, &str)) {
+        let mut worker = self.worker.borrow_mut();
+        worker.reset_sentence(text);
+        worker.tokenize();
+        for t in worker.token_iter() {
+            f(t.surface(), t.feature());
+        }
+    }
+
     /// 表層形だけに分ける。
     pub fn surfaces(&self, text: &str) -> Vec<String> {
         let mut out = Vec::new();
@@ -67,6 +77,12 @@ impl Tokenizer {
             })
             .collect()
     }
+}
+
+/// ipadic の素性 `品詞,品詞細分類1,細分類2,細分類3,活用型,活用形,原形,読み,発音` の
+/// 先頭 6 欄（品詞から活用形まで）を、n-gram の品詞クラスの最細の名前として返す。
+pub fn class_of(feature: &str) -> String {
+    feature.split(',').take(6).collect::<Vec<_>>().join(",")
 }
 
 /// ipadic の素性 `品詞,品詞細分類1,細分類2,細分類3,活用型,活用形,原形,読み,発音` から読みを取る。
@@ -114,6 +130,15 @@ mod tests {
         assert_eq!(t.surfaces("吾輩は猫である。"), expected);
         // 2 度目も作業領域を使い回して同じ結果になる。
         assert_eq!(t.surfaces("吾輩は猫である。"), expected);
+    }
+
+    #[test]
+    fn ipadic_の素性から品詞クラスを取る() {
+        assert_eq!(
+            class_of("動詞,自立,*,*,五段・カ行イ音便,連用タ接続,書く,カイ,カイ"),
+            "動詞,自立,*,*,五段・カ行イ音便,連用タ接続"
+        );
+        assert_eq!(class_of("名詞,一般,*,*,*,*"), "名詞,一般,*,*,*,*");
     }
 
     #[test]
