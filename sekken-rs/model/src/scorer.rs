@@ -33,6 +33,9 @@ const CACHE_LIMIT: usize = 1 << 18;
 pub struct NgramScorer<S: Segmenter> {
     model: NgramModel,
     segmenter: S,
+    /// 語 1 つごとに加えるコスト。正なら少ない語で表せる候補（長い 1 語）を
+    /// 有利にし、負なら短い語の列を有利にする。
+    word_penalty: f64,
     /// 表層形 → 語の列。
     cache: RefCell<HashMap<String, Vec<Word>>>,
     /// 語 → id。id の引き当ては語彙の二分探索で 1 µs ほどかかり、
@@ -45,9 +48,15 @@ impl<S: Segmenter> NgramScorer<S> {
         NgramScorer {
             model,
             segmenter,
+            word_penalty: 0.0,
             cache: RefCell::new(HashMap::new()),
             ids: RefCell::new(HashMap::new()),
         }
+    }
+
+    pub fn with_word_penalty(mut self, word_penalty: f64) -> Self {
+        self.word_penalty = word_penalty;
+        self
     }
 
     /// `surface` の語の列に `f` を適用する。列を複製せずに済ませるため。
@@ -103,7 +112,8 @@ impl<S: Segmenter> Scorer for NgramScorer<S> {
             words
                 .windows(2)
                 .map(|w| self.cost(Some(w[0]), Some(w[1])))
-                .sum()
+                .sum::<f64>()
+                + self.word_penalty * words.len() as f64
         })
     }
 
@@ -146,6 +156,14 @@ mod tests {
         let s = scorer();
         assert!(s.unigram("鳴く") < s.unigram("書く"));
         assert_eq!(s.unigram("猫"), 0.0);
+    }
+
+    #[test]
+    fn 語ごとの罰則は語の数に比例して足す() {
+        let s = scorer().with_word_penalty(1.5);
+        assert_eq!(s.unigram("猫"), 1.5);
+        let base = scorer();
+        assert!((s.unigram("鳴く") - base.unigram("鳴く") - 3.0).abs() < 1e-9);
     }
 
     #[test]
