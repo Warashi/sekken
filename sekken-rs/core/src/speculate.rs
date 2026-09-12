@@ -309,7 +309,6 @@ mod tests {
             span,
             rank: 0,
             kana: false,
-            okuri_rival: false,
         }
     }
 

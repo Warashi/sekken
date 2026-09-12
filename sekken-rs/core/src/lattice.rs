@@ -17,11 +17,6 @@ pub const RANK_WEIGHT: f64 = 1.0;
 /// 最も良かった 2 にした。
 pub const KANA_PENALTY: f64 = 2.0;
 
-/// 同じ位置に送りあり候補があるかな候補に、`KANA_PENALTY` に上乗せする
-/// コスト。採った → とった のようなかな倒れは送りあり動詞・形容詞に
-/// 集中しており、全体のかな罰則を上げると別の文が落ちる。
-pub const OKURI_KANA_PENALTY: f64 = 0.0;
-
 /// 途中経路を残す本数の下限。同点や後段の逆転に備え、要求数が少なくても
 /// これだけは残す。
 pub const BEAM: usize = 20;
@@ -33,8 +28,6 @@ pub struct Weights {
     pub rank: f64,
     /// 読みをそのままかなにした候補に加えるコスト。
     pub kana_penalty: f64,
-    /// 同じ位置に送りあり候補があるかな候補に、`kana_penalty` に上乗せするコスト。
-    pub okuri_kana_penalty: f64,
 }
 
 impl Default for Weights {
@@ -42,7 +35,6 @@ impl Default for Weights {
         Weights {
             rank: RANK_WEIGHT,
             kana_penalty: KANA_PENALTY,
-            okuri_kana_penalty: OKURI_KANA_PENALTY,
         }
     }
 }
@@ -151,11 +143,6 @@ impl<'a> Search<'a> {
                         + lattice.weights.rank * (1.0 + cand.rank as f64).ln()
                         + if cand.kana {
                             lattice.weights.kana_penalty
-                        } else {
-                            0.0
-                        }
-                        + if cand.okuri_rival {
-                            lattice.weights.okuri_kana_penalty
                         } else {
                             0.0
                         },
@@ -385,7 +372,6 @@ mod tests {
             span,
             rank: 0,
             kana: false,
-            okuri_rival: false,
         }
     }
 
@@ -406,37 +392,6 @@ mod tests {
         assert_eq!(result[0].surfaces, ["猫", "である"]);
         assert_eq!(result[1].surfaces, ["ねこ", "である"]);
         assert!(result[0].cost < result[1].cost);
-    }
-
-    #[test]
-    fn 送りあり候補と競合するかな候補にはかな罰則に上乗せする() {
-        let plain = Candidate {
-            kana: true,
-            ..cand("とった", 1)
-        };
-        let rival = Candidate {
-            okuri_rival: true,
-            ..plain.clone()
-        };
-        let weights = Weights {
-            rank: 0.0,
-            kana_penalty: 2.0,
-            okuri_kana_penalty: 3.0,
-        };
-        let scorer = MapScorer {
-            uni: HashMap::from([("とった", 1.0)]),
-            bi: HashMap::new(),
-        };
-        let cost = |c: Candidate| {
-            Lattice {
-                weights,
-                candidates: vec![vec![c]],
-            }
-            .nbest(&scorer, 1)[0]
-                .cost
-        };
-        assert_eq!(cost(plain), 1.0 + 2.0);
-        assert_eq!(cost(rival), 1.0 + 2.0 + 3.0);
     }
 
     #[test]
@@ -476,14 +431,12 @@ mod tests {
                     span: 1,
                     rank: 1,
                     kana: false,
-                    okuri_rival: false,
                 },
                 Candidate {
                     surface: "法貨".into(),
                     span: 1,
                     rank: 0,
                     kana: false,
-                    okuri_rival: false,
                 },
             ]],
         };
@@ -590,7 +543,6 @@ mod tests {
                 span: 1,
                 rank: 0,
                 kana: false,
-                okuri_rival: false,
             })
             .collect();
         let lattice = Lattice {
