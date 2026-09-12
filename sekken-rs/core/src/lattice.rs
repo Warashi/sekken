@@ -21,9 +21,28 @@ pub const KANA_PENALTY: f64 = 2.0;
 /// これだけは残す。
 pub const BEAM: usize = 20;
 
+/// 格子の候補に付ける、モデル以外のコストの重み。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Weights {
+    /// 辞書での候補順位の対数に掛ける重み。
+    pub rank: f64,
+    /// 読みをそのままかなにした候補に加えるコスト。
+    pub kana_penalty: f64,
+}
+
+impl Default for Weights {
+    fn default() -> Weights {
+        Weights {
+            rank: RANK_WEIGHT,
+            kana_penalty: KANA_PENALTY,
+        }
+    }
+}
+
 /// 各セグメント位置から始まる候補の一覧。
 pub struct Lattice {
     pub candidates: Vec<Vec<Candidate>>,
+    pub weights: Weights,
 }
 
 /// N-best 探索で得た 1 本の経路。
@@ -121,8 +140,12 @@ impl<'a> Search<'a> {
                 pos_ids.push(id);
                 pos_uni.push(
                     scorer.unigram(&cand.surface)
-                        + RANK_WEIGHT * (1.0 + cand.rank as f64).ln()
-                        + if cand.kana { KANA_PENALTY } else { 0.0 },
+                        + lattice.weights.rank * (1.0 + cand.rank as f64).ln()
+                        + if cand.kana {
+                            lattice.weights.kana_penalty
+                        } else {
+                            0.0
+                        },
                 );
                 max_span = max_span.max(cand.span);
             }
@@ -355,6 +378,7 @@ mod tests {
     #[test]
     fn unigram_の小さい候補列を先頭に返す() {
         let lattice = Lattice {
+            weights: Weights::default(),
             candidates: vec![
                 vec![cand("猫", 1), cand("ねこ", 1)],
                 vec![cand("である", 1), cand("デアル", 1)],
@@ -373,6 +397,7 @@ mod tests {
     #[test]
     fn 経路のコストは_unigram_と接続コストの和() {
         let lattice = Lattice {
+            weights: Weights::default(),
             candidates: vec![vec![cand("書", 1)], vec![cand("く", 1)]],
         };
         let scorer = MapScorer {
@@ -386,6 +411,7 @@ mod tests {
     #[test]
     fn 接続コストで順位が入れ替わる() {
         let lattice = Lattice {
+            weights: Weights::default(),
             candidates: vec![vec![cand("書", 1), cand("か", 1)], vec![cand("く", 1)]],
         };
         let scorer = MapScorer {
@@ -398,6 +424,7 @@ mod tests {
     #[test]
     fn 同じコストなら辞書の順位が高い候補を先にする() {
         let lattice = Lattice {
+            weights: Weights::default(),
             candidates: vec![vec![
                 Candidate {
                     surface: "法家".into(),
@@ -423,6 +450,7 @@ mod tests {
     #[test]
     fn 固定した候補を通る経路だけを返す() {
         let lattice = Lattice {
+            weights: Weights::default(),
             candidates: vec![
                 vec![cand("猫", 1), cand("ねこ", 1)],
                 vec![cand("である", 1), cand("デアル", 1)],
@@ -445,6 +473,7 @@ mod tests {
     #[test]
     fn 固定の直後は指定した文字列で始まる候補だけを通す() {
         let lattice = Lattice {
+            weights: Weights::default(),
             candidates: vec![
                 vec![cand("猫", 1)],
                 vec![cand("である", 1), cand("デアル", 1), cand("だ", 1)],
@@ -466,6 +495,7 @@ mod tests {
     #[test]
     fn 固定の先のセグメントは自由に選ぶ() {
         let lattice = Lattice {
+            weights: Weights::default(),
             candidates: vec![
                 vec![cand("猫", 1)],
                 vec![cand("が", 1)],
@@ -488,6 +518,7 @@ mod tests {
     #[test]
     fn span_2_の候補は次のセグメントを飛ばす() {
         let lattice = Lattice {
+            weights: Weights::default(),
             candidates: vec![vec![cand("書く", 2), cand("か", 1)], vec![cand("く", 1)]],
         };
         let scorer = MapScorer {
@@ -515,6 +546,7 @@ mod tests {
             })
             .collect();
         let lattice = Lattice {
+            weights: Weights::default(),
             candidates: vec![cands.clone(), cands],
         };
         let scorer = MapScorer {
@@ -533,6 +565,7 @@ mod tests {
     fn 同じ表層形の経路は_1_本にまとめる() {
         // 位置 0 に同じ表層形の候補が 2 つあると、同じ表層形の列が 2 本できる。
         let lattice = Lattice {
+            weights: Weights::default(),
             candidates: vec![vec![cand("猫", 1), cand("猫", 1)], vec![cand("だ", 1)]],
         };
         let scorer = MapScorer {
@@ -559,6 +592,7 @@ mod tests {
     #[test]
     fn 同じ場で制約を変えて探索してもスコアラーを引き直さない() {
         let lattice = Lattice {
+            weights: Weights::default(),
             candidates: vec![
                 vec![cand("猫", 1), cand("ねこ", 1)],
                 vec![cand("だ", 1), cand("である", 1)],

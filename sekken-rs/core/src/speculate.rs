@@ -12,6 +12,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+#[cfg(test)]
+use crate::lattice::Weights;
 use crate::lattice::{BEAM, Constraint, Lattice, Path};
 use crate::scorer::Scorer;
 use crate::verify::{Verdict, Verifier, VerifySession};
@@ -313,6 +315,7 @@ mod tests {
     /// 格子は 法貨 を、検証器は 放火 を好む。
     fn lattice() -> Lattice {
         Lattice {
+            weights: Weights::default(),
             candidates: vec![
                 vec![cand("法貨", 1), cand("放火", 1), cand("ほうか", 1)],
                 vec![cand("と", 1)],
@@ -391,6 +394,7 @@ mod tests {
     #[test]
     fn 候補の途中の字でも提案できる() {
         let lattice = Lattice {
+            weights: Weights::default(),
             candidates: vec![vec![cand("学習", 1), cand("学修", 1)]],
         };
         let scorer = MapScorer(HashMap::from([("学習", 1.0), ("学修", 2.0)]));
@@ -402,6 +406,7 @@ mod tests {
     #[test]
     fn 幅を広げると提案の制約で複数の経路を採点する() {
         let lattice = Lattice {
+            weights: Weights::default(),
             candidates: vec![
                 vec![cand("法貨", 1), cand("放火", 1)],
                 vec![cand("と", 1), cand("戸", 1)],

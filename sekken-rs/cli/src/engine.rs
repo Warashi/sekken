@@ -41,6 +41,12 @@ pub struct EngineArgs {
     /// 提案の制約で再探索して採点する経路の本数
     #[arg(long, default_value_t = 1)]
     pub spec_width: usize,
+    /// 辞書での候補順位の対数に掛ける重み
+    #[arg(long, default_value_t = sekken_core::lattice::RANK_WEIGHT)]
+    pub rank_weight: f64,
+    /// 読みをそのままかなにした候補に加えるコスト
+    #[arg(long, default_value_t = sekken_core::lattice::KANA_PENALTY)]
+    pub kana_penalty: f64,
 }
 
 pub type Engine = Sekken<NgramScorer<Tokenizer>>;
@@ -87,6 +93,10 @@ impl EngineArgs {
             table: KanaTable::default_table(),
             dict,
             scorer: NgramScorer::new(model, tokenizer),
+            weights: sekken_core::lattice::Weights {
+                rank: self.rank_weight,
+                kana_penalty: self.kana_penalty,
+            },
             reranker,
             speculator,
         })

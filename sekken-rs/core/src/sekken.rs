@@ -3,7 +3,7 @@
 use crate::candidates::candidates_at;
 use crate::dictionary::Dictionary;
 use crate::kana::{KanaTable, hira2kata};
-use crate::lattice::Lattice;
+use crate::lattice::{Lattice, Weights};
 use crate::rerank::Reranker;
 use crate::scorer::Scorer;
 use crate::segment::segment;
@@ -13,6 +13,8 @@ pub struct Sekken<S: Scorer> {
     pub table: KanaTable,
     pub dict: Dictionary,
     pub scorer: S,
+    /// 格子の候補に付ける順位とかなのコストの重み。
+    pub weights: Weights,
     /// 文全体の採点で N-best を並べ替える。`None` なら格子の順位のまま。
     pub reranker: Option<Reranker>,
     /// 検証器の提案で格子を再探索する。`Some` なら `reranker` より優先する。
@@ -28,6 +30,7 @@ impl<S: Scorer> Sekken<S> {
             return vec![prefix.clone(), hira2kata(&prefix)];
         }
         let lattice = Lattice {
+            weights: self.weights,
             candidates: (0..seg.segments.len())
                 .map(|i| candidates_at(&self.table, &self.dict, &seg.segments, i))
                 .collect(),
@@ -102,6 +105,7 @@ mod tests {
             table: KanaTable::default_table(),
             dict: Dictionary::parse(FIXTURE),
             scorer: PreferKanji,
+            weights: Weights::default(),
             reranker: None,
             speculator: None,
         }
