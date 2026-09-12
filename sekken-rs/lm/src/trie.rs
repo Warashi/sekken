@@ -61,6 +61,33 @@ impl Trie {
         c
     }
 
+    /// `keep[node]` が立つ節だけを残した trie と、新しい各節の元の番号。
+    /// 残す節の親は残っていなければならない。番号の順は保つ。
+    pub fn retain(&self, keep: &[bool]) -> (Trie, Vec<usize>) {
+        let mut trie = Trie { nodes: Vec::new() };
+        let mut renumber = vec![usize::MAX; self.nodes.len()];
+        let mut origin = Vec::new();
+        for (old, node) in self.nodes.iter().enumerate() {
+            if !keep[old] {
+                continue;
+            }
+            let new = trie.nodes.len();
+            let parent = if old == 0 { 0 } else { renumber[node.parent] };
+            assert_ne!(parent, usize::MAX, "残す節の親が残っていない");
+            trie.nodes.push(Node {
+                id: node.id,
+                parent,
+                children: Vec::new(),
+            });
+            if old != 0 {
+                trie.nodes[parent].children.push(new);
+            }
+            renumber[old] = new;
+            origin.push(old);
+        }
+        (trie, origin)
+    }
+
     pub fn id(&self, node: usize) -> u32 {
         self.nodes[node].id
     }
@@ -111,6 +138,28 @@ mod tests {
         assert_eq!(trie.parent(a[2]), a[1]);
         assert_eq!(trie.children(a[0]), [a[1], b[1]]);
         assert!(trie.children(a[2]).is_empty());
+    }
+
+    #[test]
+    fn 印の付いた節だけを残しても親子と_id_は変わらない() {
+        let mut trie = Trie::new();
+        let a = trie.insert(&[3, 4, 5]);
+        let b = trie.insert(&[3, 6, 7]);
+        // 根、3、4、6、7 を残し、5 を落とす。
+        let mut keep = vec![true; trie.len()];
+        keep[a[2]] = false;
+        let (mut kept, origin) = trie.retain(&keep);
+        assert_eq!(kept.len(), 5);
+        assert_eq!(origin, vec![0, a[0], a[1], b[1], b[2]]);
+        let ids: Vec<u32> = (1..kept.len()).map(|n| kept.id(n)).collect();
+        assert_eq!(ids, vec![3, 4, 6, 7]);
+        assert_eq!(kept.parent(4), 3);
+        assert_eq!(kept.parent(3), 1);
+        assert_eq!(kept.children(1), [2, 3]);
+        assert!(kept.children(2).is_empty());
+        // 残した列は同じ節を通り、落とした列は新しい節になる。
+        assert_eq!(kept.insert(&[3, 6, 7]), vec![1, 3, 4]);
+        assert_eq!(kept.insert(&[3, 4, 5]), vec![1, 2, 5]);
     }
 
     #[test]

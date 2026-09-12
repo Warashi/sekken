@@ -5,6 +5,11 @@
 //! 下書きと接頭辞を共有するので、trie を呼び出しをまたいで残し、既に読んだ節は
 //! 読み直さない。状態は連鎖の終わりだけ持ち、途中の節から分岐するときは
 //! 最も近い状態のある祖先から係数で漸化式を回し直して作る。
+//!
+//! 入力側が同じ場は変換をまたいでも続けて使える（交互形は入力側が BOS だけで、
+//! 読みは候補の列に混ざる）。閉じるときに今回読んだ節だけを `Carried` に
+//! 残し、次の場はそこから開く。直前の変換と接頭辞を共有する候補は、共有する
+//! 分を読み直さない。
 
 use crate::infer::{Chain, Infer};
 use crate::trie::Trie;
@@ -21,12 +26,60 @@ pub struct Session<'a> {
     proj: Vec<f32>,
     /// 節ごとの読み終えた状態。連鎖の終わりと分岐点だけ持つ。
     states: Vec<Option<Vec<f32>>>,
+    /// この場で読んだ候補が通った節。持ち越した節は通るまで立たない。
+    touched: Vec<bool>,
+}
+
+/// 閉じた場から次の場へ持ち越す、読んだ節とその出力・係数・状態。
+pub struct Carried {
+    trie: Trie,
+    hidden: Vec<f32>,
+    lse: Vec<f32>,
+    proj: Vec<f32>,
+    states: Vec<Option<Vec<f32>>>,
 }
 
 impl<'a> Session<'a> {
     /// 入力側の id 列（BOS から）を読んで場を開く。
     pub fn open(infer: &'a Infer, prefix: &[u32]) -> Session<'a> {
         Session::open_from(infer, &infer.init_state(), prefix).0
+    }
+
+    /// 持ち越した節から場を開く。入力側は持ち越し元と同じでなければならない。
+    pub fn reopen(infer: &'a Infer, carried: Carried) -> Session<'a> {
+        let n = carried.trie.len();
+        let mut touched = vec![false; n];
+        touched[0] = true;
+        Session {
+            infer,
+            trie: carried.trie,
+            hidden: carried.hidden,
+            lse: carried.lse,
+            proj: carried.proj,
+            states: carried.states,
+            touched,
+        }
+    }
+
+    /// この場で読んだ候補が通った節だけを持ち越す。持ち越した節のうち今回
+    /// 通らなかったものは落とすので、大きさは 1 回の変換で読んだ分に収まる。
+    pub fn carry(&mut self) -> Carried {
+        let (trie, origin) = self.trie.retain(&self.touched);
+        let d = self.infer.config().d_model;
+        let stride = self.infer.config().n_layers * self.infer.proj_width();
+        let gather = |src: &[f32], width: usize| -> Vec<f32> {
+            origin
+                .iter()
+                .flat_map(|&o| src[o * width..(o + 1) * width].iter().copied())
+                .collect()
+        };
+        Carried {
+            hidden: gather(&self.hidden, d),
+            lse: gather(&self.lse, 1),
+            proj: gather(&self.proj, stride),
+            states: origin.iter().map(|&o| self.states[o].take()).collect(),
+            trie,
+        }
     }
 
     /// `state` の続きとして入力側の `ids` を読んで場を開く。読んだ各位置の
@@ -43,6 +96,7 @@ impl<'a> Session<'a> {
             lse: vec![read.lse[last]],
             proj: vec![0.0; infer.config().n_layers * infer.proj_width()],
             states: vec![Some(read.states.into_iter().next().unwrap())],
+            touched: vec![true],
         };
         (session, read.proj)
     }
@@ -59,6 +113,10 @@ impl<'a> Session<'a> {
         self.lse.resize(n, 0.0);
         self.proj.resize(n * stride, 0.0);
         self.states.resize(n, None);
+        self.touched.resize(n, false);
+        for node in paths.iter().flatten() {
+            self.touched[*node] = true;
+        }
 
         // 新しい節のうち親が古い節のものから連鎖を始め、分岐ごとに回を分ける。
         let mut starts: Vec<usize> = (old_len..n)
@@ -238,6 +296,36 @@ mod tests {
             let want = reference_nll(&infer, &prefix, ids);
             assert!((got - want).abs() < 1e-3, "got={got} want={want}");
         }
+    }
+
+    #[test]
+    fn 持ち越した場で接頭辞を共有する候補を読んでも最初から読んだのと同じ() {
+        let infer = infer();
+        let prefix = [0u32, 3];
+        let mut s = Session::open(&infer, &prefix);
+        s.read(&[vec![5u32, 6, 7, 8], vec![5, 6, 9], vec![4, 4]]);
+        s.read(&[vec![5u32, 6, 7], vec![5, 6, 9]]);
+        let carried = s.carry();
+        // 同じ場で読んだ候補は全部残る: 根 + 5,6,7,8 + 9 + 4,4。
+        assert_eq!(carried.trie.len(), 8);
+        let mut next = Session::reopen(&infer, carried);
+        let seqs = vec![
+            vec![5u32, 6, 7, 8, 3],
+            vec![5, 6, 9, 4],
+            vec![4, 4],
+            vec![5, 7],
+        ];
+        let paths = next.read(&seqs);
+        // 共有する接頭辞の節は増えない（3 と 4 の伸びた分と 5,7 の分岐だけで、4,4 は増えない）。
+        assert_eq!(next.trie.len(), 8 + 3);
+        for (path, ids) in paths.iter().zip(&seqs) {
+            let got = next.nll(path, ids);
+            let want = reference_nll(&infer, &prefix, ids);
+            assert!((got - want).abs() < 1e-3, "{ids:?}: got={got} want={want}");
+        }
+        // 3 回目の持ち越しは今回通った節だけになり、5,6,7,8 は 5,6,7,8,3 で通る。
+        let carried = next.carry();
+        assert_eq!(carried.trie.len(), 1 + 5 + 2 + 2 + 1);
     }
 
     #[test]
