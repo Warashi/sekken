@@ -47,8 +47,9 @@ fn split_trailing_symbols(segment: &str) -> (&str, &str) {
 /// `xtuta` のように っ を単独で綴った送り仮名は、見出しでは った の t で
 /// 引く（`とt`）ので、っ の綴りを飛ばした先の文字を使う。子音 1 文字も
 /// 表では っ に写る（`k` → っ）が、それは送り仮名の頭そのものなので飛ばさない。
+/// っ 単独に写る綴りは `xtsu` の 4 文字までなので、それより先は見ない。
 fn okuri_consonant(table: &KanaTable, okuri_roman: &str) -> Option<char> {
-    let after_sokuon = (2..=okuri_roman.len())
+    let after_sokuon = (2..=okuri_roman.len().min(4))
         .filter(|&n| okuri_roman.is_char_boundary(n))
         .find(|&n| table.roman2kana(&okuri_roman[..n]) == "っ")
         .map_or(okuri_roman, |n| &okuri_roman[n..]);
