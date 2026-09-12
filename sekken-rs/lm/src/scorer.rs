@@ -9,6 +9,10 @@
 //! （`Wagah` → `ワガh`、`Wagaha` → `ワガハ` のように末尾は入れ替わる）。
 //! 直前の入力側の読み（`\t` の手前まで）の係数を残し、共有する接頭辞の
 //! 状態を係数から作って、その先と `\t` だけを読む。
+//!
+//! 交互形は入力側が BOS だけで、読みは候補の列に区間ごとに混ざる。先頭の
+//! 区間の列は入力が伸びても変わらないので、直前の変換で読んだ候補の節を
+//! 場ごと持ち越し、次の変換は共有しない分だけ読む。
 
 use std::cell::RefCell;
 
@@ -18,7 +22,7 @@ use sekken_core::rerank::SentenceScorer;
 use crate::condition::Condition;
 use crate::infer::Infer;
 use crate::interleave::{build, loss_mask, output_positions};
-use crate::session::Session;
+use crate::session::{Carried, Session};
 use crate::vocab::{BOS, Vocab};
 
 pub struct LmScorer {
@@ -29,6 +33,8 @@ pub struct LmScorer {
     table: KanaTable,
     /// 直前の入力側の読み。
     prefix: RefCell<Option<PrefixCache>>,
+    /// 直前の変換で読んだ候補の節と、その入力側の id 列。
+    carried: RefCell<Option<(Vec<u32>, Carried)>>,
 }
 
 /// 直前の入力側（BOS から `\t` の手前まで）の読み。
@@ -49,6 +55,8 @@ const CHECKPOINTS: usize = 2;
 pub struct Scoring<'a> {
     scorer: &'a LmScorer,
     session: Session<'a>,
+    /// 入力側の id 列。閉じるときに読んだ節と一緒に残す。
+    prefix: Vec<u32>,
     /// 交互形なら、文ごとに区間に分けて挟むカタカナ読み。
     reading: Option<String>,
 }
@@ -73,6 +81,7 @@ impl LmScorer {
             condition,
             table: KanaTable::default_table(),
             prefix: RefCell::new(None),
+            carried: RefCell::new(None),
         }
     }
 
@@ -95,11 +104,18 @@ impl LmScorer {
         ids
     }
 
-    /// 入力側を読み、この入力に対する採点を始める。
+    /// 入力側を読み、この入力に対する採点を始める。入力側が直前の変換と同じなら、
+    /// 直前に読んだ候補の節を持ち越した場から始める。
     pub fn begin(&self, input: &str) -> Scoring<'_> {
+        let prefix = self.prefix_ids(input);
+        let session = match self.carried.borrow_mut().take() {
+            Some((ids, carried)) if ids == prefix => Session::reopen(&self.infer, carried),
+            _ => self.open(&prefix),
+        };
         Scoring {
             scorer: self,
-            session: self.open(&self.prefix_ids(input)),
+            session,
+            prefix,
             reading: self.condition.interleaved_reading(&self.table, input),
         }
     }
@@ -216,6 +232,14 @@ impl<'a> Scoring<'a> {
             None => return f64::INFINITY,
         };
         -f64::from(self.session.log_prob(node, id))
+    }
+}
+
+impl Drop for Scoring<'_> {
+    /// 読んだ候補の節を次の変換に残す。
+    fn drop(&mut self) {
+        let carried = self.session.carry();
+        *self.scorer.carried.borrow_mut() = Some((std::mem::take(&mut self.prefix), carried));
     }
 }
 
@@ -458,6 +482,38 @@ pub(crate) mod tests {
                 "{input}"
             );
         }
+    }
+
+    #[test]
+    fn 交互形は入力を伸ばして変換を重ねても最初から読んだのと同じ() {
+        let vocab = Vocab::build(["猫が鳴く犬\tネコガナクイヌ\u{1e}"], 1);
+        let s = scorer_with(vocab.clone(), Condition::Interleaved);
+        let fresh = scorer_with(vocab, Condition::Interleaved);
+        // 1 字ずつ伸ばす。先頭の区間の列は変わらないので持ち越した節を通る。
+        let steps = [
+            ("Neko", vec!["猫"]),
+            ("Nekoga", vec!["猫が", "猫"]),
+            ("NekogaNa", vec!["猫が", "猫がな"]),
+            ("NekogaNaku", vec!["猫が鳴く", "猫がなく", "猫が"]),
+            ("NekogaNakuInu", vec!["猫が鳴く犬", "猫が鳴く", "猫が"]),
+            // 短くなっても、別の入力でも同じ。
+            ("Nekoga", vec!["猫が"]),
+            ("Inu", vec!["犬"]),
+        ];
+        for (input, sentences) in steps {
+            let sentences: Vec<String> = sentences.iter().map(|s| s.to_string()).collect();
+            let got = s.costs(input, &sentences);
+            let want = fresh_costs(&fresh, input, &sentences);
+            for (g, w) in got.iter().zip(&want) {
+                assert!((g - w).abs() < 1e-4, "{input}: {g} vs {w}");
+            }
+        }
+    }
+
+    /// 持ち越しを使わずに最初から読んだコスト。
+    fn fresh_costs(s: &LmScorer, input: &str, sentences: &[String]) -> Vec<f64> {
+        *s.carried.borrow_mut() = None;
+        s.costs(input, sentences)
     }
 
     #[test]
