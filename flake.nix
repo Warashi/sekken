@@ -33,7 +33,7 @@
         };
         commonArgs = {
           pname = "sekken";
-          version = "0.3.0";
+          version = "0.4.0";
           inherit src;
           strictDeps = true;
           cargoToml = ./sekken-rs/Cargo.toml;
@@ -59,7 +59,7 @@
           });
         sekken-el = pkgs.emacsPackages.trivialBuild {
           pname = "sekken";
-          version = "0.3.0";
+          version = "0.4.0";
           src = ./lisp;
           # sekken-kana.el は自身の場所から ../share/kana-table.tsv を読む。
           # share/ の実体は symlink なので、core にある本体を写す。
