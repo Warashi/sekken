@@ -120,9 +120,12 @@ impl<S: Segmenter> NgramScorer<S> {
     /// 表層形の境界をまたぐ遷移のコスト。右の先頭の語は左の末尾 2 語を、右の 2 語目は
     /// 左の末尾の語と右の先頭の語を文脈にするので、右の 2 語目までがここに入る。
     fn boundary(&self, left2: Option<&str>, left: Option<&str>, right: Option<&str>) -> f64 {
+        let trigram = self.uses_left2();
         // 左に語が無い（分かち書きが空）ことは無いはずだが、あれば文頭とみなす。
+        // trigram の無いモデルでは 2 つ前を引かず、境界の計算を bigram だけの頃と同じ量に保つ。
         let (prev2, prev) = match left.and_then(|l| self.last_two(l)) {
             None => (None, Ctx::Bos),
+            Some((_, last)) if !trigram => (None, Ctx::Word(last)),
             Some((second_last, last)) => {
                 let prev2 = match second_last {
                     Some(w) => Ctx::Word(w),
@@ -139,7 +142,8 @@ impl<S: Segmenter> NgramScorer<S> {
             Some(r) => self.first_two(r),
         };
         let mut cost = self.cost(prev2, prev, first);
-        if let (Some(first), Some(second)) = (first, second) {
+        // 右の 2 語目は trigram でだけ左に依る。無ければ `unigram` 側に置く。
+        if let (true, Some(first), Some(second)) = (trigram, first, second) {
             cost += self.cost(Some(prev), Ctx::Word(first), Some(second));
         }
         cost
@@ -165,14 +169,24 @@ impl Ctx {
 }
 
 impl<S: Segmenter> Scorer for NgramScorer<S> {
-    /// 表層形の中の 3 語目以降の遷移。先頭 2 語は左の文脈に依るので `trigram` に入る。
+    /// 表層形の中の遷移。trigram を使うなら 3 語目から（先頭 2 語は左の文脈に依るので
+    /// `trigram` に入る）、使わないなら 2 語目から。
     fn unigram(&self, surface: &str) -> f64 {
+        let internal = |words: &[Word]| -> f64 {
+            if self.uses_left2() {
+                words
+                    .windows(3)
+                    .map(|w| self.cost(Some(Ctx::Word(w[0])), Ctx::Word(w[1]), Some(w[2])))
+                    .sum()
+            } else {
+                words
+                    .windows(2)
+                    .map(|w| self.cost(None, Ctx::Word(w[0]), Some(w[1])))
+                    .sum()
+            }
+        };
         self.with_words(surface, |words| {
-            words
-                .windows(3)
-                .map(|w| self.cost(Some(Ctx::Word(w[0])), Ctx::Word(w[1]), Some(w[2])))
-                .sum::<f64>()
-                + self.word_penalty * words.len() as f64
+            internal(words) + self.word_penalty * words.len() as f64
         })
     }
 
@@ -264,6 +278,16 @@ mod tests {
             s.trigram(Some("猫"), Some("が"), Some("鳴く")),
             s.bigram(Some("が"), Some("鳴く"))
         );
+        // 2 語目の遷移は境界でなく unigram 側に入る（bigram だけの頃と同じ分け方）。
+        assert_eq!(
+            s.bigram(Some("が"), Some("鳴く")),
+            s.bigram(Some("が"), Some("鳴"))
+        );
+        assert!(s.unigram("鳴く") > 0.0);
+        let path =
+            s.bigram(None, Some("猫")) + s.bigram(Some("猫"), Some("が鳴く")) + s.unigram("が鳴く");
+        let whole = s.bigram(None, Some("猫が鳴く")) + s.unigram("猫が鳴く");
+        assert!((path - whole).abs() < 1e-9, "{path} vs {whole}");
     }
 
     #[test]
