@@ -3,9 +3,9 @@
 //! モデルの読み込みには数秒かかるので別スレッドで進め、読み込み中でも
 //! `version` と `shutdown` には即応答する。`henkan` は読み込みの完了を待つ。
 //!
-//! `henkan` の params は `{"pieces": [{"kind": "kana" | "convert" | "literal",
-//! "text": "..."}, ...], "top": n}`。エディタがローマ字をかなにし、区間の
-//! 種類を決めて送る。
+//! `henkan` の params は `{"pieces": [{"kind": "kana" | "convert" | "literal" | "abbrev",
+//! "text": "...", "prefix": bool, "suffix": bool}, ...], "top": n}`。エディタがローマ字を
+//! かなにし、区間の種類を決めて送る。`prefix` `suffix` は `>` の印で、省略すれば偽。
 //!
 //! 入力中の補完は打鍵ごとに `henkan` を送り、Emacs 側は打鍵で待つのをやめる。
 //! 変換は 1 つずつしか処理できないので、溜まった `henkan` のうち後ろに
@@ -218,14 +218,20 @@ pub fn parse_pieces(pieces: &Value) -> Result<Input, String> {
                 Some("kana") => Kind::Kana,
                 Some("convert") => Kind::Convert,
                 Some("literal") => Kind::Literal,
+                Some("abbrev") => Kind::Abbrev,
                 _ => {
-                    return Err("params.pieces[].kind must be kana, convert or literal".to_string());
+                    return Err(
+                        "params.pieces[].kind must be kana, convert, literal or abbrev".to_string(),
+                    );
                 }
             };
             let Some(text) = piece["text"].as_str() else {
                 return Err("params.pieces[].text must be a string".to_string());
             };
-            Ok(Piece::new(kind, text))
+            Ok(Piece::new(kind, text).with_marks(
+                piece["prefix"].as_bool().unwrap_or(false),
+                piece["suffix"].as_bool().unwrap_or(false),
+            ))
         })
         .collect::<Result<Vec<_>, _>>()
         .map(Input::new)
@@ -308,6 +314,24 @@ mod tests {
             ]
         );
         assert!(parse_pieces(&json!([])).unwrap().pieces.is_empty());
+    }
+
+    #[test]
+    fn abbrev_の区間と山括弧の印を読む() {
+        let input = parse_pieces(&json!([
+            { "kind": "abbrev", "text": "emacs" },
+            { "kind": "convert", "text": "お", "prefix": true },
+            { "kind": "convert", "text": "かい", "suffix": true },
+        ]))
+        .unwrap();
+        assert_eq!(
+            input.pieces,
+            [
+                Piece::abbrev("emacs"),
+                Piece::convert("お").with_marks(true, false),
+                Piece::convert("かい").with_marks(false, true),
+            ]
+        );
     }
 
     #[test]
