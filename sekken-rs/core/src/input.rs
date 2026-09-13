@@ -16,6 +16,15 @@ pub enum Kind {
     Convert,
     /// 変換せずそのまま出す（英字など）。
     Literal,
+    /// 綴りをそのまま SKK の abbrev の見出しとして引く（`/emacs`）。
+    Abbrev,
+}
+
+impl Kind {
+    /// 辞書を引く区間か。
+    pub fn converts(self) -> bool {
+        matches!(self, Kind::Convert | Kind::Abbrev)
+    }
 }
 
 /// 種類とかな（`Literal` なら文字列そのまま）の組。
@@ -23,6 +32,10 @@ pub enum Kind {
 pub struct Piece {
     pub kind: Kind,
     pub text: String,
+    /// 直後に `>` があり、接頭辞の見出し（`お>`）でも引く。
+    pub prefix: bool,
+    /// 直前に `>` があり、接尾辞の見出し（`>かい`）でも引く。
+    pub suffix: bool,
 }
 
 impl Piece {
@@ -30,6 +43,8 @@ impl Piece {
         Piece {
             kind,
             text: text.into(),
+            prefix: false,
+            suffix: false,
         }
     }
 
@@ -43,6 +58,17 @@ impl Piece {
 
     pub fn literal(text: impl Into<String>) -> Piece {
         Piece::new(Kind::Literal, text)
+    }
+
+    pub fn abbrev(text: impl Into<String>) -> Piece {
+        Piece::new(Kind::Abbrev, text)
+    }
+
+    /// `>` の印を付ける。
+    pub fn with_marks(mut self, prefix: bool, suffix: bool) -> Piece {
+        self.prefix = prefix;
+        self.suffix = suffix;
+        self
     }
 }
 
@@ -60,20 +86,26 @@ impl Input {
     /// 大文字・`;` 境界付きのローマ字から組む。コマンドラインと評価のための入口で、
     /// エディタが自前の変換で作って送るものと同じ結果にする。
     /// 末尾の子音 1 文字は次の母音を待っている途中なので、エディタの表示と同じく
-    /// 変換せずに残す（`n` は単独で「ん」になるので除く）。
+    /// 変換せずに残す（`n` は単独で「ん」になるので除く）。abbrev 区間は綴りのまま送る。
     pub fn from_roman(table: &KanaTable, roman: &str) -> Input {
         let seg = segment(roman);
         let mut pieces = Vec::new();
-        if !seg.prefix.is_empty() {
-            pieces.push(Piece::kana(table.roman2kana(&seg.prefix)));
+        if !seg.head.is_empty() {
+            pieces.push(Piece::kana(table.roman2kana(&seg.head)));
         }
-        pieces.extend(
-            seg.segments
-                .iter()
-                .map(|s| Piece::convert(table.roman2kana(s))),
-        );
-        let source = seg.segments.last().unwrap_or(&seg.prefix);
+        pieces.extend(seg.segments.iter().map(|s| {
+            if s.abbrev {
+                Piece::abbrev(s.text.clone())
+            } else {
+                Piece::convert(table.roman2kana(&s.text)).with_marks(s.prefix, s.suffix)
+            }
+        }));
+        let source = seg
+            .segments
+            .last()
+            .map_or(seg.head.as_str(), |s| s.text.as_str());
         if let Some(last) = pieces.last_mut()
+            && last.kind != Kind::Abbrev
             && let Some(c) = source.chars().last()
             && c.is_ascii_lowercase()
             && !"aeioun".contains(c)
@@ -85,7 +117,7 @@ impl Input {
 
     /// 変換する区間があるか。無ければ辞書を引かずかなのまま返す入力。
     pub fn has_convert(&self) -> bool {
-        self.pieces.iter().any(|p| p.kind == Kind::Convert)
+        self.pieces.iter().any(|p| p.kind.converts())
     }
 
     /// 全区間の文字列を続けた読み。入力を条件にする採点器に渡す。
@@ -158,6 +190,32 @@ mod tests {
         assert_eq!(
             from_roman("Neko;"),
             [Piece::convert("ねこ"), Piece::convert("")]
+        );
+    }
+
+    #[test]
+    fn スラッシュで開いた区間は綴りのまま_abbrev_区間になる() {
+        assert_eq!(from_roman("/emacs"), [Piece::abbrev("emacs")]);
+        // 末尾の子音を待つ扱いはしない。
+        assert_eq!(
+            from_roman("Kyou/GPL;ha"),
+            [
+                Piece::convert("きょう"),
+                Piece::abbrev("GPL"),
+                Piece::convert("は")
+            ]
+        );
+        assert!(Input::new(vec![Piece::abbrev("emacs")]).has_convert());
+    }
+
+    #[test]
+    fn 山括弧の印を変換区間に付ける() {
+        assert_eq!(
+            from_roman("O>Kai"),
+            [
+                Piece::convert("お").with_marks(true, false),
+                Piece::convert("かい").with_marks(false, true),
+            ]
         );
     }
 
