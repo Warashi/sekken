@@ -65,10 +65,19 @@
     (insert "Kyou/emacs;O>Kai")
     (should (equal (sekken-input-bounds) (cons 1 (point-max))))))
 
-(ert-deftest sekken-input/境界の直後の大文字は新しい区間を作らない ()
+(ert-deftest sekken-input/境界の直後の大文字やセミコロンは新しい区間を作らない ()
   (should (equal (sekken-input-pieces ";Kai") [(:kind "convert" :text "かい")]))
   (should (equal (sekken-input-pieces "Neko;Kai")
-                 [(:kind "convert" :text "ねこ") (:kind "convert" :text "かい")])))
+                 [(:kind "convert" :text "ねこ") (:kind "convert" :text "かい")]))
+  (should (equal (sekken-input-pieces "Neko;;;kai")
+                 [(:kind "convert" :text "ねこ;") (:kind "convert" :text "かい")]))
+  (should (equal (sekken-input-pieces ";o>;kai") (sekken-input-pieces "O>Kai")))
+  (should (equal (sekken-input-display ";o>;kai") "▽お>▽かい")))
+
+(ert-deftest sekken-input/境界の直後のスラッシュはその区間を_abbrev_にする ()
+  (should (equal (sekken-input-pieces "O>/emacs")
+                 [(:kind "convert" :text "お" :prefix t) (:kind "abbrev" :text "emacs")]))
+  (should (equal (sekken-input-pieces ";/emacs") [(:kind "abbrev" :text "emacs")])))
 
 (ert-deftest sekken-input/スラッシュで開いた区間は綴りのまま_abbrev_で送る ()
   (should (equal (sekken-input-pieces "/emacs") [(:kind "abbrev" :text "emacs")]))

@@ -35,7 +35,8 @@ HEAD は先頭の境界より前の文字列。SEGMENTS の各要素は plist �
 小文字化したローマ字（abbrev なら綴りそのまま）、`/' で開いた区間なら
 :abbrev t、直後に `>' があれば :prefix t、直前に `>' があれば :suffix t を持つ。
 大文字と単独のセミコロンが境界で、二重セミコロンはリテラルになる。
-境界で開いた直後の大文字は新しい区間を作らず、その区間の先頭の字になる。
+境界で開いた直後の大文字や `;' は新しい区間を作らず、その区間を続ける。
+開いた直後の `/' はその区間を abbrev にする。
 abbrev 区間は次の `;' か `/' まで続き、中の大文字は境界にしない。"
   (let ((head "")
         (segments nil)
@@ -77,12 +78,16 @@ abbrev 区間は次の `;' か `/' まで続き、中の大文字は境界にし
             (setq fresh nil
                   index (+ index 2)))
            ((eq char ?\;)
-            (open)
+            (unless fresh
+              (open))
             (setq fresh t
                   index (1+ index)))
            ((eq char ?/)
-            (open :abbrev t)
-            (setq in-abbrev t
+            ;; abbrev は綴りで引くので `>' の印は持たない。
+            (unless fresh
+              (open))
+            (setq current (list :text "" :abbrev t)
+                  in-abbrev t
                   fresh nil
                   index (1+ index)))
            ((eq char ?>)

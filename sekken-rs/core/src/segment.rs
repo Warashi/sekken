@@ -36,8 +36,9 @@ impl Segment {
 
 /// 境界で入力を分割する。
 ///
-/// `;` `/` `>` で開いた直後の区間に大文字が続いても、新しい区間は作らず
-/// その区間の先頭の字にする（`O>Kai` の `かい` が `>` の印を受け取るため）。
+/// `;` `/` `>` で開いた直後の区間に大文字や `;` が続いても、新しい区間は作らず
+/// その区間を続ける（`O>Kai` や `;o>;kai` の `かい` が `>` の印を受け取るため）。
+/// 開いた直後の `/` はその区間を abbrev にする。
 /// abbrev 区間は次の `;` か `/` まで続き、中の大文字は境界にしない。
 pub fn segment(roman: &str) -> Segmented {
     let mut head = String::new();
@@ -77,13 +78,19 @@ pub fn segment(roman: &str) -> Segmented {
             }
             fresh = false;
         } else if c == ';' {
-            segments.push(Segment::convert(""));
+            if !fresh {
+                segments.push(Segment::convert(""));
+            }
             fresh = true;
         } else if c == '/' {
-            segments.push(Segment {
+            if !fresh {
+                segments.push(Segment::default());
+            }
+            // abbrev は綴りで引くので `>` の印は持たない。
+            *segments.last_mut().unwrap() = Segment {
                 abbrev: true,
                 ..Segment::default()
-            });
+            };
             in_abbrev = true;
             fresh = false;
         } else if c == '>' {
@@ -150,9 +157,32 @@ mod tests {
     }
 
     #[test]
-    fn 境界の直後の大文字は新しい区間を作らない() {
+    fn 境界の直後の大文字やセミコロンは新しい区間を作らない() {
         assert_eq!(segment(";Kai"), seg("", &["kai"]));
         assert_eq!(segment("Neko;Kai"), seg("", &["neko", "kai"]));
+        assert_eq!(segment("Neko;;;kai"), seg("", &["neko;", "kai"]));
+        assert_eq!(segment(";o>;kai"), segment("O>Kai"));
+        assert_eq!(segment("Neko;"), seg("", &["neko", ""]));
+    }
+
+    #[test]
+    fn 境界の直後のスラッシュはその区間を_abbrev_にする() {
+        assert_eq!(
+            segment("O>/emacs").segments,
+            [
+                Segment {
+                    text: "o".to_string(),
+                    prefix: true,
+                    ..Segment::default()
+                },
+                Segment {
+                    text: "emacs".to_string(),
+                    abbrev: true,
+                    ..Segment::default()
+                },
+            ]
+        );
+        assert_eq!(segment(";/emacs").segments.len(), 1);
     }
 
     #[test]
