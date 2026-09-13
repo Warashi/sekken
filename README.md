@@ -37,8 +37,10 @@ nix build
 | SKK 辞書 `SKK-JISYO.L` | https://raw.githubusercontent.com/skk-dev/dict/master/SKK-JISYO.L |
 | n-gram モデル `model.zst` | https://github.com/Warashi/sekken/releases |
 
-同じ Release にある文字言語モデル `lm.zst` は任意で、候補を並べ替えて精度を少し上げる代わりに変換が遅くなる
-（使い方は「Emacs での設定」）。
+`model.zst` は Wikipedia 日本語版と FineWeb-2 日本語の文から数えた語の bigram で、
+同じ Release にある文字言語モデル `lm.zst` は任意。`lm.zst` を渡すと、その提案で格子を
+再探索して精度を上げる代わりに変換が遅くなる（使い方は「Emacs での設定」）。
+`model.zst` と `lm.zst` はバイナリと同じ Release のものを使う。形式が変わると古い組み合わせは読めない。
 学習済みモデルは CC BY-SA 4.0 で、出典と条件は Release に添付した `THIRD-PARTY.md` にある。
 
 ### 手元で変換を試す
@@ -56,7 +58,7 @@ nix build
       sekken-server-jisyo "~/.config/sekken/SKK-JISYO.L"
       default-input-method "japanese-sekken")
 (require 'sekken)
-;; 言語モデルで並べ替えるなら（1 変換あたり 150 ms ほど遅くなる）
+;; 言語モデルで再探索するなら（1 打鍵あたり 10 ms ほど、文全体の変換で 40〜110 ms ほど遅くなる）
 ;; (setq sekken-server-lm "~/.config/sekken/lm.zst")
 ```
 
@@ -80,7 +82,7 @@ nix build
 |---|---|
 | コード（`sekken-rs/`、`lisp/`） | MIT（`LICENSE`） |
 | ローマ字かな変換表（`share/kana-table.tsv`） | zlib。skkeleton の変換表を TSV にしたもの |
-| 学習済みモデル（model.zst、lm.zst） | CC BY-SA 4.0。Wikipedia 日本語版の本文から作った派生物 |
+| 学習済みモデル（model.zst、lm.zst） | CC BY-SA 4.0。Wikipedia 日本語版の本文、FineWeb-2 日本語、zenz-v2.5-dataset から作った派生物 |
 | vibrato 辞書（IPA 辞書） | NAIST の独自許諾。再配布には `COPYING` の再掲が要る |
 | SKK 辞書（SKK-JISYO.L） | GPL-2.0 以降。実行時にデータとして読むだけで、コードにもモデルにも含まれない |
 

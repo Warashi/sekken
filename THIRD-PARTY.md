@@ -39,15 +39,20 @@ freely, subject to the following restrictions:
 
 ## 学習済みモデル（model.zst、lm.zst）
 
-学習済みモデルは Wikipedia 日本語版の本文から作った派生物なので、
+学習済みモデルは Wikipedia 日本語版の本文を含む派生物なので、
 Creative Commons Attribution-ShareAlike 4.0 International（CC BY-SA 4.0）で
 提供する。分かち書きと読みの付与に IPA 辞書（下記）を使っているので、
 モデルを配るときは IPA 辞書の著作権表示と免責も併せて示す。
 配布先は GitHub Releases で、このファイルを一緒に添付する。
 
-- 変更点: 記事本文から文を取り出し、語の bigram 頻度（model.zst）または
-  文字言語モデルの重み（lm.zst）に加工した。本文そのものは含まない。
+- model.zst: Wikipedia 日本語版の本文と FineWeb-2 日本語（下記）の文から
+  語の bigram 頻度を数え、Kneser-Ney で平滑化したもの。本文そのものは含まない
+- lm.zst: zenz-v2.5-dataset（下記）の `train_wikipedia.jsonl` と
+  `train_llm-jp-corpus-v3.jsonl` の全ペアから、読みと出力を交互に並べた
+  文字言語モデルの重みにしたもの。ペアそのものは含まない
 - ライセンス本文: https://creativecommons.org/licenses/by-sa/4.0/legalcode
+- FineWeb-2 と llm-jp-corpus-v3 由来の部分には ODC-By 1.0 の帰属表示の条件と
+  Common Crawl の利用規約も掛かる。出典は下記の各節に示す
 
 ## Wikipedia 日本語版（学習データ）
 
@@ -59,6 +64,21 @@ Creative Commons Attribution-ShareAlike 4.0 International（CC BY-SA 4.0）で
   第 7 節に従う）
 - 免責: 記事は現状有姿で提供され、Wikimedia Foundation と執筆者はいかなる
   保証もしない
+- リポジトリには含めない
+
+## FineWeb-2（学習データ）
+
+- 出典: HuggingFaceFW/fineweb-2 https://huggingface.co/datasets/HuggingFaceFW/fineweb-2
+  （Hugging Face。Common Crawl の 2013 年夏から 2024 年 4 月までのダンプを
+  言語ごとに処理したもの）。使ったのは `data/jpn_Jpan/train/001_00008.parquet`
+  の文書を 2 件おきに取り、文末記号で終わる文だけ残したもの
+- 用途: 語の bigram 頻度（model.zst）の学習データ。本文そのものは含まない
+- ライセンス: Open Data Commons Attribution License (ODC-By) v1.0
+  https://opendatacommons.org/licenses/by/1-0/ 。利用は Common Crawl の
+  利用規約 https://commoncrawl.org/terms-of-use にも従う
+- 引用: Penedo et al., "FineWeb2: One Pipeline to Scale Them All -- Adapting
+  Pre-Training Data Processing to Every Language", 2025, arXiv:2506.20920
+  https://arxiv.org/abs/2506.20920
 - リポジトリには含めない
 
 ## zenz-v2.5-dataset（条件付き学習のペア）
@@ -73,7 +93,7 @@ Creative Commons Attribution-ShareAlike 4.0 International（CC BY-SA 4.0）で
   https://commoncrawl.org/terms-of-use に従う
 - 変更点: 評価文と重なる行を除き、読みと出力を文字言語モデルの重みに加工した。
   ペアそのものは含まない
-- リポジトリには含めない。lm.zst の学習に使ったファイルは Release に記す
+- リポジトリには含めない。lm.zst は上記 2 ファイルの全量で学習した
 
 ## IPA 辞書（ipadic-mecab-2_7_0、vibrato 形式）
 
