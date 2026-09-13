@@ -60,5 +60,47 @@
     (insert ";shokai;kougi")
     (should (equal (sekken-input-bounds) (cons 1 (point-max))))))
 
+(ert-deftest sekken-input/スラッシュと山括弧を入力中の語に含める ()
+  (with-temp-buffer
+    (insert "Kyou/emacs;O>Kai")
+    (should (equal (sekken-input-bounds) (cons 1 (point-max))))))
+
+(ert-deftest sekken-input/境界の直後の大文字は新しい区間を作らない ()
+  (should (equal (sekken-input-pieces ";Kai") [(:kind "convert" :text "かい")]))
+  (should (equal (sekken-input-pieces "Neko;Kai")
+                 [(:kind "convert" :text "ねこ") (:kind "convert" :text "かい")])))
+
+(ert-deftest sekken-input/スラッシュで開いた区間は綴りのまま_abbrev_で送る ()
+  (should (equal (sekken-input-pieces "/emacs") [(:kind "abbrev" :text "emacs")]))
+  ;; 中の大文字は境界にせず、末尾の子音も待たない。
+  (should (equal (sekken-input-pieces "Kyou/GPL;ha")
+                 [(:kind "convert" :text "きょう")
+                  (:kind "abbrev" :text "GPL")
+                  (:kind "convert" :text "は")]))
+  (should (equal (sekken-input-pieces "/emacs/Ha")
+                 [(:kind "abbrev" :text "emacs") (:kind "convert" :text "は")]))
+  (should (equal (sekken-input-display "/emacs;ha") "▽/emacs▽は"))
+  (should (sekken-input-has-boundary-p "/emacs"))
+  (should (sekken-input-ready-p "/emacs"))
+  (should-not (sekken-input-ready-p "/")))
+
+(ert-deftest sekken-input/山括弧は前後の区間に接頭辞と接尾辞の印を付ける ()
+  (should (equal (sekken-input-pieces "O>Kai")
+                 [(:kind "convert" :text "お" :prefix t)
+                  (:kind "convert" :text "かい" :suffix t)]))
+  (should (equal (sekken-input-pieces "Toukyou>kaiha")
+                 [(:kind "convert" :text "とうきょう" :prefix t)
+                  (:kind "convert" :text "かいは" :suffix t)]))
+  (should (equal (sekken-input-pieces "O>Kai>Sha")
+                 [(:kind "convert" :text "お" :prefix t)
+                  (:kind "convert" :text "かい" :prefix t :suffix t)
+                  (:kind "convert" :text "しゃ" :suffix t)]))
+  ;; 先頭の小文字には印を付けず、接尾辞の区間だけを作る。
+  (should (equal (sekken-input-pieces "o>kai")
+                 [(:kind "kana" :text "お") (:kind "convert" :text "かい" :suffix t)]))
+  (should (equal (sekken-input-display "O>Kai") "▽お>▽かい"))
+  (should (sekken-input-has-boundary-p "o>kai"))
+  (should-not (sekken-input-ready-p "O>")))
+
 (provide 'sekken-input-test)
 ;;; sekken-input-test.el ends here
