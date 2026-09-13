@@ -8,11 +8,13 @@
 
 ;;; Commentary:
 ;; 漢字とかなの境界を大文字で示したローマ字列（WagahaihaNekodearu.）を
-;; そのまま打ち、`sekken-convert' 1 つで「吾輩は猫である。」に置き換える。
-;; 入力モードの切り替えや未確定状態を持たない。
+;; そのまま打つと、打鍵に合わせて「吾輩は猫である。」が overlay に見え、
+;; 語の終わり（空白や改行）で確定の打鍵なしに置き換わる。1 位以外の
+;; 候補は `sekken-convert' で選ぶ。入力モードの切り替えや未確定状態を
+;; 持たない。
 ;;
-;; `C-\' で input method として有効にする。入力中の語は overlay で
-;; かなに見せ、大文字またはセミコロンの境界を ▽ で示す。英単語は `''
+;; `C-\' で input method として有効にする。候補が届くまでは入力中の語を
+;; かなで見せ、大文字またはセミコロンの境界を ▽ で示す。英単語は `''
 ;; で開いて綴りのまま出す。
 
 ;;; Code:
@@ -43,11 +45,9 @@
   (if sekken-mode
       (progn
         (add-hook 'pre-command-hook #'sekken-live-before-command nil t)
-        (add-hook 'post-command-hook #'sekken-live-after-command nil t)
-        (add-hook 'completion-at-point-functions #'sekken-completion-at-point nil t))
+        (add-hook 'post-command-hook #'sekken-live-after-command nil t))
     (remove-hook 'pre-command-hook #'sekken-live-before-command t)
     (remove-hook 'post-command-hook #'sekken-live-after-command t)
-    (remove-hook 'completion-at-point-functions #'sekken-completion-at-point t)
     (sekken-overlay-clear)
     (when (and (equal current-input-method sekken-im-name)
                (not sekken-im--deactivating))

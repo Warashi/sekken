@@ -69,41 +69,6 @@
     (should (equal (try-completion "Neko" #'sekken-convert-table) "Neko"))
     (should (test-completion "猫" #'sekken-convert-table))))
 
-(ert-deftest sekken-convert/capf_の_table_は打鍵で中断し中断した結果を覚えない ()
-  (let (calls)
-    (cl-letf (((symbol-function 'sekken-server-henkan)
-               (lambda (input _top &optional cancel-on-input)
-                 (push (list input cancel-on-input) calls)
-                 (if cancel-on-input
-                     sekken-server--input-canceled
-                   '("猫")))))
-      (setq sekken-convert--cache nil)
-      ;; 中断されると候補なし。
-      (should (null (all-completions "Neko" #'sekken-convert-auto-table)))
-      (should (null sekken-convert--cache))
-      ;; 明示的な変換は待って候補を得る。
-      (should (equal (all-completions "Neko" #'sekken-convert-table) '("猫")))
-      ;; 同じ入力なら中断する版も引き直さない。
-      (should (equal (all-completions "Neko" #'sekken-convert-auto-table) '("猫")))
-      (should (equal (reverse calls)
-                     '(([(:kind "convert" :text "ねこ")] t)
-                       ([(:kind "convert" :text "ねこ")] nil)))))))
-
-(ert-deftest sekken-convert/capf_は辞書を引く区間を含む語だけに反応する ()
-  (with-temp-buffer
-    (insert "neko'emacs")
-    (should (null (sekken-completion-at-point))))
-  (with-temp-buffer
-    (insert "neko")
-    (should (null (sekken-completion-at-point)))
-    (insert " Neko")
-    (let ((capf (sekken-completion-at-point)))
-      (should (= (nth 0 capf) 6))
-      (should (= (nth 1 capf) 10))
-      (should (eq (nth 2 capf) #'sekken-convert-auto-table))
-      (should (eq (plist-get (nthcdr 3 capf) :exclusive) t))
-      (should (eq (plist-get (nthcdr 3 capf) :company-prefix-length) t)))))
-
 (defmacro sekken-convert-test--with-async-engine (requests &rest body)
   "非同期のエンジン呼び出しを、要求を REQUESTS に溜めるだけの偽物にして BODY を実行する。
 REQUESTS の各要素は (PIECES . ON-SUCCESS)。返事は呼び出し側が ON-SUCCESS で返す。"
@@ -202,7 +167,6 @@ REQUESTS の各要素は (PIECES . ON-SUCCESS)。返事は呼び出し側が ON-
 (ert-deftest sekken-convert/sticky_待機中は候補を出さない ()
   (with-temp-buffer
     (insert ";")
-    (should-not (sekken-completion-at-point))
     (sekken-convert-test--with-engine
         (error "境界だけでエンジンを呼んではならない")
       (should (equal (all-completions ";" #'sekken-convert-table) nil)))

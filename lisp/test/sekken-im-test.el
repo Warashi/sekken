@@ -7,8 +7,6 @@
 (require 'cl-lib)
 (require 'sekken)
 
-(defvar corfu-auto-commands)
-
 (ert-deftest sekken-im/input-method_として登録される ()
   (let ((entry (assoc "japanese-sekken" input-method-alist)))
     (should entry)
@@ -86,19 +84,6 @@
   (with-temp-buffer
     (let ((overriding-local-map (make-sparse-keymap)))
       (should (equal (sekken-im-filter ?n) '(110))))))
-
-(ert-deftest sekken-im/corfu-auto_へ挿入コマンドを登録する ()
-  (let ((was-bound (boundp 'corfu-auto-commands))
-        (old-value (and (boundp 'corfu-auto-commands)
-                        (symbol-value 'corfu-auto-commands))))
-    (unwind-protect
-        (progn
-          (set 'corfu-auto-commands '(self-insert-command))
-          (sekken-im-setup-corfu)
-          (should (memq 'sekken-im-self-insert corfu-auto-commands)))
-      (if was-bound
-          (set 'corfu-auto-commands old-value)
-        (makunbound 'corfu-auto-commands)))))
 
 (ert-deftest sekken-im/挿入コマンドは選択範囲を置換する ()
   (should (eq (get 'sekken-im-self-insert 'delete-selection)

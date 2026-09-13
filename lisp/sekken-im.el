@@ -12,7 +12,6 @@
   "Name registered in `input-method-alist'.")
 
 (defvar sekken-im--deactivating nil)
-(defvar corfu-auto-commands)
 (defvar sekken-mode)
 
 (declare-function sekken-mode "sekken" (&optional arg))
@@ -64,16 +63,10 @@
 (put 'sekken-im-self-insert 'delete-selection
      'delete-selection-uses-region-p)
 
-(defun sekken-im-setup-corfu ()
-  "Tell corfu that sekken's insertion command can trigger auto completion."
-  (when (boundp 'corfu-auto-commands)
-    (add-to-list 'corfu-auto-commands 'sekken-im-self-insert)))
-
 (defun sekken-im-activate (_input-method)
   "Activate sekken for the current buffer."
   (setq-local input-method-function #'sekken-im-filter)
   (setq-local deactivate-current-input-method-function #'sekken-im-deactivate)
-  (sekken-im-setup-corfu)
   (sekken-mode 1)
   (sekken-server-schedule-prewarm))
 
@@ -86,11 +79,6 @@
   "Restore sekken's buffer-local mode after changing major mode."
   (when (equal current-input-method sekken-im-name)
     (sekken-mode 1)))
-
-(with-eval-after-load 'corfu
-  (sekken-im-setup-corfu))
-(with-eval-after-load 'corfu-auto
-  (sekken-im-setup-corfu))
 
 (add-hook 'after-change-major-mode-hook #'sekken-im-after-change-major-mode)
 
