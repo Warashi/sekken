@@ -54,7 +54,7 @@
                (lambda () (setq sekken-server--connection nil) 'dead))
               ((symbol-function 'jsonrpc-request)
                (lambda (&rest _) (signal 'jsonrpc-error '("dead")))))
-      (should-error (sekken-server-henkan "Neko" 3))
+      (should-error (sekken-server-henkan [(:kind "convert" :text "ねこ")] 3))
       (should (= sekken-server--crashes 1)))))
 
 (ert-deftest sekken-server/読み込み失敗の応答はプロセスが生きていても異常終了として数える ()
@@ -70,7 +70,7 @@
                          `("request id=1 failed:"
                            (jsonrpc-error-code . ,sekken-server--load-failed-code)
                            (jsonrpc-error-message . "failed to load engine"))))))
-      (should-error (sekken-server-henkan "Neko" 3) :type 'jsonrpc-error)
+      (should-error (sekken-server-henkan [(:kind "convert" :text "ねこ")] 3) :type 'jsonrpc-error)
       (should (= sekken-server--crashes 1)))))
 
 (ert-deftest sekken-server/プロセスが生きていればタイムアウトは異常終了として数えない ()
@@ -85,7 +85,7 @@
                  (signal 'jsonrpc-error
                          '("request id=1 failed:"
                            (jsonrpc-error-message . "Timed out"))))))
-      (should-error (sekken-server-henkan "Neko" 3) :type 'jsonrpc-error)
+      (should-error (sekken-server-henkan [(:kind "convert" :text "ねこ")] 3) :type 'jsonrpc-error)
       (should (= sekken-server--crashes 0)))))
 
 (ert-deftest sekken-server/起動中の変換は起動用のタイムアウトで待つ ()
@@ -100,7 +100,7 @@
                (lambda (&rest args)
                  (setq request-args args)
                  '(:candidates ["猫"]))))
-      (should (equal (sekken-server-henkan "Neko" 3) '("猫"))))
+      (should (equal (sekken-server-henkan [(:kind "convert" :text "ねこ")] 3) '("猫"))))
     (should (equal (plist-get (nthcdr 3 request-args) :timeout) 60))
     (should sekken-server--warmed)))
 
@@ -116,7 +116,7 @@
                (lambda (&rest args)
                  (setq request-args args)
                  '(:candidates ["猫"]))))
-      (sekken-server-henkan "Neko" 3))
+      (sekken-server-henkan [(:kind "convert" :text "ねこ")] 3))
     (should (equal (plist-get (nthcdr 3 request-args) :timeout) 5))))
 
 (ert-deftest sekken-server/打鍵で取り消しても接続と起動中の扱いは変わらない ()
@@ -129,7 +129,7 @@
                (lambda (conn) (setq shutdown conn)))
               ((symbol-function 'jsonrpc-request)
                (lambda (&rest _) sekken-server--input-canceled)))
-      (should (eq (sekken-server-henkan "Kana" 1 t)
+      (should (eq (sekken-server-henkan [(:kind "convert" :text "かな")] 1 t)
                   sekken-server--input-canceled)))
     (should (eq sekken-server--connection 'connection))
     (should-not shutdown)
@@ -151,7 +151,7 @@
                (lambda (input top &optional cancel-on-input)
                  (setq called (list input top cancel-on-input)))))
       (should (sekken-server--prewarm-attempt)))
-    (should (equal called '("Kana" 1 t)))))
+    (should (equal called '([(:kind "convert" :text "かな")] 1 t)))))
 
 (ert-deftest sekken-server/打鍵で中断された先読みは再予約する ()
   (let ((sekken-server--prewarm-timer 'running)
@@ -182,7 +182,7 @@
                (lambda (&rest args)
                  (setq request-args args)
                  sekken-server--input-canceled)))
-      (should (eq (sekken-server-henkan "Kana" 1 t)
+      (should (eq (sekken-server-henkan [(:kind "convert" :text "かな")] 1 t)
                   sekken-server--input-canceled)))
     (should (eq (plist-get (nthcdr 3 request-args) :cancel-on-input) t))
     (should (eq (plist-get (nthcdr 3 request-args) :cancel-on-input-retval)

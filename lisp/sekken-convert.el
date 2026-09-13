@@ -28,7 +28,8 @@ CANCEL-ON-INPUT が non-nil なら打鍵で待つのをやめ、候補なしと�
 中断した結果は覚えないので、次に呼ばれたときに引き直す。"
   (if (equal roman (car sekken-convert--cache))
       (cdr sekken-convert--cache)
-    (let ((candidates (sekken-server-henkan roman sekken-convert-max-candidates
+    (let ((candidates (sekken-server-henkan (sekken-input-pieces roman)
+                                            sekken-convert-max-candidates
                                             cancel-on-input)))
       (unless (eq candidates sekken-server--input-canceled)
         (setq sekken-convert--cache (cons roman candidates))

@@ -4,7 +4,8 @@
 
 ;;; Commentary:
 ;; 「入力中の語」は、ポイント直前に連続するローマ字と記号の並び。
-;; 表示用には大文字境界を ▽ で示し、かなにして返す。
+;; 表示用には大文字境界を ▽ で示し、かなにして返す。エンジンには
+;; 同じ分割をかなにし、区間の種類を付けた列として送る。
 
 ;;; Code:
 
@@ -68,6 +69,30 @@
   (let ((segments (cdr (sekken-input-segment roman))))
     (and segments
          (not (string-empty-p (car (last segments)))))))
+
+(defun sekken-input-pieces (roman)
+  "入力中の ROMAN をエンジンに送る区間の列にする。
+先頭の小文字は kana、変換境界で始まる各部分は convert の区間になる。
+最後の区間は表示と同じく末尾の子音を変換せずに残す（`sekken-kana-display'）。
+jsonrpc.el が JSON の配列にするようベクタで返す。"
+  (let* ((segmented (sekken-input-segment roman))
+         (prefix (car segmented))
+         (segments (cdr segmented))
+         (pieces nil))
+    (unless (string-empty-p prefix)
+      (push (list :kind "kana"
+                  :text (if segments
+                            (sekken-kana-roman-to-kana prefix)
+                          (sekken-kana-display prefix)))
+            pieces))
+    (while segments
+      (push (list :kind "convert"
+                  :text (if (cdr segments)
+                            (sekken-kana-roman-to-kana (car segments))
+                          (sekken-kana-display (car segments))))
+            pieces)
+      (setq segments (cdr segments)))
+    (vconcat (nreverse pieces))))
 
 (defun sekken-input-display (roman)
   "入力中の ROMAN をかなにし、変換境界を ▽ で示す。"

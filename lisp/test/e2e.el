@@ -25,7 +25,8 @@
           sekken-server-dic dic
           sekken-server-model model
           sekken-server-jisyo jisyo)
-    (let ((henkan (sekken-server-henkan "WagahaihaNekodearu." 3)))
+    (let ((henkan (sekken-server-henkan
+                   (sekken-input-pieces "WagahaihaNekodearu.") 3)))
       (message "henkan: %S" henkan)
       (unless (member "吾輩は猫である。" henkan)
         (error "e2e: 変換候補に期待する文が無い")))

@@ -69,7 +69,9 @@
       (should (equal (all-completions "Neko" #'sekken-convert-table) '("猫")))
       ;; 同じ入力なら中断する版も引き直さない。
       (should (equal (all-completions "Neko" #'sekken-convert-auto-table) '("猫")))
-      (should (equal (reverse calls) '(("Neko" t) ("Neko" nil)))))))
+      (should (equal (reverse calls)
+                     '(([(:kind "convert" :text "ねこ")] t)
+                       ([(:kind "convert" :text "ねこ")] nil)))))))
 
 (ert-deftest sekken-convert/capf_は変換境界を含む語だけに反応する ()
   (with-temp-buffer

@@ -160,13 +160,14 @@ nil の間はモデルの読み込み中とみなし、`sekken-server-startup-ti
       (eql (alist-get 'jsonrpc-error-code (cdr err))
            sekken-server--load-failed-code)))
 
-(defun sekken-server-henkan (input top &optional cancel-on-input)
-  "INPUT を変換し、候補文字列のリストを最大 TOP 個返す。"
+(defun sekken-server-henkan (pieces top &optional cancel-on-input)
+  "PIECES を変換し、候補文字列のリストを最大 TOP 個返す。
+PIECES は `sekken-input-pieces' が返す、種類付きのかな区間のベクタ。"
   (condition-case err
       (let ((result
              (jsonrpc-request
               (sekken-server-connection) :henkan
-              (list :input input :top top)
+              (list :pieces pieces :top top)
               :timeout (sekken-server--henkan-timeout)
               :cancel-on-input cancel-on-input
               :cancel-on-input-retval sekken-server--input-canceled)))
@@ -193,7 +194,7 @@ nil の間はモデルの読み込み中とみなし、`sekken-server-startup-ti
   "入力が無い間に本番と同じ変換要求まで通す。
 打鍵によって中断された場合は nil、完了した場合は t を返す。"
   (condition-case nil
-      (not (eq (sekken-server-henkan "Kana" 1 t)
+      (not (eq (sekken-server-henkan [(:kind "convert" :text "かな")] 1 t)
                sekken-server--input-canceled))
     (quit nil)))
 
