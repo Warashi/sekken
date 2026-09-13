@@ -4,8 +4,9 @@
 
 ;;; Commentary:
 ;; 打鍵のたびに入力中の語の候補を先読みし、overlay に 1 位候補を見せる。
-;; 候補がまだ無い間と、辞書を引く区間の無い語は、かな（と綴りのままの
-;; 英字）を見せる。
+;; 候補がまだ無い間は、覚えている先頭部分の 1 位候補に残りのかなを
+;; 繋いで見せ、かなに戻さない。それも無い間と、辞書を引く区間の無い
+;; 語は、かな（と綴りのままの英字）を見せる。
 ;;
 ;; 確定の打鍵は無い。ポイントが入力中の語の末尾から離れたら（空白や
 ;; 改行を打つ、移動する）、見せていたものをバッファに入れる。語を
@@ -18,10 +19,30 @@
 (require 'sekken-input)
 (require 'sekken-overlay)
 
+(defun sekken-live--base (roman)
+  "ROMAN の候補が届くまで代わりに見せる (先頭部分 . 1 位候補)。無ければ nil。
+候補を覚えている最も長い先頭部分を選ぶ。母音を待つ子音で終わる先頭部分は、
+残りをかなにできないので選ばない。"
+  (let ((length (1- (length roman)))
+        base)
+    (while (and (> length 0) (not base))
+      (let ((prefix (substring roman 0 length)))
+        (unless (string-match-p "[bcdfghjklmnpqrstvwxyz]\\'" (downcase prefix))
+          (let ((candidate (car (sekken-convert-cached prefix))))
+            (when candidate
+              (setq base (cons prefix candidate))))))
+      (setq length (1- length)))
+    base))
+
 (defun sekken-live-display (roman)
   "入力中の ROMAN を overlay で見せる文字列。
-候補を覚えていれば 1 位候補、無ければ境界を ▽ で示したかな表示。"
+候補を覚えていれば 1 位候補。無ければ、覚えている先頭部分の 1 位候補に
+残りのかな表示を繋ぐ。それも無ければ境界を ▽ で示したかな表示。"
   (or (car (sekken-convert-cached roman))
+      (let ((base (sekken-live--base roman)))
+        (and base
+             (concat (cdr base)
+                     (sekken-input-display (substring roman (length (car base)))))))
       (sekken-input-display roman)))
 
 (defun sekken-live--prefetch (roman)

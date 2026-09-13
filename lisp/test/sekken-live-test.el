@@ -38,17 +38,63 @@
         (funcall (cdr (car requests)))
         (should (equal (sekken-live-test--display) "猫"))))))
 
-(ert-deftest sekken-live/届いた候補が今の語と違えばかな表示のまま先読みし直す ()
+(ert-deftest sekken-live/届いた候補が今の語と違えばその候補に末尾を繋いで先読みし直す ()
   (with-temp-buffer
     (insert "Ne")
     (let (requests)
       (sekken-live-test--with-prefetch requests
         (sekken-live-update)
         (insert "ko")
-        (setq sekken-convert--cache '(("Ne" "ね")))
+        (setq sekken-convert--cache '(("Ne" "根")))
         (funcall (cdr (car requests)))
-        (should (equal (sekken-live-test--display) "▽ねこ"))
+        (should (equal (sekken-live-test--display) "根こ"))
         (should (equal (car (car requests)) "Neko"))))))
+
+(ert-deftest sekken-live/打ち足した語の候補が届くまでは前の候補に末尾のかなを繋いで見せる ()
+  (dolist (case '(("Nekoga" . "猫が")
+                  ("Nekog" . "猫g")
+                  ("NekoGa" . "猫▽が")
+                  ("Neko'Emacs" . "猫▽'Emacs")))
+    (with-temp-buffer
+      (insert (car case))
+      (let (requests)
+        (sekken-live-test--with-prefetch requests
+          (setq sekken-convert--cache '(("Neko" "猫")))
+          (sekken-live-update)
+          (should (equal (sekken-live-test--display) (cdr case)))
+          (should (equal (car (car requests)) (car case))))))))
+
+(ert-deftest sekken-live/覚えた語のうち最も長いものに繋ぐ ()
+  (with-temp-buffer
+    (insert "Nekogasuki")
+    (let (requests)
+      (sekken-live-test--with-prefetch requests
+        (setq sekken-convert--cache '(("Ne" "根") ("Nekoga" "猫が") ("Neko" "猫")))
+        (sekken-live-update)
+        (should (equal (sekken-live-test--display) "猫がすき"))))))
+
+(ert-deftest sekken-live/母音を待つ子音で終わる語と候補の無い語には繋がない ()
+  (pcase-dolist (`(,cache ,roman ,display)
+                 '(((("Nekog" "猫g") ("Neko" "猫")) "Nekoga" "猫が")
+                   ((("Nekon" "猫ん") ("Neko" "猫")) "Nekona" "猫な")
+                   ((("Nekog") ("Neko" "猫")) "Nekoga" "猫が")
+                   ((("Nekog" "猫g")) "Nekoga" "▽ねこが")))
+    (with-temp-buffer
+      (insert roman)
+      (let (requests)
+        (sekken-live-test--with-prefetch requests
+          (setq sekken-convert--cache cache)
+          (sekken-live-update)
+          (should (equal (sekken-live-test--display) display)))))))
+
+(ert-deftest sekken-live/縮めた語を覚えていればその候補を見せる ()
+  (with-temp-buffer
+    (insert "Neko")
+    (let (requests)
+      (sekken-live-test--with-prefetch requests
+        (setq sekken-convert--cache '(("Nekoga" "猫が") ("Neko" "猫")))
+        (sekken-live-update)
+        (should (equal (sekken-live-test--display) "猫"))))))
 
 (ert-deftest sekken-live/辞書を引く区間の無い語は先読みせずかなを見せる ()
   (dolist (case '(("kyouha" . "きょうは")
