@@ -35,7 +35,12 @@ impl<S: Scorer> Sekken<S> {
             .collect();
         let pieces = &input.pieces[head_len..];
         if pieces.is_empty() {
-            return vec![head.clone(), hira2kata(&head)];
+            let kata = hira2kata(&head);
+            return if kata == head {
+                vec![head]
+            } else {
+                vec![head, kata]
+            };
         }
         let reading = input.reading();
         let lattice = Lattice {
@@ -194,6 +199,8 @@ mod tests {
     #[test]
     fn 変換区間が無ければひらがなとカタカナを返す() {
         assert_eq!(sekken().henkan(&roman("neko"), 5), ["ねこ", "ネコ"]);
+        // literal だけならカタカナにしても同じなので重ねない。
+        assert_eq!(sekken().henkan(&roman("'emacs"), 5), ["emacs"]);
     }
 
     #[test]
@@ -281,6 +288,6 @@ mod tests {
 
     #[test]
     fn 空の入力は空の候補を返す() {
-        assert_eq!(sekken().henkan(&Input::default(), 3), ["", ""]);
+        assert_eq!(sekken().henkan(&Input::default(), 3), [""]);
     }
 }
