@@ -322,6 +322,39 @@
       (sekken-live-test--command #'self-insert-command (insert " ")))
     (should (equal (buffer-string) "Neko; "))))
 
+(ert-deftest sekken-live/確定した英字を直後の語として拾い直さない ()
+  ;; 保存や M-x のように、ポイントを動かさず確定する経路が 2 回続く。
+  (with-temp-buffer
+    (insert "kyouha'Emacs")
+    (sekken-live-test--with-cache nil
+      (sekken-live-test--command #'ignore)
+      (should (null sekken-overlay--overlay))
+      (sekken-live-test--command #'ignore))
+    (should (equal (buffer-string) "きょうはEmacs"))))
+
+(ert-deftest sekken-live/確定した英字の後に打った語だけを変換する ()
+  (with-temp-buffer
+    (insert "kyouha'Emacs")
+    (sekken-live-test--with-cache '(("Neko" "猫"))
+      (sekken-live-test--command #'ignore)
+      (sekken-live-test--command #'self-insert-command (insert "Neko"))
+      (should (equal (sekken-live-test--display) "猫"))
+      (sekken-live-test--command #'ignore))
+    (should (equal (buffer-string) "きょうはEmacs猫"))))
+
+(ert-deftest sekken-live/sekken-mode_は編集の_hook_も付け外しする ()
+  (require 'sekken)
+  (with-temp-buffer
+    (sekken-mode 1)
+    (should (memq #'sekken-input-before-change before-change-functions))
+    (insert "kyouha'Emacs")
+    (sekken-live-test--with-cache nil
+      (sekken-live-test--command #'ignore)
+      (sekken-live-test--command #'delete-backward-char (delete-char -1))
+      (should (equal (sekken-live-test--display) "▽えまc")))
+    (sekken-mode -1)
+    (should-not (memq #'sekken-input-before-change before-change-functions))))
+
 (ert-deftest sekken-live/sekken-mode_が前後の_hook_を付け外しする ()
   (require 'sekken)
   (with-temp-buffer

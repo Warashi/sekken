@@ -136,7 +136,7 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
    (t (sekken-input-literal roman))))
 
 (defun sekken-live--commit (start end roman)
-  "START から END の語 ROMAN を確定の文字列に置き換える。
+  "START から END の語 ROMAN を確定の文字列に置き換え、その末尾を覚える。
 ポイントが語の中にあれば置き換えた後ろに、外にあれば同じ位置に置く。
 読み取り専用の文字に当たれば置き換えず、`pre-command-hook' から呼ばれても
 コマンドを止めない。"
@@ -149,6 +149,7 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
                 (goto-char start)
                 (delete-region start end)
                 (insert text))
+              (sekken-input-remember-committed (+ start (length text)))
               (when inside
                 (goto-char (+ start (length text)))))
           (text-read-only nil))))))

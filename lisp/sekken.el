@@ -45,9 +45,12 @@
   (if sekken-mode
       (progn
         (add-hook 'pre-command-hook #'sekken-live-before-command nil t)
-        (add-hook 'post-command-hook #'sekken-live-after-command nil t))
+        (add-hook 'post-command-hook #'sekken-live-after-command nil t)
+        (add-hook 'before-change-functions #'sekken-input-before-change nil t))
     (remove-hook 'pre-command-hook #'sekken-live-before-command t)
     (remove-hook 'post-command-hook #'sekken-live-after-command t)
+    (remove-hook 'before-change-functions #'sekken-input-before-change t)
+    (sekken-input-forget-committed)
     (sekken-overlay-clear)
     (when (and (equal current-input-method sekken-im-name)
                (not sekken-im--deactivating))

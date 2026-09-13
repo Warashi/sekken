@@ -21,12 +21,40 @@
 (defconst sekken-input--chars "A-Za-z'.,!?:;/>\\[\\]-"
   "入力中の語を構成する文字（`skip-chars-backward' 用）。")
 
+(defvar-local sekken-input--committed nil
+  "最後に確定した文字列の末尾の marker。無ければ nil。
+確定の結果が英字で終わるとき、その英字をもう一度語として拾わないための境。
+marker は直前への挿入で進まないので、確定の直後に打った文字は境の後ろに付く。")
+
+(defun sekken-input-remember-committed (position)
+  "確定した文字列の末尾 POSITION を覚える。"
+  (sekken-input-forget-committed)
+  (setq sekken-input--committed (copy-marker position)))
+
+(defun sekken-input-forget-committed ()
+  "確定した文字列の末尾を忘れる。"
+  (when sekken-input--committed
+    (set-marker sekken-input--committed nil)
+    (setq sekken-input--committed nil)))
+
+(defun sekken-input-before-change (beg _end)
+  "BEG から始まる編集が確定した文字列に触れば末尾を忘れる。`before-change-functions' 用。
+末尾への挿入と末尾より後ろの削除は確定した文字列に触らないので忘れない。
+削除は marker を動かすので、動く前に見る。"
+  (when (and sekken-input--committed
+             (< beg sekken-input--committed))
+    (sekken-input-forget-committed)))
+
 (defun sekken-input-bounds ()
-  "ポイント直前の入力中の語の (START . END)。無ければ nil。"
+  "ポイント直前の入力中の語の (START . END)。無ければ nil。
+最後に確定した文字列の末尾より前には伸びない。"
   (let ((end (point))
         (start (save-excursion
                  (skip-chars-backward sekken-input--chars)
                  (point))))
+    (when (and sekken-input--committed
+               (> sekken-input--committed start))
+      (setq start (marker-position sekken-input--committed)))
     (when (< start end)
       (cons start end))))
 
