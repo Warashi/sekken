@@ -134,6 +134,19 @@ mod tests {
         assert_eq!(t.roman2kana("a"), "ア");
     }
 
+    /// エディタ側の変換と同じ結果になることを確かめる共通の fixture。
+    /// エディタが送るかなが変換結果を決めるので、Emacs 側のテストも同じ表を読む。
+    #[test]
+    fn 共通の_fixture_と一致する() {
+        let t = KanaTable::default_table();
+        for (roman, kana) in include_str!("../kana-cases.tsv")
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+        {
+            assert_eq!(t.roman2kana(roman), kana, "{roman}");
+        }
+    }
+
     #[test]
     fn 既定の変換表にはオートマトンを使う() {
         assert!(KanaTable::default_table().matcher.is_some());

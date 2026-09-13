@@ -28,6 +28,7 @@
           fileset = pkgs.lib.fileset.unions [
             (craneLib.fileset.commonCargoSources ./sekken-rs)
             ./sekken-rs/core/kana-table.tsv
+            ./sekken-rs/core/kana-cases.tsv
           ];
         };
         commonArgs = {
@@ -81,6 +82,7 @@
             cp -r ${./lisp} lisp
             mkdir share
             cp ${./sekken-rs/core/kana-table.tsv} share/kana-table.tsv
+            cp ${./sekken-rs/core/kana-cases.tsv} share/kana-cases.tsv
             chmod -R u+w lisp
             cd lisp
             bash test/run.sh
