@@ -144,6 +144,7 @@ mod tests {
             weight: 100.0,
             rounds: 3,
             width: 1,
+            stats: Default::default(),
         });
         let r = s.henkan("WagahaiHaNekoDa", 3);
         assert_eq!(r[0], "わがはいは猫だ");

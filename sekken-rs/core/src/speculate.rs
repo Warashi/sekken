@@ -10,7 +10,9 @@
 //! 1 文字分の先入観（「なお、」の次は「枚」より「マ」）に引きずられて
 //! 戻れなくなるので、固定は累積させず、試した提案は記録して繰り返さない。
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 #[cfg(test)]
 use crate::lattice::Weights;
@@ -27,6 +29,59 @@ pub struct Speculator {
     pub rounds: usize,
     /// 提案の制約で再探索して採点する経路の本数。
     pub width: usize,
+    /// 変換ごとの反復数と段ごとの時間の累計。`decode` は `&self` で呼ばれる
+    /// ので内部で書き換える。
+    pub stats: RefCell<Stats>,
+}
+
+/// 投機の反復数と段ごとの時間の累計。格子の精度が上がると反復が早く止まり、
+/// 検証器の呼び出しが減るはずなので、変換の時間をこの内訳で見る。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Stats {
+    /// 変換の回数。
+    pub decodes: usize,
+    /// 実際に回った反復の回数ごとの変換の数。添字が回数で、
+    /// 上限 `rounds` なら 1〜`rounds + 1` に入る。
+    pub rounds: Vec<usize>,
+    /// 検証器で採点した文の数。
+    pub scored: usize,
+    /// 格子の探索（場の準備と再探索）に使った時間。
+    pub search: Duration,
+    /// 検証器の採点に使った時間。
+    pub verify: Duration,
+}
+
+impl Stats {
+    fn record_rounds(&mut self, rounds: usize) {
+        if self.rounds.len() <= rounds {
+            self.rounds.resize(rounds + 1, 0);
+        }
+        self.rounds[rounds] += 1;
+    }
+}
+
+/// 1 変換あたりの平均に直した 1 行。eval と henkan が同じ形で出す。
+impl std::fmt::Display for Stats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let n = self.decodes.max(1) as f64;
+        let mean_rounds = self
+            .rounds
+            .iter()
+            .enumerate()
+            .map(|(r, &c)| r * c)
+            .sum::<usize>() as f64
+            / n;
+        write!(
+            f,
+            "spec_decodes={} spec_rounds={:?} spec_mean_rounds={:.2} spec_scored_per_decode={:.2} spec_search_ms={:.2} spec_verify_ms={:.2}",
+            self.decodes,
+            self.rounds,
+            mean_rounds,
+            self.scored as f64 / n,
+            self.search.as_secs_f64() * 1000.0 / n,
+            self.verify.as_secs_f64() * 1000.0 / n,
+        )
+    }
 }
 
 /// 下書きの 1 文字位置と、そこに置ける別の字。
@@ -75,11 +130,19 @@ impl Speculator {
         let mut results: Vec<Path> = Vec::new();
         let mut best: Option<Scored> = None;
         let mut constraint = Constraint::default();
+        let mut search_time = Duration::ZERO;
+        let mut verify_time = Duration::ZERO;
+        let mut scored_count = 0;
         // 制約を変えて同じ格子を何度も探索するので、1 つの場で引き直しを省く。
+        let t = Instant::now();
         let search = lattice.search(scorer);
+        search_time += t.elapsed();
         let mut session = self.verifier.begin(input);
         let mut first: Vec<Path> = Vec::new();
+        let mut rounds_run = 0;
         for round in 0..=self.rounds {
+            rounds_run += 1;
+            let t = Instant::now();
             let mut paths: Vec<Path>;
             if round == 0 && top_n <= BEAM {
                 // 制約の無い探索は格子の順位そのものなので、多めに取って
@@ -93,8 +156,12 @@ impl Speculator {
                 paths = search.nbest_constrained(self.width, &constraint);
             }
             paths.retain(|p| seen.insert(p.surfaces.clone()));
+            search_time += t.elapsed();
             if !paths.is_empty() {
+                let t = Instant::now();
+                scored_count += paths.len();
                 let scored = self.score(lattice, &mut *session, head, head_len, paths);
+                verify_time += t.elapsed();
                 for s in scored {
                     let cost = s.path.cost + self.weight * s.verdict.cost;
                     results.push(Path {
@@ -119,7 +186,17 @@ impl Speculator {
         }
         results.sort_by(|a, b| a.cost.total_cmp(&b.cost));
         if top_n > BEAM {
+            let t = Instant::now();
             first = search.nbest(top_n);
+            search_time += t.elapsed();
+        }
+        {
+            let mut stats = self.stats.borrow_mut();
+            stats.decodes += 1;
+            stats.record_rounds(rounds_run);
+            stats.scored += scored_count;
+            stats.search += search_time;
+            stats.verify += verify_time;
         }
         Decoded {
             scored: results,
@@ -338,6 +415,7 @@ mod tests {
             weight: 1.0,
             rounds,
             width: 1,
+            stats: RefCell::default(),
         }
     }
 
@@ -347,6 +425,11 @@ mod tests {
         let result = s.decode(&lattice(), &scorer(), "", "", 1).scored;
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].surfaces, ["法貨", "と"]);
+        // 提案が無いので反復は 0 回目で止まり、採点は下書きの 1 文だけ。
+        let stats = s.stats.borrow();
+        assert_eq!(stats.decodes, 1);
+        assert_eq!(stats.rounds, [0, 1]);
+        assert_eq!(stats.scored, 1);
     }
 
     #[test]
@@ -355,6 +438,30 @@ mod tests {
         let result = s.decode(&lattice(), &scorer(), "", "", 1).scored;
         assert_eq!(result[0].surfaces, ["放火", "と"]);
         assert_eq!(result[1].surfaces, ["法貨", "と"]);
+        // 下書きと提案の 2 回で止まり、上限の 3 回までは使わない。
+        let stats = s.stats.borrow();
+        assert_eq!(stats.rounds, [0, 0, 1]);
+        assert_eq!(stats.scored, 2);
+    }
+
+    #[test]
+    fn 集計の表示は_1_変換あたりの平均にする() {
+        let s = speculator(vec![(0, '放')], "放火", 3);
+        s.decode(&lattice(), &scorer(), "", "", 1);
+        s.decode(&lattice(), &scorer(), "", "", 1);
+        let line = s.stats.borrow().to_string();
+        assert!(line.contains("spec_decodes=2 spec_rounds=[0, 0, 2] spec_mean_rounds=2.00 spec_scored_per_decode=2.00 spec_search_ms="), "{line}");
+    }
+
+    #[test]
+    fn 反復数と採点数は変換をまたいで積む() {
+        let s = speculator(vec![(0, '放')], "放火", 3);
+        s.decode(&lattice(), &scorer(), "", "", 1);
+        s.decode(&lattice(), &scorer(), "", "", 1);
+        let stats = s.stats.borrow();
+        assert_eq!(stats.decodes, 2);
+        assert_eq!(stats.rounds, [0, 0, 2]);
+        assert_eq!(stats.scored, 4);
     }
 
     #[test]

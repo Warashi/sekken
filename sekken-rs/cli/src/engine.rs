@@ -81,6 +81,7 @@ impl EngineArgs {
                         weight: self.lm_weight,
                         rounds,
                         width: self.spec_width,
+                        stats: Default::default(),
                     })
                 }
                 None => {
