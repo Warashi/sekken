@@ -11,7 +11,11 @@ SKK 風の一括変換による Emacs 用日本語入力。
 
 - `sekken-rs/` — 変換エンジン（Rust）。コマンドラインでの変換と、Emacs から使う JSON-RPC サーバー
 - `lisp/` — Emacs 側（`sekken-mode`）
-- `share/kana-table.tsv` — ローマ字かな変換表。Rust と Emacs Lisp の両方が読む（実体は `sekken-rs/core/kana-table.tsv`）
+- `share/kana-table.tsv` — ローマ字かな変換表。Emacs Lisp とコマンドラインの両方が読む（実体は `sekken-rs/core/kana-table.tsv`）
+
+ローマ字からかなへの変換はエディタ側が行い、エンジンにはかなと変換境界を送る。
+入力中のかな表示をエンジンに頼らず出すために、どのエディタもこの変換を持つので、
+エンジンは綴りを受け取らない（「エンジンの入力」）。
 
 ## 入力の規約
 
@@ -20,6 +24,28 @@ SKK 風の一括変換による Emacs 用日本語入力。
 - 送り仮名は SKK と同じく次のセグメントでも表せる（`KaKu` → 書く）
 - 大文字を含まなければ、ひらがな（とカタカナ）になる
 - 記号は `.` → 。、`,` → 、、`z/` → ・ のように変換表に従う
+
+## エンジンの入力
+
+`sekken server` は標準入出力で JSON-RPC 2.0（LSP と同じ `Content-Length` 区切り）を話す。
+`henkan` の params は、エディタがかなにして種類を付けた区間の列。
+
+```json
+{"pieces": [{"kind": "convert", "text": "きょう"},
+            {"kind": "convert", "text": "は"},
+            {"kind": "literal", "text": "Emacs"}],
+ "top": 10}
+```
+
+| kind | 扱い |
+|---|---|
+| `kana` | 辞書を引かず、かなのまま出す（先頭の小文字など） |
+| `convert` | 読みとして SKK 辞書を引く（大文字または `;` で始めた部分） |
+| `literal` | 変換せずそのまま出す（英字など。Emacs 側の打ち分けは未実装） |
+
+区間の種類はエディタが決め、エンジンは文字から推測しない。打ち終えていない末尾の
+子音（`Kak` の `k`）は変換せずに送ると、エンジンが送り仮名の子音として扱う。
+応答は `{"candidates": ["今日はEmacs", ...]}`。他に `version`、`shutdown`、通知 `exit` がある。
 
 ## 準備
 
