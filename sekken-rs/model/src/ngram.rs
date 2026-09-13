@@ -19,7 +19,7 @@ pub const BOS: u32 = 0;
 pub const EOS: u32 = 1;
 
 const MAGIC: &[u8; 4] = b"SKNG";
-const FORMAT_VERSION: u32 = 2;
+const FORMAT_VERSION: u32 = 3;
 
 /// 学習で数えた頻度。`NgramModel::build` の入力。
 ///
@@ -40,6 +40,12 @@ pub struct Counts {
     pub n2: u64,
     /// 刈り込み後の `(prev, next, count)`。昇順。
     pub bigram: Vec<(u32, u32, u64)>,
+    /// 刈り込み前の trigram の種類数のうち、頻度が 1 のものと 2 のもの。
+    pub n1_3: u64,
+    pub n2_3: u64,
+    /// 刈り込み後の `(prev2, prev, next, count)`。昇順。文頭は `(<s>, w1, w2)` から数え、
+    /// `(<s>, <s>, w1)` は数えない（w1 は bigram に任せる）。
+    pub trigram: Vec<(u32, u32, u32, u64)>,
     pub class_names: Vec<String>,
     /// 語ごとの多数決のクラス。
     pub class_of: Vec<u32>,
@@ -78,6 +84,15 @@ pub struct BuildParams {
     pub lower: Lower,
     /// 未知語 1 文字あたりの追加コスト。
     pub unknown_char_cost: f64,
+    /// 組むときにこの頻度未満の bigram / trigram を落とす。計数時の刈り込みに
+    /// 重ねて掛かる。モデルの大きさをここで調整する。
+    pub min_bigram: u64,
+    pub min_trigram: u64,
+    /// trigram を使うか。`false` なら頻度にあっても載せない。
+    pub trigram: bool,
+    /// trigram の Kneser-Ney の割引。`None` なら `n1_3 / (n1_3 + 2 n2_3)` で見積もる。
+    /// Dirichlet では bigram と同じ prior を使う。
+    pub trigram_discount: Option<f64>,
 }
 
 impl Default for BuildParams {
@@ -88,6 +103,10 @@ impl Default for BuildParams {
             smoothing: Smoothing::Dirichlet { prior: 300.0 },
             lower: Lower::Unigram,
             unknown_char_cost: 4.0,
+            min_bigram: 1,
+            min_trigram: 1,
+            trigram: true,
+            trigram_discount: None,
         }
     }
 }
@@ -100,6 +119,7 @@ pub struct NgramCounter {
     vocab: HashMap<String, u32>,
     unigram: Vec<u64>,
     bigram: HashMap<(u32, u32), u64>,
+    trigram: HashMap<(u32, u32, u32), u64>,
     total: u64,
     class_names: Vec<String>,
     classes: HashMap<String, u32>,
@@ -146,6 +166,8 @@ impl NgramCounter {
 
     /// 1 文分の (語, クラス) の列を数える。
     pub fn add_classified<'a>(&mut self, tokens: impl IntoIterator<Item = (&'a str, &'a str)>) {
+        // 直前 2 語。文頭は (None, <s>) で、最初の語の trigram は数えない。
+        let mut prev2 = None;
         let mut prev = BOS;
         let mut prev_class = BOS;
         self.unigram[BOS as usize] += 1;
@@ -156,12 +178,19 @@ impl NgramCounter {
             self.unigram[id as usize] += 1;
             self.total += 1;
             *self.bigram.entry((prev, id)).or_default() += 1;
+            if let Some(p2) = prev2 {
+                *self.trigram.entry((p2, prev, id)).or_default() += 1;
+            }
             *self.word_class.entry((id, class)).or_default() += 1;
             *self.class_bigram.entry((prev_class, class)).or_default() += 1;
+            prev2 = Some(prev);
             prev = id;
             prev_class = class;
         }
         *self.bigram.entry((prev, EOS)).or_default() += 1;
+        if let Some(p2) = prev2 {
+            *self.trigram.entry((p2, prev, EOS)).or_default() += 1;
+        }
         *self.class_bigram.entry((prev_class, EOS)).or_default() += 1;
         *self.word_class.entry((EOS, EOS)).or_default() += 1;
         self.unigram[EOS as usize] += 1;
@@ -172,9 +201,27 @@ impl NgramCounter {
         self.tokens.len()
     }
 
-    /// 頻度 `min_count` 未満の bigram を刈り込んで `Counts` にする。
+    /// 頻度 `min_count` 未満の bigram と trigram を刈り込んで `Counts` にする。
     pub fn counts(&self, min_count: u64) -> Counts {
+        self.counts_with(min_count, min_count)
+    }
+
+    /// bigram と trigram で別の閾値を使って `Counts` にする。
+    pub fn counts_with(&self, min_bigram: u64, min_trigram: u64) -> Counts {
         let vocab = self.tokens.len();
+        let (mut n1_3, mut n2_3) = (0, 0);
+        let mut trigram = Vec::new();
+        for (&(p2, p, n), &c) in &self.trigram {
+            match c {
+                1 => n1_3 += 1,
+                2 => n2_3 += 1,
+                _ => {}
+            }
+            if c >= min_trigram {
+                trigram.push((p2, p, n, c));
+            }
+        }
+        trigram.sort_unstable();
         let mut n_succ = vec![0u32; vocab];
         let mut n_pred = vec![0u32; vocab];
         let (mut n1, mut n2) = (0, 0);
@@ -187,7 +234,7 @@ impl NgramCounter {
                 2 => n2 += 1,
                 _ => {}
             }
-            if c >= min_count {
+            if c >= min_bigram {
                 bigram.push((prev, next, c));
             }
         }
@@ -207,6 +254,9 @@ impl NgramCounter {
             n1,
             n2,
             bigram,
+            n1_3,
+            n2_3,
+            trigram,
             class_names: self.class_names.clone(),
             class_of: majority_class(vocab, self.word_class.iter().map(|(&k, &c)| (k, c))),
             class_bigram,
@@ -270,6 +320,16 @@ pub struct NgramModel {
     /// 語ごとの unigram 確率。先行が未知語のときと、クラスを使わない下位分布。
     unigram: Vec<f32>,
     class: Option<ClassTable>,
+    /// trigram の行を持つ bigram の番号（`next` / `num` の添字）。昇順。行の無い
+    /// bigram は λ = 1 で bigram の確率をそのまま使うので、疎に持つ。
+    tri_hist: Vec<u32>,
+    /// `tri_hist[i]` の行は `tri_next[tri_row_start[i]..tri_row_start[i + 1]]`。
+    tri_row_start: Vec<u32>,
+    tri_next: Vec<u32>,
+    /// trigram ごとの、bigram に頼らない確率の分子。
+    tri_num: Vec<f32>,
+    /// `tri_hist` ごとの、bigram の確率に掛ける重み。
+    tri_lambda: Vec<f32>,
     /// 未知語のコストの底。
     unknown_base: f64,
     unknown_char_cost: f64,
@@ -334,6 +394,8 @@ impl NgramModel {
         let mut row_start = vec![0u32; vocab + 1];
         let mut next = Vec::with_capacity(counts.bigram.len());
         let mut num = Vec::with_capacity(counts.bigram.len());
+        // 残した bigram の組と頻度。trigram の履歴の引き当てと、その頻度に使う。
+        let mut kept_pairs: Vec<((u32, u32), u64)> = Vec::new();
         // λ = 1 − Σ_kept num の分だけ下位分布に回す。刈り込んだ対の質量も下位分布に行く。
         let mut kept = vec![0f64; vocab];
         let mut last = None;
@@ -347,6 +409,9 @@ impl NgramModel {
                 "bigram id out of range"
             );
             last = Some((prev, nxt));
+            if c < params.min_bigram {
+                continue;
+            }
             let history = counts.unigram[prev as usize] as f64;
             ensure!(history >= c as f64, "bigram count exceeds unigram count");
             let p = match params.smoothing {
@@ -357,20 +422,81 @@ impl NgramModel {
             row_start[prev as usize + 1] += 1;
             next.push(nxt);
             num.push(p as f32);
+            kept_pairs.push(((prev, nxt), c));
+        }
+
+        // trigram は履歴の bigram の番号ごとにまとめる。履歴が刈り込まれていれば
+        // その trigram も落とす（質量は λ = 1 で bigram に行く）。
+        let discount3 = match params.smoothing {
+            Smoothing::Dirichlet { .. } => 0.0,
+            Smoothing::KneserNey { .. } => {
+                let d = params.trigram_discount.unwrap_or_else(|| {
+                    counts.n1_3 as f64 / (counts.n1_3 as f64 + 2.0 * counts.n2_3 as f64)
+                });
+                if params.trigram && !counts.trigram.is_empty() {
+                    ensure!(
+                        d.is_finite() && d > 0.0 && d < 1.0,
+                        "trigram discount must be in (0, 1)"
+                    );
+                }
+                d
+            }
+        };
+        let mut tri_hist: Vec<u32> = Vec::new();
+        let mut tri_row_start: Vec<u32> = vec![0];
+        let mut tri_next: Vec<u32> = Vec::new();
+        let mut tri_num: Vec<f32> = Vec::new();
+        let mut tri_lambda: Vec<f32> = Vec::new();
+        let mut last3 = None;
+        let mut kept3 = 0f64;
+        for &(p2, p, nxt, c) in counts.trigram.iter().filter(|_| params.trigram) {
+            ensure!(
+                last3.is_none_or(|l| l < (p2, p, nxt)),
+                "trigram counts must be sorted and unique"
+            );
+            ensure!((nxt as usize) < vocab, "trigram id out of range");
+            last3 = Some((p2, p, nxt));
+            if c < params.min_trigram {
+                continue;
+            }
+            let Ok(b) = kept_pairs.binary_search_by_key(&(p2, p), |&(k, _)| k) else {
+                continue;
+            };
+            let history = kept_pairs[b].1 as f64;
+            ensure!(history >= c as f64, "trigram count exceeds bigram count");
+            if tri_hist.last() != Some(&(b as u32)) {
+                if let Some(&h) = tri_hist.last() {
+                    tri_lambda.push(lambda_of(
+                        params.smoothing,
+                        kept_pairs[h as usize].1 as f64,
+                        kept3,
+                    ));
+                    tri_row_start.push(tri_next.len() as u32);
+                }
+                tri_hist.push(b as u32);
+                kept3 = 0.0;
+            }
+            let p3 = match params.smoothing {
+                Smoothing::Dirichlet { prior } => c as f64 / (history + prior),
+                Smoothing::KneserNey { .. } => (c as f64 - discount3).max(0.0) / history,
+            };
+            kept3 += p3;
+            tri_next.push(nxt);
+            tri_num.push(p3 as f32);
+        }
+        if let Some(&h) = tri_hist.last() {
+            tri_lambda.push(lambda_of(
+                params.smoothing,
+                kept_pairs[h as usize].1 as f64,
+                kept3,
+            ));
+            tri_row_start.push(tri_next.len() as u32);
         }
         for i in 0..vocab {
             row_start[i + 1] += row_start[i];
         }
         let lambda: Vec<f32> = (0..vocab)
-            .map(|w| {
-                let history = counts.unigram[w] as f64;
-                let l = match params.smoothing {
-                    Smoothing::Dirichlet { prior } => prior / (history + prior),
-                    Smoothing::KneserNey { .. } if history > 0.0 => 1.0 - kept[w],
-                    Smoothing::KneserNey { .. } => 1.0,
-                };
-                l.clamp(0.0, 1.0) as f32
-            })
+            .map(|w| lambda_of(params.smoothing, counts.unigram[w] as f64, kept[w]))
             .collect();
 
         let class = match params.lower {
@@ -398,6 +524,11 @@ impl NgramModel {
             lambda,
             unigram,
             class,
+            tri_hist,
+            tri_row_start,
+            tri_next,
+            tri_num,
+            tri_lambda,
             unknown_base: (counts.total as f64 + vocab as f64).ln(),
             unknown_char_cost: params.unknown_char_cost,
         })
@@ -426,25 +557,29 @@ impl NgramModel {
         self.class.as_ref().map_or(0, |c| c.n)
     }
 
-    fn num(&self, prev: u32, next: u32) -> f64 {
-        let row =
-            self.row_start[prev as usize] as usize..self.row_start[prev as usize + 1] as usize;
-        match self.next[row.clone()].binary_search(&next) {
-            Ok(pos) => self.num[row.start + pos] as f64,
-            Err(_) => 0.0,
-        }
+    pub fn trigram_size(&self) -> usize {
+        self.tri_next.len()
     }
 
-    /// `prev` から `next` への遷移コスト（負の対数確率）。
-    /// 未知語は `None` で表し、文字数に応じたコストを与える。
-    pub fn transition_cost(&self, prev: Option<u32>, next: Option<u32>, next_chars: usize) -> f64 {
-        let Some(next) = next else {
-            return self.unknown_base + self.unknown_char_cost * next_chars as f64;
-        };
+    /// trigram を持つか。持たなければ直前 2 語目は見ないので、呼ぶ側は
+    /// 引き当ての鍵を bigram の組に縮められる。
+    pub fn has_trigram(&self) -> bool {
+        !self.tri_next.is_empty()
+    }
+
+    /// `(prev, next)` の bigram の番号。無ければ `None`。
+    fn bigram_pos(&self, prev: u32, next: u32) -> Option<usize> {
+        let row =
+            self.row_start[prev as usize] as usize..self.row_start[prev as usize + 1] as usize;
+        self.next[row.clone()]
+            .binary_search(&next)
+            .ok()
+            .map(|pos| row.start + pos)
+    }
+
+    /// bigram の確率 `num(prev, next) + λ(prev) · low(prev, next)`。
+    fn bigram_prob(&self, prev: u32, next: u32) -> f64 {
         let uni = self.unigram[next as usize] as f64;
-        let Some(prev) = prev else {
-            return -uni.ln();
-        };
         let low = match &self.class {
             None => uni,
             Some(t) => {
@@ -455,7 +590,52 @@ impl NgramModel {
                 w * class + (1.0 - w) * uni
             }
         };
-        -(self.num(prev, next) + self.lambda[prev as usize] as f64 * low).ln()
+        let num = self
+            .bigram_pos(prev, next)
+            .map_or(0.0, |pos| self.num[pos] as f64);
+        num + self.lambda[prev as usize] as f64 * low
+    }
+
+    /// `prev` から `next` への遷移コスト（負の対数確率）。
+    /// 未知語は `None` で表し、文字数に応じたコストを与える。
+    pub fn transition_cost(&self, prev: Option<u32>, next: Option<u32>, next_chars: usize) -> f64 {
+        self.transition_cost3(None, prev, next, next_chars)
+    }
+
+    /// `prev2 prev` の後の `next` の遷移コスト。`prev2` が `None`（文脈が無い・
+    /// 未知語）か、その履歴の trigram が無ければ bigram のコストになる。
+    pub fn transition_cost3(
+        &self,
+        prev2: Option<u32>,
+        prev: Option<u32>,
+        next: Option<u32>,
+        next_chars: usize,
+    ) -> f64 {
+        let Some(next) = next else {
+            return self.unknown_base + self.unknown_char_cost * next_chars as f64;
+        };
+        let Some(prev) = prev else {
+            return -(self.unigram[next as usize] as f64).ln();
+        };
+        let bi = self.bigram_prob(prev, next);
+        let Some(row) = prev2.and_then(|p2| self.trigram_row(p2, prev)) else {
+            return -bi.ln();
+        };
+        let range = self.tri_row_start[row] as usize..self.tri_row_start[row + 1] as usize;
+        let num = match self.tri_next[range.clone()].binary_search(&next) {
+            Ok(pos) => self.tri_num[range.start + pos] as f64,
+            Err(_) => 0.0,
+        };
+        -(num + self.tri_lambda[row] as f64 * bi).ln()
+    }
+
+    /// 履歴 `(prev2, prev)` の trigram の行番号（`tri_hist` の添字）。
+    fn trigram_row(&self, prev2: u32, prev: u32) -> Option<usize> {
+        if self.tri_hist.is_empty() {
+            return None;
+        }
+        let b = self.bigram_pos(prev2, prev)? as u32;
+        self.tri_hist.binary_search(&b).ok()
     }
 
     /// zstd で包んだ固定幅リトルエンディアンの列として書く。
@@ -481,6 +661,12 @@ impl NgramModel {
                 write_f32s(&mut enc, &t.trans)?;
                 write_f32s(&mut enc, &t.word_in_class)?;
             }
+        }
+        for section in [&self.tri_hist, &self.tri_row_start, &self.tri_next] {
+            write_u32s(&mut enc, section)?;
+        }
+        for section in [&self.tri_num, &self.tri_lambda] {
+            write_f32s(&mut enc, section)?;
         }
         enc.finish().context("finish zstd")?;
         Ok(())
@@ -522,6 +708,11 @@ impl NgramModel {
                 word_in_class: read_f32s(&mut r)?,
             })
         };
+        let tri_hist = read_u32s(&mut r)?;
+        let tri_row_start = read_u32s(&mut r)?;
+        let tri_next = read_u32s(&mut r)?;
+        let tri_num = read_f32s(&mut r)?;
+        let tri_lambda = read_f32s(&mut r)?;
         ensure!(r.is_empty(), "trailing bytes in model file");
         let model = NgramModel {
             text,
@@ -533,6 +724,11 @@ impl NgramModel {
             lambda,
             unigram,
             class,
+            tri_hist,
+            tri_row_start,
+            tri_next,
+            tri_num,
+            tri_lambda,
             unknown_base,
             unknown_char_cost,
         };
@@ -578,8 +774,34 @@ impl NgramModel {
                 "class sections are inconsistent"
             );
         }
+        let rows = self.tri_hist.len();
+        ensure!(
+            self.tri_lambda.len() == rows
+                && self.tri_row_start.len() == if rows == 0 { 1 } else { rows + 1 }
+                && self.tri_row_start.windows(2).all(|w| w[0] <= w[1])
+                && *self.tri_row_start.last().unwrap_or(&0) as usize == self.tri_next.len()
+                && self.tri_next.len() == self.tri_num.len()
+                && self.tri_hist.windows(2).all(|w| w[0] < w[1])
+                && self
+                    .tri_hist
+                    .iter()
+                    .all(|&b| (b as usize) < self.next.len())
+                && self.tri_next.iter().all(|&id| (id as usize) < vocab),
+            "trigram sections are inconsistent"
+        );
         Ok(())
     }
+}
+
+/// 下位分布に掛ける重み。Dirichlet は擬似頻度の割合、Kneser-Ney は残した
+/// 分子の残り。履歴が一度も現れなければ全部を下位分布に回す。
+fn lambda_of(smoothing: Smoothing, history: f64, kept: f64) -> f32 {
+    let l = match smoothing {
+        Smoothing::Dirichlet { prior } => prior / (history + prior),
+        Smoothing::KneserNey { .. } if history > 0.0 => 1.0 - kept,
+        Smoothing::KneserNey { .. } => 1.0,
+    };
+    l.clamp(0.0, 1.0) as f32
 }
 
 /// クラス名の先頭 `fields` 欄で畳み、遷移とクラス内の語の分布を作る。
@@ -792,7 +1014,7 @@ mod tests {
                 out.push(BuildParams {
                     smoothing,
                     lower,
-                    unknown_char_cost: 4.0,
+                    ..BuildParams::default()
                 });
             }
         }
@@ -896,7 +1118,7 @@ mod tests {
                 fields: 1,
                 prior: 1.0,
             },
-            unknown_char_cost: 4.0,
+            ..BuildParams::default()
         };
         let m = NgramModel::build(&counts, &p).unwrap();
         assert_eq!(m.class_size(), 5); // <s> </s> 名詞 助詞 動詞
@@ -927,6 +1149,33 @@ mod tests {
         assert_eq!(counts.n_pred[c.vocab["鳴く"] as usize], 1);
         assert_eq!(counts.n_succ[BOS as usize], 2);
         assert!(counts.n1 > 0);
+    }
+
+    #[test]
+    fn trigram_は文頭の_2_語目から文末まで数える() {
+        let c = counter();
+        let counts = c.counts(1);
+        let (neko, ga, naku) = (c.vocab["猫"], c.vocab["が"], c.vocab["鳴く"]);
+        let find = |k: (u32, u32, u32)| {
+            counts
+                .trigram
+                .iter()
+                .find(|t| (t.0, t.1, t.2) == k)
+                .map(|t| t.3)
+        };
+        // 「猫 が 鳴く」は 2 文、「<s> 猫 が」は 3 文、「が 鳴く </s>」は 2 文。
+        assert_eq!(find((neko, ga, naku)), Some(2));
+        assert_eq!(find((BOS, neko, ga)), Some(3));
+        assert_eq!(find((ga, naku, EOS)), Some(2));
+        // (<s>, <s>, w1) は数えない。
+        assert!(counts.trigram.iter().all(|t| !(t.0 == BOS && t.1 == BOS)));
+        assert!(counts.trigram.windows(2).all(|w| w[0] < w[1]));
+        // 頻度 1 と 2 の種類数は刈り込み前で数える。
+        let pruned = c.counts_with(1, 3);
+        assert_eq!(pruned.n1_3, counts.n1_3);
+        assert_eq!(pruned.n2_3, counts.n2_3);
+        assert!(pruned.trigram.iter().all(|t| t.3 >= 3));
+        assert_eq!(pruned.trigram.len(), 1); // <s> 猫 が
     }
 
     #[test]
@@ -974,5 +1223,102 @@ mod tests {
         let mut counts = counter().counts(1);
         counts.bigram.swap(0, 1);
         assert!(NgramModel::build(&counts, &BuildParams::default()).is_err());
+        let mut counts = counter().counts(1);
+        counts.trigram.swap(0, 1);
+        assert!(NgramModel::build(&counts, &BuildParams::default()).is_err());
+    }
+
+    #[test]
+    fn 学習した_trigram_は同じ履歴の未学習の語より低く_履歴ごとの和は_1_以下() {
+        for p in all_params() {
+            let counts = counter().counts(1);
+            let m = NgramModel::build(&counts, &p).unwrap();
+            assert!(m.has_trigram(), "{p:?}");
+            let (neko, ga, naku, nemuru) = (m.id("猫"), m.id("が"), m.id("鳴く"), m.id("眠る"));
+            let (inu, ha) = (m.id("犬"), m.id("は"));
+            // 「猫 が」の後は 鳴く 2 回、眠る 1 回、吠える 0 回。
+            let c = |p2, p1, n| m.transition_cost3(p2, p1, n, 1);
+            assert!(c(neko, ga, naku) < c(neko, ga, nemuru), "{p:?}");
+            assert!(c(neko, ga, nemuru) < c(neko, ga, m.id("吠える")), "{p:?}");
+            // 「犬 が」は履歴に無いので bigram のコストに戻る。
+            assert_eq!(c(inu, ga, naku), c(None, ga, naku), "{p:?}");
+            assert!(c(None, ha, m.id("吠える")) > 0.0);
+            let vocab = counts.tokens.len() as u32;
+            for &(p2, p1, _, _) in &counts.trigram {
+                let sum: f64 = (1..vocab)
+                    .map(|n| (-c(Some(p2), Some(p1), Some(n))).exp())
+                    .sum();
+                assert!(sum < 1.0 + 1e-6, "{p:?} ({p2}, {p1}) sum={sum}");
+                if matches!(p.smoothing, Smoothing::KneserNey { .. }) {
+                    assert!(sum > 0.85, "{p:?} ({p2}, {p1}) sum={sum}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn trigram_を使わなければ直前_2_語目を見ても_bigram_と同じ() {
+        let counts = counter().counts(1);
+        let p = BuildParams {
+            trigram: false,
+            ..BuildParams::default()
+        };
+        let m = NgramModel::build(&counts, &p).unwrap();
+        assert!(!m.has_trigram());
+        assert_eq!(m.trigram_size(), 0);
+        let (neko, ga, naku) = (m.id("猫"), m.id("が"), m.id("鳴く"));
+        assert_eq!(
+            m.transition_cost3(neko, ga, naku, 1),
+            m.transition_cost(ga, naku, 1)
+        );
+    }
+
+    #[test]
+    fn 組むときの閾値で_bigram_と_trigram_を落とし_履歴の消えた_trigram_も落ちる() {
+        let counts = counter().counts(1);
+        let full = NgramModel::build(&counts, &BuildParams::default()).unwrap();
+        let p = BuildParams {
+            min_bigram: 2,
+            min_trigram: 2,
+            ..BuildParams::default()
+        };
+        let m = NgramModel::build(&counts, &p).unwrap();
+        assert!(m.bigram_size() < full.bigram_size());
+        assert!(m.trigram_size() < full.trigram_size());
+        // 「犬 は」は 1 回なので bigram ごと落ち、(犬, は, 吠える) は頻度 1 でも 3 でも載らない。
+        let p = BuildParams {
+            min_bigram: 2,
+            min_trigram: 1,
+            ..BuildParams::default()
+        };
+        let m = NgramModel::build(&counts, &p).unwrap();
+        let (inu, ha, hoeru) = (m.id("犬"), m.id("は"), m.id("吠える"));
+        assert_eq!(
+            m.transition_cost3(inu, ha, hoeru, 1),
+            m.transition_cost(ha, hoeru, 1)
+        );
+        // 履歴ごとの和は刈り込んでも 1 を超えない。
+        let vocab = counts.tokens.len() as u32;
+        for &(p2, p1, _, _) in &counts.trigram {
+            let sum: f64 = (1..vocab)
+                .map(|n| (-m.transition_cost3(Some(p2), Some(p1), Some(n), 1)).exp())
+                .sum();
+            assert!(sum < 1.0 + 1e-6, "({p2}, {p1}) sum={sum}");
+        }
+    }
+
+    #[test]
+    fn trigram_も保存して読み直せる() {
+        for p in all_params() {
+            let m = NgramModel::build(&counter().counts(1), &p).unwrap();
+            let mut buf = Vec::new();
+            m.save(&mut buf).unwrap();
+            let m2 = NgramModel::load(buf.as_slice()).unwrap();
+            assert_eq!(m2.trigram_size(), m.trigram_size());
+            assert_eq!(
+                m2.transition_cost3(m2.id("猫"), m2.id("が"), m2.id("鳴く"), 1),
+                m.transition_cost3(m.id("猫"), m.id("が"), m.id("鳴く"), 1)
+            );
+        }
     }
 }
