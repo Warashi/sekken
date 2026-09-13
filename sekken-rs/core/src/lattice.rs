@@ -104,6 +104,9 @@ impl Lattice {
 /// 文頭・文末を表す表層形の番号。
 const EDGE: u32 = u32::MAX;
 
+/// (左の 2 つ前の番号, 左の番号, 右の番号) → 接続コスト。
+type ConnectCache = HashMap<(u32, u32, u32), f64, BuildHasherDefault<IdHasher>>;
+
 /// 1 つの格子に対する探索の場。表層形を番号で扱い、スコアラーの結果を
 /// 番号で覚える。1 セグメントごとに候補数 × ビーム幅の接続コストを引くので、
 /// 文字列を鍵にすると引く時間が探索の時間を決めてしまう。
@@ -116,8 +119,10 @@ pub struct Search<'a> {
     surfaces: Vec<&'a str>,
     /// 候補ごとの unigram に順位とかなのコストを足したもの。
     unigram: Vec<Vec<f64>>,
-    /// (左の番号, 右の番号) → 接続コスト。文頭・文末は `EDGE`。
-    bigram: RefCell<HashMap<(u32, u32), f64, BuildHasherDefault<IdHasher>>>,
+    /// (左の 2 つ前の番号, 左の番号, 右の番号) → 接続コスト。文頭・文末は `EDGE`。
+    /// スコアラーが 2 つ前を見なければ、2 つ前は常に `EDGE` にして組で覚える。
+    connect: RefCell<ConnectCache>,
+    uses_left2: bool,
     /// 候補が消費するセグメント数の最大。
     max_span: usize,
 }
@@ -158,7 +163,8 @@ impl<'a> Search<'a> {
             ids,
             surfaces,
             unigram,
-            bigram: RefCell::new(HashMap::default()),
+            connect: RefCell::new(HashMap::default()),
+            uses_left2: scorer.uses_left2(),
             max_span,
         }
     }
@@ -201,7 +207,7 @@ impl<'a> Search<'a> {
                     if !constraint.allows(len, &cand.surface) {
                         continue;
                     }
-                    let cost = nodes[node].cost + uni + self.bigram(nodes[node].id, id);
+                    let cost = nodes[node].cost + uni + self.connect(&nodes, node, id);
                     nodes.push(Node {
                         cost,
                         len: len + 1,
@@ -221,7 +227,7 @@ impl<'a> Search<'a> {
 
         let mut finals = std::mem::take(&mut paths[n]);
         for &node in &finals {
-            let extra = self.bigram(nodes[node].id, EDGE);
+            let extra = self.connect(&nodes, node, EDGE);
             nodes[node].cost += extra;
         }
         prune(&nodes, &mut finals, top_n);
@@ -231,13 +237,25 @@ impl<'a> Search<'a> {
             .collect()
     }
 
-    /// 表層形 `left` から `right` への接続コスト。`EDGE` は文頭・文末。
-    fn bigram(&self, left: u32, right: u32) -> f64 {
-        if let Some(&c) = self.bigram.borrow().get(&(left, right)) {
+    /// 経路の末尾の節 `node` から表層形 `right` への接続コスト。`EDGE` は文末。
+    /// 根の番号は `EDGE` で文頭を表し、根の親は根なので 2 つ前も `EDGE` になる。
+    fn connect(&self, nodes: &[Node], node: usize, right: u32) -> f64 {
+        let left = nodes[node].id;
+        let left2 = if self.uses_left2 {
+            nodes[nodes[node].parent].id
+        } else {
+            EDGE
+        };
+        if let Some(&c) = self.connect.borrow().get(&(left2, left, right)) {
             return c;
         }
-        let c = self.scorer.bigram(self.surface(left), self.surface(right));
-        self.bigram.borrow_mut().insert((left, right), c);
+        let c = if self.uses_left2 {
+            self.scorer
+                .trigram(self.surface(left2), self.surface(left), self.surface(right))
+        } else {
+            self.scorer.bigram(self.surface(left), self.surface(right))
+        };
+        self.connect.borrow_mut().insert((left2, left, right), c);
         c
     }
 
@@ -419,6 +437,68 @@ mod tests {
             bi: HashMap::from([(("書", "く"), 5.0), (("か", "く"), 0.5)]),
         };
         assert_eq!(lattice.nbest(&scorer, 1)[0].surfaces, ["か", "く"]);
+    }
+
+    /// 2 つ前の表層形も見るスコアラー。`tri` に無い組は `bi` に落ちる。
+    struct TriScorer {
+        bi: HashMap<(&'static str, &'static str), f64>,
+        tri: HashMap<(&'static str, &'static str, &'static str), f64>,
+    }
+
+    impl Scorer for TriScorer {
+        fn unigram(&self, _: &str) -> f64 {
+            0.0
+        }
+        fn bigram(&self, l: Option<&str>, r: Option<&str>) -> f64 {
+            *self
+                .bi
+                .get(&(l.unwrap_or(""), r.unwrap_or("")))
+                .unwrap_or(&0.0)
+        }
+        fn trigram(&self, l2: Option<&str>, l: Option<&str>, r: Option<&str>) -> f64 {
+            match self
+                .tri
+                .get(&(l2.unwrap_or(""), l.unwrap_or(""), r.unwrap_or("")))
+            {
+                Some(&c) => c,
+                None => self.bigram(l, r),
+            }
+        }
+        fn uses_left2(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn 二つ前の表層形で接続コストが変わる() {
+        // 「東京 都 民」は 都 → 民 だけ見ると 都 → 見 より高いが、東京 都 の後なら低い。
+        let lattice = Lattice {
+            weights: Weights::default(),
+            candidates: vec![
+                vec![cand("東京", 1), cand("京", 1)],
+                vec![cand("都", 1)],
+                vec![cand("民", 1), cand("見", 1)],
+            ],
+        };
+        let bi = HashMap::from([
+            (("都", "民"), 2.0),
+            (("都", "見"), 1.5),
+            (("", "東京"), 1.0),
+        ]);
+        let tri = HashMap::from([(("東京", "都", "民"), 0.0), (("", "東京", "都"), 0.0)]);
+        let bigram_only = TriScorer {
+            bi: bi.clone(),
+            tri: HashMap::new(),
+        };
+        let r = lattice.nbest(&bigram_only, 1);
+        assert_eq!(r[0].surfaces, ["京", "都", "見"]);
+        let trigram = TriScorer { bi, tri };
+        let r = lattice.nbest(&trigram, 2);
+        assert_eq!(r[0].surfaces, ["東京", "都", "民"]);
+        assert_eq!(r[0].cost, 1.0);
+        // 文頭の表層形は 2 つ前が無い。
+        assert_eq!(r[1].surfaces, ["京", "都", "見"]);
+        assert_eq!(r[1].cost, 1.5);
     }
 
     #[test]
