@@ -104,11 +104,11 @@ impl<S: Segmenter> NgramScorer<S> {
             .transition_cost3(prev2.and_then(Ctx::id), prev.id(), next_id, chars)
     }
 
-    /// 表層形の末尾 2 語。1 語なら前の方は `None`。
+    /// 表層形の末尾 2 語。1 語なら前の方は `None`、語が無ければ `None`。
     /// `with_words` は覚えた列を借りたまま閉包を呼ぶので、入れ子にせず複製して返す。
-    fn last_two(&self, surface: &str) -> (Option<Word>, Word) {
+    fn last_two(&self, surface: &str) -> Option<(Option<Word>, Word)> {
         self.with_words(surface, |w| {
-            (w.len().checked_sub(2).map(|i| w[i]), w[w.len() - 1])
+            Some((w.len().checked_sub(2).map(|i| w[i]), *w.last()?))
         })
     }
 
@@ -120,15 +120,15 @@ impl<S: Segmenter> NgramScorer<S> {
     /// 表層形の境界をまたぐ遷移のコスト。右の先頭の語は左の末尾 2 語を、右の 2 語目は
     /// 左の末尾の語と右の先頭の語を文脈にするので、右の 2 語目までがここに入る。
     fn boundary(&self, left2: Option<&str>, left: Option<&str>, right: Option<&str>) -> f64 {
-        let (prev2, prev) = match left {
+        // 左に語が無い（分かち書きが空）ことは無いはずだが、あれば文頭とみなす。
+        let (prev2, prev) = match left.and_then(|l| self.last_two(l)) {
             None => (None, Ctx::Bos),
-            Some(l) => {
-                let (second_last, last) = self.last_two(l);
+            Some((second_last, last)) => {
                 let prev2 = match second_last {
                     Some(w) => Ctx::Word(w),
-                    None => match left2 {
+                    None => match left2.and_then(|l2| self.last_two(l2)) {
                         None => Ctx::Bos,
-                        Some(l2) => Ctx::Word(self.last_two(l2).1),
+                        Some((_, w)) => Ctx::Word(w),
                     },
                 };
                 (Some(prev2), Ctx::Word(last))
