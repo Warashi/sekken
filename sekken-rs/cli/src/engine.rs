@@ -26,21 +26,21 @@ pub struct EngineArgs {
     /// SKK 辞書（SKK-JISYO.L など）
     #[arg(long)]
     pub jisyo: PathBuf,
-    /// N-best を並べ替える文字言語モデル（train-lm の出力）。無ければ並べ替えない
+    /// 候補を採点する文字言語モデル（train-lm の出力）。無ければ格子の順のまま
     #[arg(long)]
     pub lm: Option<PathBuf>,
     /// 言語モデルのコストに掛ける重み
     #[arg(long, default_value_t = 1.0)]
     pub lm_weight: f64,
-    /// 並べ替える N-best の本数
+    /// 言語モデルの提案で格子を再探索する回数の上限。0 なら再探索せず N-best を並べ替える
+    #[arg(long, default_value_t = 3)]
+    pub spec_rounds: usize,
+    /// 提案の制約で再探索して採点する経路の本数
+    #[arg(long, default_value_t = 5)]
+    pub spec_width: usize,
+    /// --spec-rounds 0 のとき、並べ替える N-best の本数
     #[arg(long, default_value_t = 20)]
     pub rerank_width: usize,
-    /// 並べ替えの代わりに、言語モデルの提案で格子を再探索する回数の上限
-    #[arg(long)]
-    pub spec_rounds: Option<usize>,
-    /// 提案の制約で再探索して採点する経路の本数
-    #[arg(long, default_value_t = 1)]
-    pub spec_width: usize,
     /// 辞書での候補順位の対数に掛ける重み
     #[arg(long, default_value_t = sekken_core::lattice::RANK_WEIGHT)]
     pub rank_weight: f64,
@@ -71,23 +71,20 @@ impl EngineArgs {
                 saved.condition
             );
             let scorer = LmScorer::new(infer, saved.vocab, saved.condition);
-            match self.spec_rounds {
-                Some(rounds) => {
-                    speculator = Some(Speculator {
-                        verifier: Box::new(scorer),
-                        weight: self.lm_weight,
-                        rounds,
-                        width: self.spec_width,
-                        stats: Default::default(),
-                    })
-                }
-                None => {
-                    reranker = Some(Reranker {
-                        scorer: Box::new(scorer),
-                        weight: self.lm_weight,
-                        width: self.rerank_width,
-                    })
-                }
+            if self.spec_rounds > 0 {
+                speculator = Some(Speculator {
+                    verifier: Box::new(scorer),
+                    weight: self.lm_weight,
+                    rounds: self.spec_rounds,
+                    width: self.spec_width,
+                    stats: Default::default(),
+                })
+            } else {
+                reranker = Some(Reranker {
+                    scorer: Box::new(scorer),
+                    weight: self.lm_weight,
+                    width: self.rerank_width,
+                })
             }
         }
         Ok(Sekken {
