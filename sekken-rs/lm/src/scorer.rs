@@ -16,7 +16,6 @@
 
 use std::cell::RefCell;
 
-use sekken_core::kana::KanaTable;
 use sekken_core::rerank::SentenceScorer;
 
 use crate::condition::Condition;
@@ -30,7 +29,6 @@ pub struct LmScorer {
     vocab: Vocab,
     /// 「入力 \t 出力」で学習したモデルなら、採点する文に前置する入力の種類。
     condition: Condition,
-    table: KanaTable,
     /// 直前の入力側の読み。
     prefix: RefCell<Option<PrefixCache>>,
     /// 直前の変換で読んだ候補の節と、その入力側の id 列。
@@ -79,7 +77,6 @@ impl LmScorer {
             infer,
             vocab,
             condition,
-            table: KanaTable::default_table(),
             prefix: RefCell::new(None),
             carried: RefCell::new(None),
         }
@@ -97,7 +94,7 @@ impl LmScorer {
     /// 入力側の id 列。条件付きなら BOS、前置する入力、`\t`。無条件なら BOS だけ。
     fn prefix_ids(&self, input: &str) -> Vec<u32> {
         let mut ids = vec![BOS];
-        if let Some(prefix) = self.condition.prefix(&self.table, input) {
+        if let Some(prefix) = self.condition.prefix(input) {
             ids.extend(prefix.chars().map(|c| self.vocab.id(c)));
             ids.push(self.vocab.id('\t'));
         }
@@ -116,7 +113,7 @@ impl LmScorer {
             scorer: self,
             session,
             prefix,
-            reading: self.condition.interleaved_reading(&self.table, input),
+            reading: self.condition.interleaved_reading(input),
         }
     }
 
@@ -336,25 +333,25 @@ pub(crate) mod tests {
 
     #[test]
     fn 条件付きなら入力を前置して出力側だけのコストになる() {
-        let vocab = Vocab::build(["猫が鳴く\tneko"], 1);
-        let s = scorer_with(vocab.clone(), Condition::Roman);
-        // 「neko \t 猫」を 1 本で読み、\t の後だけを数えた値と一致する。
+        let vocab = Vocab::build(["猫が鳴く\tネコ"], 1);
+        let s = scorer_with(vocab.clone(), Condition::Katakana);
+        // 「ネコ \t 猫」を 1 本で読み、\t の後だけを数えた値と一致する。
         let mut prefix = vec![BOS];
-        prefix.extend(ids(&vocab, "neko\t"));
+        prefix.extend(ids(&vocab, "ネコ\t"));
         let expected = reference(&s, &prefix, &ids(&vocab, "猫"));
-        let cost = s.costs("neko", &["猫".to_string()])[0];
+        let cost = s.costs("ねこ", &["猫".to_string()])[0];
         assert!((cost - expected).abs() < 1e-4);
         assert_ne!(cost, s.costs("", &["猫".to_string()])[0]);
     }
 
     #[test]
-    fn カタカナ読みの条件付きはローマ字入力をカタカナにして前置する() {
+    fn カタカナ読みの条件付きは読みをカタカナにして前置する() {
         let vocab = Vocab::build(["猫が鳴く\tネコガナク"], 1);
         let s = scorer_with(vocab.clone(), Condition::Katakana);
         let mut prefix = vec![BOS];
         prefix.extend(ids(&vocab, "ネコガナク\t"));
         let expected = reference(&s, &prefix, &ids(&vocab, "猫が鳴く"));
-        let cost = s.costs("NekogaNaku", &["猫が鳴く".to_string()])[0];
+        let cost = s.costs("ねこがなく", &["猫が鳴く".to_string()])[0];
         assert!((cost - expected).abs() < 1e-4);
     }
 
@@ -390,19 +387,19 @@ pub(crate) mod tests {
     fn 交互形のコストは読みを区間に挟んだ列の出力側だけの値と一致する() {
         let vocab = Vocab::build(["猫が鳴く\tネコガナク\u{1e}"], 1);
         let s = scorer_with(vocab, Condition::Interleaved);
-        let cost = s.costs("NekogaNaku", &["猫が鳴く".to_string()])[0];
+        let cost = s.costs("ねこがなく", &["猫が鳴く".to_string()])[0];
         let line = "\u{1e}ネコガ\t猫が\u{1e}ナク\t鳴く";
         let (expected, _) = reference_interleaved(&s, line);
         assert!((cost - expected).abs() < 1e-4, "{cost} vs {expected}");
         // 読みが違えばコストも変わる。
-        assert_ne!(cost, s.costs("InugaNaku", &["猫が鳴く".to_string()])[0]);
+        assert_ne!(cost, s.costs("いぬがなく", &["猫が鳴く".to_string()])[0]);
     }
 
     #[test]
     fn 交互形の字の問い合わせは出力の字の位置で引く() {
         let vocab = Vocab::build(["猫が鳴く\tネコガナク\u{1e}"], 1);
         let s = scorer_with(vocab.clone(), Condition::Interleaved);
-        let mut scoring = s.begin("NekogaNaku");
+        let mut scoring = s.begin("ねこがなく");
         let scored = scoring.score(&["猫が鳴く".to_string()]);
         let line = "\u{1e}ネコガ\t猫が\u{1e}ナク\t鳴く";
         let (_, per_char) = reference_interleaved(&s, line);
@@ -471,7 +468,7 @@ pub(crate) mod tests {
         let fresh = scorer_with(vocab, Condition::Katakana);
         let sentence = ["猫が鳴く".to_string()];
         // 1 字ずつ伸ばす。2 回目以降は直前の延長になる。
-        for input in ["Ne", "Neko", "Nekoga", "NekogaNa", "NekogaNaku"] {
+        for input in ["ね", "ねこ", "ねこが", "ねこがな", "ねこがなく"] {
             assert_eq!(
                 s.costs(input, &sentence),
                 fresh.costs(input, &sentence),
@@ -479,7 +476,7 @@ pub(crate) mod tests {
             );
         }
         // 延長でない入力も、短くなる入力も、最初から読む。
-        for input in ["Inu", "Ne", "NekogaNaku"] {
+        for input in ["いぬ", "ね", "ねこがなく"] {
             assert_eq!(
                 s.costs(input, &sentence),
                 fresh.costs(input, &sentence),
@@ -495,14 +492,14 @@ pub(crate) mod tests {
         let fresh = scorer_with(vocab, Condition::Interleaved);
         // 1 字ずつ伸ばす。先頭の区間の列は変わらないので持ち越した節を通る。
         let steps = [
-            ("Neko", vec!["猫"]),
-            ("Nekoga", vec!["猫が", "猫"]),
-            ("NekogaNa", vec!["猫が", "猫がな"]),
-            ("NekogaNaku", vec!["猫が鳴く", "猫がなく", "猫が"]),
-            ("NekogaNakuInu", vec!["猫が鳴く犬", "猫が鳴く", "猫が"]),
+            ("ねこ", vec!["猫"]),
+            ("ねこが", vec!["猫が", "猫"]),
+            ("ねこがな", vec!["猫が", "猫がな"]),
+            ("ねこがなく", vec!["猫が鳴く", "猫がなく", "猫が"]),
+            ("ねこがなくいぬ", vec!["猫が鳴く犬", "猫が鳴く", "猫が"]),
             // 短くなっても、別の入力でも同じ。
-            ("Nekoga", vec!["猫が"]),
-            ("Inu", vec!["犬"]),
+            ("ねこが", vec!["猫が"]),
+            ("いぬ", vec!["犬"]),
         ];
         for (input, sentences) in steps {
             let sentences: Vec<String> = sentences.iter().map(|s| s.to_string()).collect();

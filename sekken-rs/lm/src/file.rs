@@ -2,7 +2,7 @@
 
 use std::io::{Read, Write};
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::condition::Condition;
@@ -34,23 +34,27 @@ struct Trailer2 {
     condition: Condition,
 }
 
-/// 本体の後ろの欄から条件の種類を読む。欄が無ければ無条件、
-/// `Trailer1` までなら条件付きはローマ字入力（追加の欄より前の形式）。
+/// 本体の後ろの欄から条件の種類を読む。欄が無ければ無条件。
+/// `Trailer1` までの旧形式で条件付きなのはローマ字入力で、エンジンが綴りを
+/// 受け取らなくなった今は採点できないので、読み込みで拒む。
 fn read_condition(rest: &[u8]) -> Result<Condition> {
     if rest.is_empty() {
         return Ok(Condition::None);
     }
     let (trailer1, rest): (Trailer1, &[u8]) =
         postcard::take_from_bytes(rest).context("deserialize lm trailer")?;
-    if !rest.is_empty() {
+    let condition = if !rest.is_empty() {
         let trailer2: Trailer2 = postcard::from_bytes(rest).context("deserialize lm trailer")?;
-        return Ok(trailer2.condition);
-    }
-    Ok(if trailer1.conditional {
+        trailer2.condition
+    } else if trailer1.conditional {
         Condition::Roman
     } else {
         Condition::None
-    })
+    };
+    if condition == Condition::Roman {
+        bail!("lm conditioned on roman input is no longer supported; retrain with katakana or interleaved reading");
+    }
+    Ok(condition)
 }
 
 impl SavedModel {
@@ -160,7 +164,7 @@ mod tests {
     }
 
     #[test]
-    fn 追加の欄が_1_つだけの旧ファイルはローマ字入力の条件付きとして読む() {
+    fn ローマ字入力の条件付きの旧ファイルは拒む() {
         let vocab = Vocab::build(["猫犬"], 1);
         let saved = SavedModel {
             config: ModelConfig {
@@ -178,8 +182,11 @@ mod tests {
         };
         let mut body = postcard::to_stdvec(&saved).unwrap();
         body.extend(postcard::to_stdvec(&Trailer1 { conditional: true }).unwrap());
-        let loaded = SavedModel::load(zstd_wrap(body).as_slice()).unwrap();
-        assert_eq!(loaded.condition, Condition::Roman);
+        let err = match SavedModel::load(zstd_wrap(body).as_slice()) {
+            Ok(_) => panic!("old roman-conditioned file must be rejected"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("roman"), "{err}");
     }
 
     fn zstd_wrap(body: Vec<u8>) -> Vec<u8> {

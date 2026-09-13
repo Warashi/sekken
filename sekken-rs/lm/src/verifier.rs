@@ -129,13 +129,13 @@ mod tests {
 
     #[test]
     fn 条件付きなら文の位置は入力の分だけ後ろの行を読む() {
-        let vocab = Vocab::build(["猫が鳴く\tneko"], 1);
+        let vocab = Vocab::build(["猫が鳴く\tネコ"], 1);
         let plain = scorer_with(vocab.clone(), Condition::None);
-        // 無条件の採点器に「neko\t猫」を渡し、位置 5（タブの次）に「猫」を置くコスト。
-        let raw = verify(&plain, "", &["neko\t猫".to_string()], &[vec![(5, '猫')]]);
+        // 無条件の採点器に「ネコ\t猫」を渡し、位置 3（タブの次）に「猫」を置くコスト。
+        let raw = verify(&plain, "", &["ネコ\t猫".to_string()], &[vec![(3, '猫')]]);
         // 別の重みになるので、同じ採点器を条件付きとして使う。
-        let cond = LmScorer::new(plain.into_infer(), vocab, Condition::Roman);
-        let v = verify(&cond, "neko", &["猫".to_string()], &[vec![(0, '猫')]]);
+        let cond = LmScorer::new(plain.into_infer(), vocab, Condition::Katakana);
+        let v = verify(&cond, "ねこ", &["猫".to_string()], &[vec![(0, '猫')]]);
         assert!((v[0].char_costs[0] - raw[0].char_costs[0]).abs() < 1e-4);
         // 文全体のコストは出力側（猫 と EOS）だけで、全体より小さい。
         assert!(v[0].cost < raw[0].cost);
