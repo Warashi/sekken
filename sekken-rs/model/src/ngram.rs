@@ -93,6 +93,19 @@ pub struct BuildParams {
     /// trigram の Kneser-Ney の割引。`None` なら `n1_3 / (n1_3 + 2 n2_3)` で見積もる。
     /// Dirichlet では bigram と同じ prior を使う。
     pub trigram_discount: Option<f64>,
+    /// 語の遷移コストに常に足す品詞クラスの遷移コスト。`None` なら足さない。
+    pub class_feature: Option<ClassFeature>,
+}
+
+/// 語の n-gram のコストに `weight · (−ln P(class(next) | class(prev)))` を常に足す素性。
+/// 下位分布への backoff（`Lower::Class`）と違い、語の bigram が既知でも掛かる。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClassFeature {
+    /// クラス名の先頭から使う欄の数。`Lower::Class` / `Mixed` と併用するなら同じ値。
+    pub fields: usize,
+    /// クラス遷移の加算平滑化。
+    pub prior: f64,
+    pub weight: f64,
 }
 
 impl Default for BuildParams {
@@ -107,6 +120,7 @@ impl Default for BuildParams {
             min_trigram: 1,
             trigram: true,
             trigram_discount: None,
+            class_feature: None,
         }
     }
 }
@@ -293,8 +307,11 @@ pub fn majority_class(
 struct ClassTable {
     class_of: Vec<u32>,
     n: usize,
-    /// クラスの分布に掛ける重み。残りは unigram に掛ける。1 ならクラスだけ。
+    /// クラスの分布に掛ける重み。残りは unigram に掛ける。1 ならクラスだけ、
+    /// 0 なら下位分布には使わない（素性だけ）。
     weight: f32,
+    /// 語の遷移コストに常に足すクラス遷移コストの重み。0 なら足さない。
+    feature: f32,
     /// `P(next_class | prev_class)`。`n × n` の行優先。
     trans: Vec<f32>,
     /// `P(word | class_of(word))`。
@@ -499,9 +516,10 @@ impl NgramModel {
             .map(|w| lambda_of(params.smoothing, counts.unigram[w] as f64, kept[w]))
             .collect();
 
-        let class = match params.lower {
+        // 下位分布の混合の重みと欄の数。素性と併用するなら欄は揃える。
+        let lower = match params.lower {
             Lower::Unigram => None,
-            Lower::Class { fields, prior } => Some(build_class_table(counts, fields, prior, 1.0)?),
+            Lower::Class { fields, prior } => Some((fields, prior, 1.0)),
             Lower::Mixed {
                 fields,
                 prior,
@@ -511,7 +529,25 @@ impl NgramModel {
                     (0.0..=1.0).contains(&weight),
                     "mix weight must be in [0, 1]"
                 );
-                Some(build_class_table(counts, fields, prior, weight)?)
+                Some((fields, prior, weight))
+            }
+        };
+        let class = match (lower, params.class_feature) {
+            (None, None) => None,
+            (Some((fields, prior, weight)), None) => {
+                Some(build_class_table(counts, fields, prior, weight, 0.0)?)
+            }
+            (None, Some(f)) => {
+                ensure!(f.weight >= 0.0, "class feature weight must not be negative");
+                Some(build_class_table(counts, f.fields, f.prior, 0.0, f.weight)?)
+            }
+            (Some((fields, prior, weight)), Some(f)) => {
+                ensure!(
+                    fields == f.fields && prior == f.prior,
+                    "class feature must use the same fields and prior as the lower distribution"
+                );
+                ensure!(f.weight >= 0.0, "class feature weight must not be negative");
+                Some(build_class_table(counts, fields, prior, weight, f.weight)?)
             }
         };
         Ok(NgramModel {
@@ -618,15 +654,29 @@ impl NgramModel {
             return -(self.unigram[next as usize] as f64).ln();
         };
         let bi = self.bigram_prob(prev, next);
-        let Some(row) = prev2.and_then(|p2| self.trigram_row(p2, prev)) else {
-            return -bi.ln();
+        let word = match prev2.and_then(|p2| self.trigram_row(p2, prev)) {
+            None => -bi.ln(),
+            Some(row) => {
+                let range = self.tri_row_start[row] as usize..self.tri_row_start[row + 1] as usize;
+                let num = match self.tri_next[range.clone()].binary_search(&next) {
+                    Ok(pos) => self.tri_num[range.start + pos] as f64,
+                    Err(_) => 0.0,
+                };
+                -(num + self.tri_lambda[row] as f64 * bi).ln()
+            }
         };
-        let range = self.tri_row_start[row] as usize..self.tri_row_start[row + 1] as usize;
-        let num = match self.tri_next[range.clone()].binary_search(&next) {
-            Ok(pos) => self.tri_num[range.start + pos] as f64,
-            Err(_) => 0.0,
-        };
-        -(num + self.tri_lambda[row] as f64 * bi).ln()
+        word + self.class_feature_cost(prev, next)
+    }
+
+    /// 語のコストに常に足す品詞クラスの遷移コスト。素性を使わなければ 0。
+    fn class_feature_cost(&self, prev: u32, next: u32) -> f64 {
+        match &self.class {
+            Some(t) if t.feature > 0.0 => {
+                let (pc, nc) = (t.class_of[prev as usize], t.class_of[next as usize]);
+                -(t.feature as f64) * (t.trans[pc as usize * t.n + nc as usize] as f64).ln()
+            }
+            _ => 0.0,
+        }
     }
 
     /// 履歴 `(prev2, prev)` の trigram の行番号（`tri_hist` の添字）。
@@ -657,6 +707,7 @@ impl NgramModel {
             Some(t) => {
                 enc.write_all(&(t.n as u32).to_le_bytes())?;
                 enc.write_all(&t.weight.to_le_bytes())?;
+                enc.write_all(&t.feature.to_le_bytes())?;
                 write_u32s(&mut enc, &t.class_of)?;
                 write_f32s(&mut enc, &t.trans)?;
                 write_f32s(&mut enc, &t.word_in_class)?;
@@ -702,6 +753,7 @@ impl NgramModel {
         } else {
             Some(ClassTable {
                 weight: f32::from_bits(read_u32(&mut r)?),
+                feature: f32::from_bits(read_u32(&mut r)?),
                 class_of: read_u32s(&mut r)?,
                 n,
                 trans: read_f32s(&mut r)?,
@@ -810,6 +862,7 @@ fn build_class_table(
     fields: usize,
     prior: f64,
     weight: f64,
+    feature: f64,
 ) -> Result<ClassTable> {
     ensure!(fields >= 1, "class must use at least one field");
     ensure!(prior > 0.0, "class prior must be positive");
@@ -883,6 +936,7 @@ fn build_class_table(
         class_of,
         n,
         weight: weight as f32,
+        feature: feature as f32,
         trans,
         word_in_class,
     })
@@ -1126,6 +1180,52 @@ mod tests {
         // 助詞 → 動詞 の遷移がある分だけ「眠る」が有利。
         let ha = m.id("は");
         assert!(m.transition_cost(ha, m.id("眠る"), 1) < m.transition_cost(ha, m.id("猫"), 1));
+    }
+
+    #[test]
+    fn クラス遷移の素性は語の_bigram_が既知でも常に足され_重み_0_なら何も変えない() {
+        let counts = counter().counts(1);
+        let base = NgramModel::build(&counts, &BuildParams::default()).unwrap();
+        let feature = |weight: f64| {
+            NgramModel::build(
+                &counts,
+                &BuildParams {
+                    class_feature: Some(ClassFeature {
+                        fields: 1,
+                        prior: 1.0,
+                        weight,
+                    }),
+                    ..BuildParams::default()
+                },
+            )
+            .unwrap()
+        };
+        let m = feature(0.5);
+        assert_eq!(m.class_size(), 5);
+        let (neko, ga, naku) = (m.id("猫"), m.id("が"), m.id("鳴く"));
+        // 既知の bigram 猫 → が にも 名詞 → 助詞 の遷移コストが重み分だけ乗る。
+        let word = base.transition_cost(neko, ga, 1);
+        let with = m.transition_cost(neko, ga, 1);
+        assert!(with > word, "{with} vs {word}");
+        // 素性の重みを倍にすると上乗せも倍。
+        let with2 = feature(1.0).transition_cost(neko, ga, 1);
+        assert!(((with2 - word) - 2.0 * (with - word)).abs() < 1e-6);
+        // trigram の上にも同じ上乗せが乗る。
+        let tri = m.transition_cost3(neko, ga, naku, 1) - base.transition_cost3(neko, ga, naku, 1);
+        let bi = m.transition_cost(ga, naku, 1) - base.transition_cost(ga, naku, 1);
+        assert!((tri - bi).abs() < 1e-6, "{tri} vs {bi}");
+        // 重み 0 では下位分布も unigram のままで、コストは変わらない。
+        let zero = feature(0.0);
+        assert_eq!(zero.transition_cost(neko, ga, 1), word);
+        assert_eq!(
+            zero.transition_cost(m.id("は"), m.id("眠る"), 1),
+            base.transition_cost(m.id("は"), m.id("眠る"), 1)
+        );
+        // 保存して読み直しても同じ。
+        let mut buf = Vec::new();
+        m.save(&mut buf).unwrap();
+        let m2 = NgramModel::load(buf.as_slice()).unwrap();
+        assert_eq!(m2.transition_cost(neko, ga, 1), with);
     }
 
     #[test]
