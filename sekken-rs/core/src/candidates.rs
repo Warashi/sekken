@@ -1,14 +1,15 @@
-//! セグメントごとの変換候補の生成。
+//! 区間ごとの変換候補の生成。
 
 use crate::dictionary::Dictionary;
-use crate::kana::{KanaTable, hira2kata};
+use crate::input::{Kind, Piece};
+use crate::kana::hira2kata;
 
-/// 1 つのセグメント位置から始まる変換候補。
+/// 1 つの区間位置から始まる変換候補。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     /// 変換後の表層形。
     pub surface: String,
-    /// 消費するセグメント数。送りありで次のセグメントを使うときは 2。
+    /// 消費する区間数。送りありで次の区間を使うときは 2。
     pub span: usize,
     /// 辞書での候補の順位（0 始まり）。かな候補は 0。
     pub rank: usize,
@@ -36,79 +37,133 @@ impl Candidate {
     }
 }
 
-/// セグメントを「読みになるローマ字」と「末尾の記号」に分ける。
-/// 途中の記号（`ta-getto` の `-` → ー）は読みの一部なので末尾だけを見る。
-fn split_trailing_symbols(segment: &str) -> (&str, &str) {
-    let roman = segment.trim_end_matches(|c: char| !c.is_ascii_lowercase() && c != '\'');
-    segment.split_at(roman.len())
+fn is_hiragana(c: char) -> bool {
+    matches!(c as u32, 0x3041..=0x3096)
 }
 
-/// 送り仮名のローマ字から、SKK の送りあり見出しに付ける子音を取り出す。
-/// `xtuta` のように っ を単独で綴った送り仮名は、見出しでは った の t で
-/// 引く（`とt`）ので、っ の綴りを飛ばした先の文字を使う。子音 1 文字も
-/// 表では っ に写る（`k` → っ）が、それは送り仮名の頭そのものなので飛ばさない。
-/// っ 単独に写る綴りは `xtsu` の 4 文字までなので、それより先は見ない。
-fn okuri_consonant(table: &KanaTable, okuri_roman: &str) -> Option<char> {
-    let after_sokuon = (2..=okuri_roman.len().min(4))
-        .filter(|&n| okuri_roman.is_char_boundary(n))
-        .find(|&n| table.roman2kana(&okuri_roman[..n]) == "っ")
-        .map_or(okuri_roman, |n| &okuri_roman[n..]);
-    after_sokuon.chars().next()
+/// 読みの途中に置けない字（きゃ の ゃ）。
+fn is_small_kana(c: char) -> bool {
+    matches!(c, 'ぁ' | 'ぃ' | 'ぅ' | 'ぇ' | 'ぉ' | 'ゃ' | 'ゅ' | 'ょ' | 'ゎ')
 }
 
-/// 位置 `index` のセグメントから始まる候補をすべて列挙する。
+/// 区間を「読みになるかな」と「末尾の記号」に分ける。
+/// 途中の記号（ターゲット の ー）は読みの一部なので末尾だけを見る。
+/// 打ち終えていない綴りの英字（か + k）は読みの側に残す。
+fn split_trailing_symbols(text: &str) -> (&str, &str) {
+    let reading = text.trim_end_matches(|c: char| !is_hiragana(c) && !c.is_ascii_lowercase());
+    text.split_at(reading.len())
+}
+
+/// 送り仮名から、SKK の送りあり見出しに付ける子音を取り出す。
 ///
-/// セグメント `wagahaiha` は「辞書の読み `わがはい` + 残りのかな `は`」のように
-/// 読みの前方一致で分けて引く。送り仮名は残りの先頭（`kaku` の `ku`）でも、
-/// 次のセグメント（`Ka` `Ku`）でも表せる。
-pub fn candidates_at(
-    table: &KanaTable,
-    dict: &Dictionary,
-    segments: &[String],
-    index: usize,
-) -> Vec<Candidate> {
-    let (roman, symbols) = split_trailing_symbols(&segments[index]);
-    let whole = table.roman2kana(roman);
-    let mut out = Vec::new();
+/// 綴りは受け取らないので、かな 1 字から見出しに使われる字を引く。同じかなでも
+/// 綴りによって見出しの字が違う（ち → t と c、じ → z と j）ものは両方を返す。
+/// っ で始まる送り仮名は、見出しでは次の字で引く（った → t）ので っ を飛ばす。
+/// 打ち終えていない綴りの英字（か + k）はその字を使う。
+fn okuri_letters(okuri: &str) -> Vec<char> {
+    let mut chars = okuri.chars();
+    let mut head = chars.next();
+    if head == Some('っ') {
+        head = chars.next();
+    }
+    let Some(c) = head else {
+        return Vec::new();
+    };
+    if c.is_ascii_lowercase() {
+        return vec![c];
+    }
+    let letters: &[char] = match c {
+        'あ' => &['a'],
+        'い' => &['i'],
+        'う' => &['u'],
+        'え' => &['e'],
+        'お' => &['o'],
+        'か' | 'き' | 'く' | 'け' | 'こ' => &['k'],
+        'が' | 'ぎ' | 'ぐ' | 'げ' | 'ご' => &['g'],
+        'さ' | 'し' | 'す' | 'せ' | 'そ' => &['s'],
+        'じ' => &['z', 'j'],
+        'ざ' | 'ず' | 'ぜ' | 'ぞ' => &['z'],
+        'ち' => &['t', 'c'],
+        'た' | 'つ' | 'て' | 'と' => &['t'],
+        'だ' | 'ぢ' | 'づ' | 'で' | 'ど' => &['d'],
+        'な' | 'に' | 'ぬ' | 'ね' | 'の' => &['n'],
+        'は' | 'ひ' | 'ふ' | 'へ' | 'ほ' => &['h'],
+        'ば' | 'び' | 'ぶ' | 'べ' | 'ぼ' => &['b'],
+        'ぱ' | 'ぴ' | 'ぷ' | 'ぺ' | 'ぽ' => &['p'],
+        'ま' | 'み' | 'む' | 'め' | 'も' => &['m'],
+        'や' | 'ゆ' | 'よ' => &['y'],
+        'ら' | 'り' | 'る' | 'れ' | 'ろ' => &['r'],
+        'わ' | 'を' => &['w'],
+        'ん' => &['n'],
+        _ => &[],
+    };
+    letters.to_vec()
+}
 
-    if symbols.is_empty()
-        && let Some(next) = segments.get(index + 1)
-    {
-        let (okuri_roman, okuri_symbols) = split_trailing_symbols(next);
-        if let Some(consonant) = okuri_consonant(table, okuri_roman) {
-            let okuri = table.roman2kana(okuri_roman) + &table.roman2kana(okuri_symbols);
-            for (rank, surface) in dict.okuri_ari(&whole, consonant).iter().enumerate() {
-                out.push(Candidate::ranked(format!("{surface}{okuri}"), 2, rank));
+/// 送りあり候補を、子音の字ごとの見出しから順に集める。重複は先の字のものを残す。
+fn okuri_ari(dict: &Dictionary, yomi: &str, okuri: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for letter in okuri_letters(okuri) {
+        for surface in dict.okuri_ari(yomi, letter) {
+            if !out.contains(surface) {
+                out.push(surface.clone());
             }
         }
     }
+    out
+}
 
-    let whole_with_symbols = table.roman2kana(&segments[index]);
-    for split in (1..=roman.len()).rev() {
-        let (head, rest) = roman.split_at(split);
-        let yomi = table.roman2kana(head);
-        // 残りと記号はまとめて変換する。`z/` → `・` のように記号を含む組があるため。
-        let suffix = table.roman2kana(&format!("{rest}{symbols}"));
-        // かなの切れ目でない位置（`nek` + `o` → ねっ + お）は読みとして成り立たない。
-        if yomi.chars().any(|c| c.is_ascii()) || yomi.clone() + &suffix != whole_with_symbols {
+/// 位置 `index` の区間から始まる候補をすべて列挙する。
+///
+/// 変換区間 `わがはいは` は「辞書の読み `わがはい` + 残りのかな `は`」のように
+/// 読みの前方一致で分けて引く。送り仮名は残りの先頭（`かく` の `く`）でも、
+/// 次の変換区間（`か` `く`）でも表せる。かな区間とそのまま出す区間は、
+/// その文字列 1 つだけを候補にする。
+pub fn candidates_at(dict: &Dictionary, pieces: &[Piece], index: usize) -> Vec<Candidate> {
+    let piece = &pieces[index];
+    if piece.kind != Kind::Convert {
+        return vec![Candidate::ranked(piece.text.clone(), 1, 0)];
+    }
+    let (reading, symbols) = split_trailing_symbols(&piece.text);
+    let mut out = Vec::new();
+
+    if symbols.is_empty()
+        && let Some(next) = pieces.get(index + 1)
+        && next.kind == Kind::Convert
+    {
+        let (okuri, okuri_symbols) = split_trailing_symbols(&next.text);
+        for (rank, surface) in okuri_ari(dict, reading, okuri).into_iter().enumerate() {
+            out.push(Candidate::ranked(
+                format!("{surface}{okuri}{okuri_symbols}"),
+                2,
+                rank,
+            ));
+        }
+    }
+
+    let chars: Vec<char> = reading.chars().collect();
+    for split in (1..=chars.len()).rev() {
+        let yomi: String = chars[..split].iter().collect();
+        let rest: String = chars[split..].iter().collect();
+        // 打ち終えていない綴りは読みにならず、小書きの字の手前は読みの切れ目でない。
+        if yomi.chars().any(|c| c.is_ascii()) || rest.starts_with(is_small_kana) {
             continue;
         }
-        if let Some(consonant) = okuri_consonant(table, rest) {
-            for (rank, surface) in dict.okuri_ari(&yomi, consonant).iter().enumerate() {
-                out.push(Candidate::ranked(format!("{surface}{suffix}"), 1, rank));
-            }
+        let suffix = format!("{rest}{symbols}");
+        for (rank, surface) in okuri_ari(dict, &yomi, &rest).into_iter().enumerate() {
+            out.push(Candidate::ranked(format!("{surface}{suffix}"), 1, rank));
         }
         for (rank, surface) in dict.okuri_nasi(&yomi).iter().enumerate() {
             out.push(Candidate::ranked(format!("{surface}{suffix}"), 1, rank));
         }
-        // カタカナ語に助詞が続く `sukottorandoha` のような入力のための候補。
-        if !rest.is_empty() && yomi.chars().count() >= 2 {
+        // カタカナ語に助詞が続く `すこっとらんどは` のような入力のための候補。
+        if !rest.is_empty() && split >= 2 {
             out.push(Candidate::kana(format!("{}{suffix}", hira2kata(&yomi))));
         }
     }
 
-    out.push(Candidate::kana(whole_with_symbols.clone()));
-    out.push(Candidate::kana(hira2kata(&whole_with_symbols)));
+    out.push(Candidate::kana(piece.text.clone()));
+    out.push(Candidate::kana(hira2kata(&piece.text)));
     out
 }
 
@@ -120,17 +175,19 @@ mod tests {
 ;; okuri-ari entries.
 かk /書/掛/
 とt /採/取/
+とc /採/
+おおi /多/
 ;; okuri-nasi entries.
 か /可/
 ねこ /猫/
 ";
 
-    fn setup() -> (KanaTable, Dictionary) {
-        (KanaTable::default_table(), Dictionary::parse(FIXTURE))
+    fn dict() -> Dictionary {
+        Dictionary::parse(FIXTURE)
     }
 
-    fn segs(s: &[&str]) -> Vec<String> {
-        s.iter().map(|s| s.to_string()).collect()
+    fn convert(texts: &[&str]) -> Vec<Piece> {
+        texts.iter().map(|t| Piece::convert(*t)).collect()
     }
 
     fn surfaces(c: &[Candidate]) -> Vec<&str> {
@@ -139,85 +196,123 @@ mod tests {
 
     #[test]
     fn 送りなし候補とかな候補を出す() {
-        let (t, d) = setup();
-        let c = candidates_at(&t, &d, &segs(&["neko"]), 0);
+        let c = candidates_at(&dict(), &convert(&["ねこ"]), 0);
         assert_eq!(surfaces(&c), ["猫", "ねこ", "ネコ"]);
     }
 
     #[test]
-    fn 次のセグメントを送り仮名として送りあり候補を出す() {
-        let (t, d) = setup();
-        let c = candidates_at(&t, &d, &segs(&["ka", "ku"]), 0);
+    fn 次の区間を送り仮名として送りあり候補を出す() {
+        let c = candidates_at(&dict(), &convert(&["か", "く"]), 0);
         assert_eq!(c[0], Candidate::ranked("書く", 2, 0));
         assert_eq!(c[1], Candidate::ranked("掛く", 2, 1));
         assert_eq!(c[2], Candidate::ranked("可", 1, 0));
     }
 
     #[test]
-    fn セグメント内の残りを送り仮名として送りあり候補を出す() {
-        let (t, d) = setup();
-        let c = candidates_at(&t, &d, &segs(&["kakimasu"]), 0);
+    fn 区間内の残りを送り仮名として送りあり候補を出す() {
+        let c = candidates_at(&dict(), &convert(&["かきます"]), 0);
         assert!(c.contains(&Candidate::ranked("書きます", 1, 0)));
         assert!(c.contains(&Candidate::ranked("可きます", 1, 0)));
     }
 
     #[test]
-    fn っで始まる送り仮名はっの次の子音で送りあり候補を引く() {
-        let (t, d) = setup();
-        let c = candidates_at(&t, &d, &segs(&["toxtuta"]), 0);
+    fn っで始まる送り仮名はっの次の字で送りあり候補を引く() {
+        let c = candidates_at(&dict(), &convert(&["とった"]), 0);
         assert!(c.contains(&Candidate::ranked("採った", 1, 0)));
         assert!(c.contains(&Candidate::ranked("取った", 1, 1)));
-        let c = candidates_at(&t, &d, &segs(&["toxtsuta"]), 0);
-        assert!(c.contains(&Candidate::ranked("採った", 1, 0)));
     }
 
     #[test]
-    fn 次のセグメントがっで始まっても送りあり候補を引く() {
-        let (t, d) = setup();
-        let c = candidates_at(&t, &d, &segs(&["to", "xtuta"]), 0);
+    fn 次の区間がっで始まっても送りあり候補を引く() {
+        let c = candidates_at(&dict(), &convert(&["と", "った"]), 0);
         assert_eq!(c[0], Candidate::ranked("採った", 2, 0));
     }
 
     #[test]
+    fn 綴りが違っても同じかなの送り仮名は両方の見出しを引く() {
+        // ち は ti の t と chi の c の両方で登録されている。重複は 1 つにする。
+        let c = candidates_at(&dict(), &convert(&["とち"]), 0);
+        let okuri: Vec<&Candidate> = c.iter().filter(|c| !c.kana).collect();
+        assert_eq!(
+            okuri.iter().map(|c| c.surface.as_str()).collect::<Vec<_>>(),
+            ["採ち", "取ち"]
+        );
+    }
+
+    #[test]
+    fn 母音で始まる送り仮名も引く() {
+        let c = candidates_at(&dict(), &convert(&["おおい"]), 0);
+        assert!(c.contains(&Candidate::ranked("多い", 1, 0)));
+    }
+
+    #[test]
+    fn 打ち終えていない綴りの英字は送り仮名の子音として使う() {
+        // `KaK` と打っている途中。エディタは末尾の子音を変換せずに送る。
+        let c = candidates_at(&dict(), &convert(&["か", "k"]), 0);
+        assert_eq!(c[0], Candidate::ranked("書k", 2, 0));
+        let c = candidates_at(&dict(), &convert(&["かk"]), 0);
+        assert!(c.contains(&Candidate::ranked("書k", 1, 0)));
+    }
+
+    #[test]
     fn 読みの前方一致で辞書を引き残りをかなにする() {
-        let (t, d) = setup();
-        let c = candidates_at(&t, &d, &segs(&["nekoha"]), 0);
+        let c = candidates_at(&dict(), &convert(&["ねこは"]), 0);
         assert_eq!(surfaces(&c), ["猫は", "ネコは", "ねこは", "ネコハ"]);
     }
 
     #[test]
+    fn 小書きの字の手前では読みを切らない() {
+        let c = candidates_at(&dict(), &convert(&["きゃ"]), 0);
+        assert_eq!(surfaces(&c), ["きゃ", "キャ"]);
+    }
+
+    #[test]
     fn カタカナの前方一致にかなを続けた候補を出す() {
-        let (t, d) = setup();
-        let c = candidates_at(&t, &d, &segs(&["sukottorandoha"]), 0);
+        let c = candidates_at(&dict(), &convert(&["すこっとらんどは"]), 0);
         assert!(c.contains(&Candidate::kana("スコットランドは")));
     }
 
     #[test]
-    fn 記号を含む組はまとめてかなにする() {
-        let (t, d) = setup();
-        let c = candidates_at(&t, &d, &segs(&["nekoz/"]), 0);
+    fn 記号を含む区間はまとめてかなにする() {
+        let c = candidates_at(&dict(), &convert(&["ねこ・"]), 0);
         assert!(c.contains(&Candidate::ranked("猫・", 1, 0)));
         assert!(c.contains(&Candidate::kana("ねこ・")));
     }
 
     #[test]
     fn 途中の長音記号は読みの一部として扱う() {
-        let (t, d) = setup();
-        let c = candidates_at(&t, &d, &segs(&["ta-gettonisuru"]), 0);
+        let c = candidates_at(&dict(), &convert(&["たーげっとにする"]), 0);
         assert!(c.contains(&Candidate::kana("ターゲットにする")));
     }
 
     #[test]
     fn 末尾の記号は読みから外して候補に付け直す() {
-        let (t, d) = setup();
-        let c = candidates_at(&t, &d, &segs(&["neko."]), 0);
+        let c = candidates_at(&dict(), &convert(&["ねこ。"]), 0);
         assert_eq!(surfaces(&c), ["猫。", "ねこ。", "ネコ。"]);
     }
 
     #[test]
-    fn 記号で終わるセグメントは次のセグメントを送り仮名にしない() {
-        let (t, d) = setup();
-        let c = candidates_at(&t, &d, &segs(&["ka.", "ku"]), 0);
+    fn 記号で終わる区間は次の区間を送り仮名にしない() {
+        let c = candidates_at(&dict(), &convert(&["か。", "く"]), 0);
         assert!(c.iter().all(|c| c.span == 1));
+    }
+
+    #[test]
+    fn かな区間とそのまま出す区間はその文字列だけを候補にする() {
+        let pieces = [Piece::kana("きょう"), Piece::literal("Emacs"), Piece::convert("か")];
+        assert_eq!(
+            candidates_at(&dict(), &pieces, 0),
+            [Candidate::ranked("きょう", 1, 0)]
+        );
+        assert_eq!(
+            candidates_at(&dict(), &pieces, 1),
+            [Candidate::ranked("Emacs", 1, 0)]
+        );
+    }
+
+    #[test]
+    fn 変換区間でない次の区間は送り仮名にしない() {
+        let pieces = [Piece::convert("か"), Piece::kana("く")];
+        assert!(candidates_at(&dict(), &pieces, 0).iter().all(|c| c.span == 1));
     }
 }

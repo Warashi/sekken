@@ -16,7 +16,7 @@ pub struct Verdict {
 
 /// 文全体のコストと、任意の位置に別の字を置いたときのコストを返す採点器。
 pub trait Verifier {
-    /// 1 回の変換の採点を始める。`input` は変換前のローマ字入力で、
+    /// 1 回の変換の採点を始める。`input` は入力全体のかな読みで、
     /// 入力を条件にする採点器だけが使う。
     fn begin<'a>(&'a self, input: &str) -> Box<dyn VerifySession + 'a>;
 }

@@ -1,10 +1,12 @@
 //! 辞書・モデル・分かち書きを読み込んで Sekken を組み立てる。
 
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 use anyhow::{Context as _, Result};
 use clap::Args;
 use sekken_core::dictionary::Dictionary;
+use sekken_core::input::Input;
 use sekken_core::kana::KanaTable;
 use sekken_core::rerank::Reranker;
 use sekken_core::sekken::Sekken;
@@ -51,6 +53,15 @@ pub struct EngineArgs {
 
 pub type Engine = Sekken<NgramScorer<Tokenizer>>;
 
+/// ローマ字入力の入口が使う変換表。エディタは自前の表で同じかなを作って送るので、
+/// エンジン本体は表を持たない。
+static TABLE: LazyLock<KanaTable> = LazyLock::new(KanaTable::default_table);
+
+/// 大文字・`;` 境界付きのローマ字を変換する。コマンドラインと評価のための入口。
+pub fn henkan_roman(engine: &Engine, roman: &str, top_n: usize) -> Vec<String> {
+    engine.henkan(&Input::from_roman(&TABLE, roman), top_n)
+}
+
 impl EngineArgs {
     pub fn build(&self) -> Result<Engine> {
         let tokenizer = Tokenizer::load(&self.dic).context("load vibrato dictionary")?;
@@ -88,7 +99,6 @@ impl EngineArgs {
             }
         }
         Ok(Sekken {
-            table: KanaTable::default_table(),
             dict,
             scorer: NgramScorer::new(model, tokenizer),
             weights: sekken_core::lattice::Weights {

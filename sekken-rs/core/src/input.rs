@@ -58,7 +58,9 @@ impl Input {
     }
 
     /// 大文字・`;` 境界付きのローマ字から組む。コマンドラインと評価のための入口で、
-    /// エディタはこれと同じ結果を自前の変換で作る。
+    /// エディタが自前の変換で作って送るものと同じ結果にする。
+    /// 末尾の子音 1 文字は次の母音を待っている途中なので、エディタの表示と同じく
+    /// 変換せずに残す（`n` は単独で「ん」になるので除く）。
     pub fn from_roman(table: &KanaTable, roman: &str) -> Input {
         let seg = segment(roman);
         let mut pieces = Vec::new();
@@ -70,6 +72,14 @@ impl Input {
                 .iter()
                 .map(|s| Piece::convert(table.roman2kana(s))),
         );
+        let source = seg.segments.last().unwrap_or(&seg.prefix);
+        if let Some(last) = pieces.last_mut()
+            && let Some(c) = source.chars().last()
+            && c.is_ascii_lowercase()
+            && !"aeioun".contains(c)
+        {
+            last.text = table.roman2kana(&source[..source.len() - 1]) + &c.to_string();
+        }
         Input { pieces }
     }
 
@@ -132,6 +142,17 @@ mod tests {
             from_roman("KanI"),
             [Piece::convert("かん"), Piece::convert("い")]
         );
+    }
+
+    #[test]
+    fn 末尾の子音はエディタの表示と同じく変換せずに残す() {
+        assert_eq!(from_roman("KaK"), [Piece::convert("か"), Piece::convert("k")]);
+        assert_eq!(from_roman("Kak"), [Piece::convert("かk")]);
+        assert_eq!(from_roman("nek"), [Piece::kana("ねk")]);
+        // n は単独で「ん」になり、母音や記号は待つものが無い。
+        assert_eq!(from_roman("Kan"), [Piece::convert("かん")]);
+        assert_eq!(from_roman("Neko."), [Piece::convert("ねこ。")]);
+        assert_eq!(from_roman("Neko;"), [Piece::convert("ねこ"), Piece::convert("")]);
     }
 
     #[test]

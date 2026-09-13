@@ -3,7 +3,7 @@
 /// 文全体にコスト（小さいほど良い）を与える採点器。
 /// 格子の `Scorer` は候補の遷移ごとに呼ばれるのに対し、こちらは完成した文を受け取る。
 pub trait SentenceScorer {
-    /// `sentences` それぞれのコストを同じ順で返す。`input` は変換前のローマ字入力で、
+    /// `sentences` それぞれのコストを同じ順で返す。`input` は入力全体のかな読みで、
     /// 入力を条件にする採点器だけが使う。
     fn costs(&self, input: &str, sentences: &[String]) -> Vec<f64>;
 }

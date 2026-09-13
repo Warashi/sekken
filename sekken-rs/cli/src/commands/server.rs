@@ -14,7 +14,7 @@ use std::thread::JoinHandle;
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 
-use sekken_cli::engine::{Engine, EngineArgs};
+use sekken_cli::engine::{Engine, EngineArgs, henkan_roman};
 use sekken_cli::jsonrpc::{Request, Response, read_message, write_message};
 
 #[derive(clap::Args)]
@@ -184,7 +184,7 @@ pub fn handle(loader: &mut EngineLoader, id: Value, req: &Request) -> Reply {
             };
             let top = req.params["top"].as_u64().unwrap_or(10) as usize;
             match loader.engine() {
-                Ok(engine) => Reply::ok(id, json!({ "candidates": engine.henkan(input, top) })),
+                Ok(engine) => Reply::ok(id, json!({ "candidates": henkan_roman(engine, input, top) })),
                 Err(err) => Reply {
                     response: Response::err(
                         id,

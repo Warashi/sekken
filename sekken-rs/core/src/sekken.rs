@@ -2,15 +2,14 @@
 
 use crate::candidates::candidates_at;
 use crate::dictionary::Dictionary;
-use crate::kana::{KanaTable, hira2kata};
+use crate::input::{Input, Kind};
+use crate::kana::hira2kata;
 use crate::lattice::{Lattice, Weights};
 use crate::rerank::Reranker;
 use crate::scorer::Scorer;
-use crate::segment::segment;
 use crate::speculate::Speculator;
 
 pub struct Sekken<S: Scorer> {
-    pub table: KanaTable,
     pub dict: Dictionary,
     pub scorer: S,
     /// 格子の候補に付ける順位とかなのコストの重み。
@@ -22,29 +21,39 @@ pub struct Sekken<S: Scorer> {
 }
 
 impl<S: Scorer> Sekken<S> {
-    /// ローマ字入力を変換し、良い順に最大 `top_n` 個の文字列を返す。
-    pub fn henkan(&self, roman: &str, top_n: usize) -> Vec<String> {
-        let seg = segment(roman);
-        let prefix = self.table.roman2kana(&seg.prefix);
-        if seg.segments.is_empty() {
-            return vec![prefix.clone(), hira2kata(&prefix)];
+    /// 入力を変換し、良い順に最大 `top_n` 個の文字列を返す。
+    pub fn henkan(&self, input: &Input, top_n: usize) -> Vec<String> {
+        // 先頭の変換しない区間は格子に入れず、文頭のかなとして候補に前置する。
+        let head_len = input
+            .pieces
+            .iter()
+            .take_while(|p| p.kind != Kind::Convert)
+            .count();
+        let head: String = input.pieces[..head_len]
+            .iter()
+            .map(|p| p.text.as_str())
+            .collect();
+        let pieces = &input.pieces[head_len..];
+        if pieces.is_empty() {
+            return vec![head.clone(), hira2kata(&head)];
         }
+        let reading = input.reading();
         let lattice = Lattice {
             weights: self.weights,
-            candidates: (0..seg.segments.len())
-                .map(|i| candidates_at(&self.table, &self.dict, &seg.segments, i))
+            candidates: (0..pieces.len())
+                .map(|i| candidates_at(&self.dict, pieces, i))
                 .collect(),
         };
         if let Some(speculator) = &self.speculator {
-            let decoded = speculator.decode(&lattice, &self.scorer, roman, &prefix, top_n);
+            let decoded = speculator.decode(&lattice, &self.scorer, &reading, &head, top_n);
             let mut result: Vec<String> = decoded
                 .scored
                 .into_iter()
-                .map(|path| prefix.clone() + &path.surfaces.concat())
+                .map(|path| head.clone() + &path.surfaces.concat())
                 .collect();
             // 反復で得た経路だけでは足りないので、残りは格子の順位で埋める。
             for path in decoded.lattice {
-                let s = prefix.clone() + &path.surfaces.concat();
+                let s = head.clone() + &path.surfaces.concat();
                 if !result.contains(&s) {
                     result.push(s);
                 }
@@ -56,15 +65,15 @@ impl<S: Scorer> Sekken<S> {
             return lattice
                 .nbest(&self.scorer, top_n)
                 .into_iter()
-                .map(|path| prefix.clone() + &path.surfaces.concat())
+                .map(|path| head.clone() + &path.surfaces.concat())
                 .collect();
         };
         let paths = lattice.nbest(&self.scorer, top_n.max(reranker.width));
         let candidates = paths
             .into_iter()
-            .map(|path| (prefix.clone() + &path.surfaces.concat(), path.cost))
+            .map(|path| (head.clone() + &path.surfaces.concat(), path.cost))
             .collect();
-        let mut result = reranker.rerank(roman, candidates);
+        let mut result = reranker.rerank(&reading, candidates);
         result.truncate(top_n);
         result
     }
@@ -73,6 +82,8 @@ impl<S: Scorer> Sekken<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input::Piece;
+    use crate::kana::KanaTable;
 
     /// 漢字 < ひらがな < カタカナ の順に優先するスコアラー。
     struct PreferKanji;
@@ -102,13 +113,16 @@ mod tests {
 
     fn sekken() -> Sekken<PreferKanji> {
         Sekken {
-            table: KanaTable::default_table(),
             dict: Dictionary::parse(FIXTURE),
             scorer: PreferKanji,
             weights: Weights::default(),
             reranker: None,
             speculator: None,
         }
+    }
+
+    fn roman(s: &str) -> Input {
+        Input::from_roman(&KanaTable::default_table(), s)
     }
 
     /// 「わ」で始まる文を好む検証器。
@@ -146,7 +160,7 @@ mod tests {
             width: 1,
             stats: Default::default(),
         });
-        let r = s.henkan("WagahaiHaNekoDa", 3);
+        let r = s.henkan(&roman("WagahaiHaNekoDa"), 3);
         assert_eq!(r[0], "わがはいは猫だ");
         // 反復で得た経路の後ろは格子の順位で埋める。
         assert_eq!(r.len(), 3);
@@ -172,36 +186,63 @@ mod tests {
             weight: 1.0,
             width: 10,
         });
-        let r = s.henkan("WagahaiHaNekoDa", 2);
+        let r = s.henkan(&roman("WagahaiHaNekoDa"), 2);
         assert_eq!(r.len(), 2);
         assert_eq!(r[0], "わがはいは猫だ");
     }
 
     #[test]
-    fn 大文字を含まなければひらがなとカタカナを返す() {
-        assert_eq!(sekken().henkan("neko", 5), ["ねこ", "ネコ"]);
+    fn 変換区間が無ければひらがなとカタカナを返す() {
+        assert_eq!(sekken().henkan(&roman("neko"), 5), ["ねこ", "ネコ"]);
     }
 
     #[test]
     fn 大文字境界の文を変換する() {
-        let r = sekken().henkan("WagahaiHaNekoDearu.", 3);
+        let r = sekken().henkan(&roman("WagahaihaNekodearu."), 3);
         assert_eq!(r[0], "我輩は猫である。");
     }
 
     #[test]
     fn セミコロン境界の文を変換する() {
-        let r = sekken().henkan(";wagahai;ha;neko;dearu.", 3);
+        let r = sekken().henkan(&roman(";wagahai;ha;neko;dearu."), 3);
         assert_eq!(r[0], "我輩は猫である。");
     }
 
     #[test]
     fn 二重セミコロンをリテラルとしてかなにする() {
-        assert_eq!(sekken().henkan("semi;;koron", 1)[0], "せみ;ころん");
+        assert_eq!(sekken().henkan(&roman("semi;;koron"), 1)[0], "せみ;ころん");
     }
 
     #[test]
-    fn 先頭の小文字はかなとして先頭に付く() {
-        let r = sekken().henkan("soreHaNekoDa", 1);
+    fn 先頭のかな区間はかなとして先頭に付く() {
+        let r = sekken().henkan(&roman("soreHaNekoDa"), 1);
         assert_eq!(r[0], "それは猫だ");
+    }
+
+    #[test]
+    fn そのまま出す区間は変換せず文に入る() {
+        let input = Input::new(vec![
+            Piece::literal("Emacs"),
+            Piece::convert("で"),
+            Piece::convert("ねこ"),
+            Piece::literal("Vim"),
+            Piece::convert("だ"),
+        ]);
+        assert_eq!(sekken().henkan(&input, 1)[0], "Emacsで猫Vimだ");
+    }
+
+    #[test]
+    fn 途中のかな区間は辞書を引かずかなのまま入る() {
+        let input = Input::new(vec![
+            Piece::convert("ねこ"),
+            Piece::kana("わがはい"),
+            Piece::convert("だ"),
+        ]);
+        assert_eq!(sekken().henkan(&input, 1)[0], "猫わがはいだ");
+    }
+
+    #[test]
+    fn 空の入力は空の候補を返す() {
+        assert_eq!(sekken().henkan(&Input::default(), 3), ["", ""]);
     }
 }

@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use sekken_cli::engine::EngineArgs;
+use sekken_cli::engine::{EngineArgs, henkan_roman};
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -17,7 +17,7 @@ pub fn run(args: Args) -> Result<()> {
     let engine = args.engine.build()?;
     for input in &args.inputs {
         println!("{input}");
-        for (i, c) in engine.henkan(input, args.top).iter().enumerate() {
+        for (i, c) in henkan_roman(&engine, input, args.top).iter().enumerate() {
             println!("  {}: {c}", i + 1);
         }
     }
