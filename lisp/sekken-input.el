@@ -102,7 +102,7 @@ abbrev 区間は次の `;' か `/' まで続き、中の大文字は境界にし
     (cons head (nreverse segments))))
 
 (defun sekken-input-has-boundary-p (roman)
-  "ROMAN が大文字または単独のセミコロンによる変換境界を含むか。"
+  "ROMAN が変換境界（大文字・単独のセミコロン・`/'・`>'）を含むか。"
   (and (cdr (sekken-input-segment roman)) t))
 
 (defun sekken-input-ready-p (roman)
