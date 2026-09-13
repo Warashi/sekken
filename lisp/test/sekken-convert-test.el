@@ -31,6 +31,14 @@
     (should (equal (buffer-string) "きょうはEmacs"))
     (should (= (point) (point-max)))))
 
+(ert-deftest sekken-convert/開いたばかりの区間で終わる語は置き換えずに知らせる ()
+  (dolist (roman '("neko'" "'" "Neko;" "Kyouha'"))
+    (with-temp-buffer
+      (insert roman)
+      (sekken-convert-test--with-engine (error "エンジンを呼んではいけない")
+        (should-error (sekken-convert) :type 'user-error))
+      (should (equal (buffer-string) roman)))))
+
 (ert-deftest sekken-convert/大文字があれば候補を_completion-in-region_に渡す ()
   (with-temp-buffer
     (insert "Neko")
@@ -81,7 +89,10 @@
                      '(([(:kind "convert" :text "ねこ")] t)
                        ([(:kind "convert" :text "ねこ")] nil)))))))
 
-(ert-deftest sekken-convert/capf_は変換境界を含む語だけに反応する ()
+(ert-deftest sekken-convert/capf_は辞書を引く区間を含む語だけに反応する ()
+  (with-temp-buffer
+    (insert "neko'emacs")
+    (should (null (sekken-completion-at-point))))
   (with-temp-buffer
     (insert "neko")
     (should (null (sekken-completion-at-point)))

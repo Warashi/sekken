@@ -94,20 +94,25 @@ corfu-auto など入力中の補完で使う。中断したときは候補なし
     (let* ((start (car bounds))
            (end (cdr bounds))
            (roman (buffer-substring-no-properties start end)))
-      (if (sekken-input-converts-p roman)
-          (if (sekken-input-ready-p roman)
-              (completion-in-region start end #'sekken-convert-table)
-            (user-error "sekken: 変換境界の後に読みがありません"))
+      (cond
+       ((and (sekken-input-has-boundary-p roman)
+             (not (sekken-input-ready-p roman)))
+        (user-error "sekken: 変換境界の後に読みがありません"))
+       ((sekken-input-converts-p roman)
+        (completion-in-region start end #'sekken-convert-table))
+       (t
         (delete-region start end)
         (goto-char start)
-        (insert (sekken-input-literal roman))))))
+        (insert (sekken-input-literal roman)))))))
 
 (defun sekken-completion-at-point ()
-  "変換境界を含む入力中の語の変換候補を capf として返す。"
-  (let ((bounds (sekken-input-bounds)))
-    (when (and bounds
-               (sekken-input-ready-p
-                (buffer-substring-no-properties (car bounds) (cdr bounds))))
+  "辞書を引く区間を含む入力中の語の変換候補を capf として返す。"
+  (let* ((bounds (sekken-input-bounds))
+         (roman (and bounds
+                     (buffer-substring-no-properties (car bounds) (cdr bounds)))))
+    (when (and roman
+               (sekken-input-converts-p roman)
+               (sekken-input-ready-p roman))
       (list (car bounds) (cdr bounds) #'sekken-convert-auto-table
             :exclusive t
             :company-prefix-length t))))
