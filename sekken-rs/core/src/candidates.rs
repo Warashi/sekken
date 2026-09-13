@@ -164,16 +164,21 @@ pub fn candidates_at(dict: &Dictionary, pieces: &[Piece], index: usize) -> Vec<C
         for (rank, surface) in dict.okuri_nasi(&yomi).iter().enumerate() {
             out.push(Candidate::ranked(format!("{surface}{suffix}"), 1, rank));
         }
-        if piece.suffix {
-            for (rank, surface) in dict.okuri_nasi(&format!(">{yomi}")).iter().enumerate() {
-                out.push(Candidate::ranked(format!("{surface}{suffix}"), 1, rank));
+        // 接頭辞・接尾辞の見出しは通常の見出しと同じ語を持つことがあるので、重複は足さない。
+        let mut affix = |key: String| {
+            for (rank, surface) in dict.okuri_nasi(&key).iter().enumerate() {
+                let candidate = Candidate::ranked(format!("{surface}{suffix}"), 1, rank);
+                if !out.iter().any(|c| c.surface == candidate.surface) {
+                    out.push(candidate);
+                }
             }
+        };
+        if piece.suffix {
+            affix(format!(">{yomi}"));
         }
         // 接頭辞は読み全体が見出しで、後ろに残りのかなを続けない。
         if piece.prefix && rest.is_empty() {
-            for (rank, surface) in dict.okuri_nasi(&format!("{yomi}>")).iter().enumerate() {
-                out.push(Candidate::ranked(format!("{surface}{suffix}"), 1, rank));
-            }
+            affix(format!("{yomi}>"));
         }
         // カタカナ語に助詞が続く `すこっとらんどは` のような入力のための候補。
         if !rest.is_empty() && split >= 2 {
@@ -214,7 +219,7 @@ mod tests {
 お /尾/
 かい /貝/
 お> /御/
->かい /会/
+>かい /会/貝/
 emacs /Ｅｍａｃｓ/イーマックス/
 ";
 
@@ -381,6 +386,8 @@ emacs /Ｅｍａｃｓ/イーマックス/
         let c = candidates_at(&dict(), &pieces, 1);
         assert!(c.contains(&Candidate::ranked("貝", 1, 0)));
         assert!(c.contains(&Candidate::ranked("会", 1, 0)));
+        // 通常の見出しにもある語は重ねて出さない。
+        assert_eq!(c.iter().filter(|c| c.surface == "貝").count(), 1);
     }
 
     #[test]
