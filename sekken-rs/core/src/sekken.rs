@@ -2,7 +2,7 @@
 
 use crate::candidates::candidates_at;
 use crate::dictionary::Dictionary;
-use crate::input::{Input, Kind};
+use crate::input::Input;
 use crate::kana::hira2kata;
 use crate::lattice::{Lattice, Weights};
 use crate::rerank::Reranker;
@@ -27,7 +27,7 @@ impl<S: Scorer> Sekken<S> {
         let head_len = input
             .pieces
             .iter()
-            .take_while(|p| p.kind != Kind::Convert)
+            .take_while(|p| !p.kind.converts())
             .count();
         let head: String = input.pieces[..head_len]
             .iter()
@@ -268,6 +268,15 @@ mod tests {
             Piece::convert("だ"),
         ]);
         assert_eq!(sekken().henkan(&input, 1)[0], "猫わがはいだ");
+    }
+
+    #[test]
+    fn 文頭の_abbrev_区間と山括弧の印を通して辞書を引く() {
+        let mut s = sekken();
+        s.dict =
+            Dictionary::parse(";; okuri-nasi entries.\nemacs /Ｅｍａｃｓ/\nお> /御/\n>かい /会/\n");
+        assert_eq!(s.henkan(&roman("/emacs"), 1)[0], "Ｅｍａｃｓ");
+        assert_eq!(s.henkan(&roman("O>Kai"), 1)[0], "御会");
     }
 
     #[test]

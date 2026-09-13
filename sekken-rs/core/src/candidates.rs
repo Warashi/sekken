@@ -120,17 +120,22 @@ fn okuri_ari(dict: &Dictionary, yomi: &str, okuri: &str) -> Vec<String> {
 ///
 /// 変換区間 `わがはいは` は「辞書の読み `わがはい` + 残りのかな `は`」のように
 /// 読みの前方一致で分けて引く。送り仮名は残りの先頭（`かく` の `く`）でも、
-/// 次の変換区間（`か` `く`）でも表せる。かな区間とそのまま出す区間は、
-/// その文字列 1 つだけを候補にする。
+/// 次の変換区間（`か` `く`）でも表せる。`>` の印が付いた区間は接頭辞（`お>`）
+/// や接尾辞（`>かい`）の見出しでも引く。abbrev 区間は綴りをそのまま見出しにする。
+/// かな区間とそのまま出す区間は、その文字列 1 つだけを候補にする。
 pub fn candidates_at(dict: &Dictionary, pieces: &[Piece], index: usize) -> Vec<Candidate> {
     let piece = &pieces[index];
-    if piece.kind != Kind::Convert {
-        return vec![Candidate::ranked(piece.text.clone(), 1, 0)];
+    match piece.kind {
+        Kind::Convert => {}
+        Kind::Abbrev => return abbrev(dict, &piece.text),
+        Kind::Kana | Kind::Literal => return vec![Candidate::ranked(piece.text.clone(), 1, 0)],
     }
     let (reading, symbols) = split_trailing_symbols(&piece.text);
     let mut out = Vec::new();
 
+    // `>` で区切った次の区間は送り仮名でなく接尾辞。
     if symbols.is_empty()
+        && !piece.prefix
         && let Some(next) = pieces.get(index + 1)
         && next.kind == Kind::Convert
     {
@@ -159,6 +164,17 @@ pub fn candidates_at(dict: &Dictionary, pieces: &[Piece], index: usize) -> Vec<C
         for (rank, surface) in dict.okuri_nasi(&yomi).iter().enumerate() {
             out.push(Candidate::ranked(format!("{surface}{suffix}"), 1, rank));
         }
+        if piece.suffix {
+            for (rank, surface) in dict.okuri_nasi(&format!(">{yomi}")).iter().enumerate() {
+                out.push(Candidate::ranked(format!("{surface}{suffix}"), 1, rank));
+            }
+        }
+        // 接頭辞は読み全体が見出しで、後ろに残りのかなを続けない。
+        if piece.prefix && rest.is_empty() {
+            for (rank, surface) in dict.okuri_nasi(&format!("{yomi}>")).iter().enumerate() {
+                out.push(Candidate::ranked(format!("{surface}{suffix}"), 1, rank));
+            }
+        }
         // カタカナ語に助詞が続く `すこっとらんどは` のような入力のための候補。
         if !rest.is_empty() && split >= 2 {
             out.push(Candidate::kana(format!("{}{suffix}", hira2kata(&yomi))));
@@ -167,6 +183,18 @@ pub fn candidates_at(dict: &Dictionary, pieces: &[Piece], index: usize) -> Vec<C
 
     out.push(Candidate::kana(piece.text.clone()));
     out.push(Candidate::kana(hira2kata(&piece.text)));
+    out
+}
+
+/// abbrev 区間の候補。綴りそのままの見出しを引き、無ければ綴りのまま出す。
+fn abbrev(dict: &Dictionary, text: &str) -> Vec<Candidate> {
+    let mut out: Vec<Candidate> = dict
+        .okuri_nasi(text)
+        .iter()
+        .enumerate()
+        .map(|(rank, surface)| Candidate::ranked(surface.clone(), 1, rank))
+        .collect();
+    out.push(Candidate::kana(text));
     out
 }
 
@@ -183,6 +211,11 @@ mod tests {
 ;; okuri-nasi entries.
 か /可/
 ねこ /猫/
+お /尾/
+かい /貝/
+お> /御/
+>かい /会/
+emacs /Ｅｍａｃｓ/イーマックス/
 ";
 
     fn dict() -> Dictionary {
@@ -315,6 +348,55 @@ mod tests {
             candidates_at(&dict(), &pieces, 1),
             [Candidate::ranked("Emacs", 1, 0)]
         );
+    }
+
+    #[test]
+    fn abbrev_区間は綴りそのままの見出しを引き最後に綴りのまま出す() {
+        let c = candidates_at(&dict(), &[Piece::abbrev("emacs")], 0);
+        assert_eq!(
+            c,
+            [
+                Candidate::ranked("Ｅｍａｃｓ", 1, 0),
+                Candidate::ranked("イーマックス", 1, 1),
+                Candidate::kana("emacs"),
+            ]
+        );
+        assert_eq!(
+            candidates_at(&dict(), &[Piece::abbrev("vim")], 0),
+            [Candidate::kana("vim")]
+        );
+    }
+
+    #[test]
+    fn 山括弧の印が付いた区間は接頭辞と接尾辞の見出しでも引く() {
+        let pieces = [
+            Piece::convert("お").with_marks(true, false),
+            Piece::convert("かい").with_marks(false, true),
+        ];
+        let c = candidates_at(&dict(), &pieces, 0);
+        assert!(c.contains(&Candidate::ranked("尾", 1, 0)));
+        assert!(c.contains(&Candidate::ranked("御", 1, 0)));
+        // `>` の次の区間は送り仮名にしない。
+        assert!(c.iter().all(|c| c.span == 1));
+        let c = candidates_at(&dict(), &pieces, 1);
+        assert!(c.contains(&Candidate::ranked("貝", 1, 0)));
+        assert!(c.contains(&Candidate::ranked("会", 1, 0)));
+    }
+
+    #[test]
+    fn 接尾辞は残りのかなを続けられるが接頭辞は読み全体で引く() {
+        let c = candidates_at(
+            &dict(),
+            &[Piece::convert("かいは").with_marks(false, true)],
+            0,
+        );
+        assert!(c.contains(&Candidate::ranked("会は", 1, 0)));
+        let c = candidates_at(
+            &dict(),
+            &[Piece::convert("おは").with_marks(true, false)],
+            0,
+        );
+        assert!(!c.iter().any(|c| c.surface == "御は"));
     }
 
     #[test]
