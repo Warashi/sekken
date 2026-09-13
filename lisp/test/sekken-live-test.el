@@ -146,6 +146,30 @@
        (insert "ねこ")))
     (should (equal (buffer-string) "ねこ"))))
 
+(ert-deftest sekken-live/コマンドが語の前を書き換えても語が残っていれば確定する ()
+  ;; auto-fill や electric-indent は、打鍵で前の行を詰め直してから語を動かす。
+  (with-temp-buffer
+    (insert "Neko")
+    (sekken-live-test--with-cache '("Neko" "猫")
+      (sekken-live-test--command
+       (insert " ")
+       (save-excursion
+         (goto-char (point-min))
+         (insert "\n"))))
+    (should (equal (buffer-string) "\n猫 "))
+    (should (= (point) (point-max)))))
+
+(ert-deftest sekken-live/コマンドが語を範囲の外にしても壊れない ()
+  (with-temp-buffer
+    (insert "abc Neko")
+    (sekken-live-test--with-cache '("Neko" "猫")
+      (sekken-live-test--command
+       (insert " ")
+       (narrow-to-region 1 4)
+       (goto-char (point-min))))
+    (widen)
+    (should (equal (buffer-string) "abc Neko "))))
+
 (ert-deftest sekken-live/ポイントが動かなければ確定しない ()
   (with-temp-buffer
     (insert "Neko")

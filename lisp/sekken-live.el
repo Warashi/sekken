@@ -48,20 +48,33 @@
         (sekken-live--prefetch roman)))))
 
 (defvar-local sekken-live--pending nil
-  "コマンドの前にポイント直前にあった入力中の語 (START END ROMAN)。")
+  "コマンドの前にポイント直前にあった入力中の語 (START END ROMAN)。
+START と END は marker で、auto-fill や electric-indent がコマンドの中で
+語の前を書き換えても語を追える。START は直前への挿入で進み、END は進まない
+ので、語を伸ばした打鍵は範囲の外に出る。")
+
+(defun sekken-live--forget ()
+  "覚えた語を忘れ、marker を外す。"
+  (when sekken-live--pending
+    (set-marker (nth 0 sekken-live--pending) nil)
+    (set-marker (nth 1 sekken-live--pending) nil)
+    (setq sekken-live--pending nil)))
 
 (defun sekken-live-before-command ()
   "ポイント直前の入力中の語を覚える。`pre-command-hook' 用。"
+  (sekken-live--forget)
   (let ((bounds (sekken-input-bounds)))
-    (setq sekken-live--pending
-          (and bounds
-               (list (car bounds) (cdr bounds)
-                     (buffer-substring-no-properties (car bounds) (cdr bounds)))))))
+    (when bounds
+      (setq sekken-live--pending
+            (list (copy-marker (car bounds) t)
+                  (copy-marker (cdr bounds))
+                  (buffer-substring-no-properties (car bounds) (cdr bounds)))))))
 
 (defun sekken-live--left-p (start end roman)
   "START から END の語 ROMAN がそのまま残り、ポイントがその語を続ける位置に無いか。
 語が置き換わっていれば（候補の選択、undo）nil。語の途中に戻ったのは離れたと見る。"
-  (and (<= end (point-max))
+  (and (>= start (point-min))
+       (<= end (point-max))
        (equal (buffer-substring-no-properties start end) roman)
        (let ((bounds (sekken-input-bounds)))
          (not (and bounds
@@ -86,7 +99,9 @@
 (defun sekken-live--commit (start end roman)
   "START から END の語 ROMAN を確定の文字列に置き換える。
 ポイントが語の中にあれば置き換えた後ろに、外にあれば同じ位置に置く。"
-  (let ((text (sekken-live--result roman)))
+  (let ((text (sekken-live--result roman))
+        (start (marker-position start))
+        (end (marker-position end)))
     (when text
       (let ((inside (and (>= (point) start) (<= (point) end))))
         (save-excursion
@@ -98,12 +113,11 @@
 
 (defun sekken-live-after-command ()
   "覚えた語から離れていれば確定し、overlay を張り直す。`post-command-hook' 用。"
-  (let ((pending sekken-live--pending))
-    (setq sekken-live--pending nil)
-    (when (and pending
-               (not buffer-read-only)
-               (apply #'sekken-live--left-p pending))
-      (apply #'sekken-live--commit pending)))
+  (when (and sekken-live--pending
+             (not buffer-read-only)
+             (apply #'sekken-live--left-p sekken-live--pending))
+    (apply #'sekken-live--commit sekken-live--pending))
+  (sekken-live--forget)
   (sekken-live-update))
 
 (provide 'sekken-live)
