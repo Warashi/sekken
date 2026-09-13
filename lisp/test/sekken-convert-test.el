@@ -54,6 +54,29 @@
           (sekken-convert)))
       (should (equal called '(1 5 ("猫" "ねこ")))))))
 
+(ert-deftest sekken-convert/選んだ候補の末尾を確定として覚える ()
+  (with-temp-buffer
+    (insert "kyouha'Emacs Neko")
+    (sekken-convert-test--with-engine '("猫")
+      (cl-letf (((symbol-function 'completion-in-region)
+                 (lambda (start end _table &optional _pred)
+                   (delete-region start end)
+                   (goto-char start)
+                   (insert "猫")
+                   (funcall (plist-get completion-extra-properties :exit-function)
+                            "猫" 'finished))))
+        (sekken-convert)))
+    (should (equal (buffer-string) "kyouha'Emacs 猫"))
+    (should (null (sekken-input-bounds)))))
+
+(ert-deftest sekken-convert/かなと綴りに置き換えた末尾を確定として覚える ()
+  (with-temp-buffer
+    (insert "kyouha'Emacs")
+    (sekken-convert-test--with-engine nil
+      (sekken-convert))
+    (should (equal (buffer-string) "きょうはEmacs"))
+    (should (null (sekken-input-bounds)))))
+
 (ert-deftest sekken-convert/入力が無ければ元のキーのコマンドを実行する ()
   (with-temp-buffer
     (insert "abc ")

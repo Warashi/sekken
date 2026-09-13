@@ -114,6 +114,11 @@ table を使い回すため、候補を閉じ込めると追従しない。"
   (let ((sekken-mode nil))
     (key-binding (this-command-keys-vector) t)))
 
+(defun sekken-convert--remember-committed (_string status)
+  "候補が入った末尾を確定として覚える。`completion-in-region' の exit-function。"
+  (when (eq status 'finished)
+    (sekken-input-remember-committed (point))))
+
 (cl-defun sekken-convert ()
   "ポイント直前の語を変換する。
 辞書を引く区間が無ければかなと綴りに置き換え、あれば候補から選ぶ。
@@ -136,11 +141,16 @@ table を使い回すため、候補を閉じ込めると追従しない。"
              (not (sekken-input-ready-p roman)))
         (user-error "sekken: 変換境界の後に読みがありません"))
        ((sekken-input-converts-p roman)
-        (completion-in-region start end #'sekken-convert-table))
+        ;; corfu は開始時点の `completion-extra-properties' を保存して
+        ;; 選択時に使うので、動的束縛で足りる。
+        (let ((completion-extra-properties
+               (list :exit-function #'sekken-convert--remember-committed)))
+          (completion-in-region start end #'sekken-convert-table)))
        (t
         (delete-region start end)
         (goto-char start)
-        (insert (sekken-input-literal roman)))))))
+        (insert (sekken-input-literal roman))
+        (sekken-input-remember-committed (point)))))))
 
 (provide 'sekken-convert)
 ;;; sekken-convert.el ends here
