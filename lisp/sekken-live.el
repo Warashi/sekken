@@ -8,10 +8,13 @@
 ;; 繋いで見せ、かなに戻さない。それも無い間と、辞書を引く区間の無い
 ;; 語は、かな（と綴りのままの英字）を見せる。
 ;;
-;; 確定の打鍵は無い。ポイントが入力中の語の末尾から離れたら（空白や
-;; 改行を打つ、移動する）、見せていたものをバッファに入れる。語を
-;; 伸ばす・縮める打鍵と、候補の選択などで語が置き換わったコマンドでは
-;; 何もしない。1 位以外を選ぶには `sekken-convert' を使う。
+;; 確定の打鍵は無い。語を続けるコマンド（文字の挿入、後退削除、候補の
+;; 選択、undo）以外のコマンドは、走る前に見せていたものをバッファに
+;; 入れる。送信・保存・バッファの切り替えのようにポイントを動かさず
+;; 入力を持ち去る経路も、これで確定を通る。語を続けるコマンドは走った
+;; 後にポイントが語の末尾から離れていれば確定し、語を伸ばす・縮める
+;; 打鍵と、語が置き換わったコマンドでは何もしない。1 位以外を選ぶには
+;; `sekken-convert' を使う。
 
 ;;; Code:
 
@@ -68,8 +71,18 @@
         (sekken-overlay-show start end (sekken-live-display roman))
         (sekken-live--prefetch roman)))))
 
+(defcustom sekken-live-continue-commands
+  '(sekken-im-self-insert self-insert-command
+    delete-backward-char backward-delete-char-untabify
+    sekken-convert undo undo-redo undo-only)
+  "入力中の語を続けるので、走る前に確定しないコマンド。
+これ以外のコマンドは、ポイントを動かさなくても走る前に語を確定する。
+後退削除を別のコマンドに割り当てていればここに足す。"
+  :type '(repeat function)
+  :group 'sekken)
+
 (defvar-local sekken-live--pending nil
-  "コマンドの前にポイント直前にあった入力中の語 (START END ROMAN)。
+  "語を続けるコマンドの前にポイント直前にあった入力中の語 (START END ROMAN)。
 START と END は marker で、auto-fill や electric-indent がコマンドの中で
 語の前を書き換えても語を追える。START は直前への挿入で進み、END は進まない
 ので、語を伸ばした打鍵は範囲の外に出る。")
@@ -82,14 +95,19 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
     (setq sekken-live--pending nil)))
 
 (defun sekken-live-before-command ()
-  "ポイント直前の入力中の語を覚える。`pre-command-hook' 用。"
+  "語を続けるコマンドなら入力中の語を覚え、それ以外なら確定する。`pre-command-hook' 用。"
   (sekken-live--forget)
   (let ((bounds (sekken-input-bounds)))
     (when bounds
-      (setq sekken-live--pending
-            (list (copy-marker (car bounds) t)
-                  (copy-marker (cdr bounds))
-                  (buffer-substring-no-properties (car bounds) (cdr bounds)))))))
+      (let ((roman (buffer-substring-no-properties (car bounds) (cdr bounds))))
+        (if (memq this-command sekken-live-continue-commands)
+            (setq sekken-live--pending
+                  (list (copy-marker (car bounds) t)
+                        (copy-marker (cdr bounds))
+                        roman))
+          (unless buffer-read-only
+            (sekken-live--commit (car bounds) (cdr bounds) roman)
+            (sekken-overlay-clear)))))))
 
 (defun sekken-live--left-p (start end roman)
   "START から END の語 ROMAN がそのまま残り、ポイントがその語を続ける位置に無いか。
@@ -119,25 +137,30 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
 
 (defun sekken-live--commit (start end roman)
   "START から END の語 ROMAN を確定の文字列に置き換える。
-ポイントが語の中にあれば置き換えた後ろに、外にあれば同じ位置に置く。"
-  (let ((text (sekken-live--result roman))
-        (start (marker-position start))
-        (end (marker-position end)))
+ポイントが語の中にあれば置き換えた後ろに、外にあれば同じ位置に置く。
+読み取り専用の文字に当たれば置き換えず、`pre-command-hook' から呼ばれても
+コマンドを止めない。"
+  (let ((text (sekken-live--result roman)))
     (when text
       (let ((inside (and (>= (point) start) (<= (point) end))))
-        (save-excursion
-          (goto-char start)
-          (delete-region start end)
-          (insert text))
-        (when inside
-          (goto-char (+ start (length text))))))))
+        (condition-case nil
+            (progn
+              (save-excursion
+                (goto-char start)
+                (delete-region start end)
+                (insert text))
+              (when inside
+                (goto-char (+ start (length text)))))
+          (text-read-only nil))))))
 
 (defun sekken-live-after-command ()
   "覚えた語から離れていれば確定し、overlay を張り直す。`post-command-hook' 用。"
   (when (and sekken-live--pending
              (not buffer-read-only)
              (apply #'sekken-live--left-p sekken-live--pending))
-    (apply #'sekken-live--commit sekken-live--pending))
+    (sekken-live--commit (marker-position (nth 0 sekken-live--pending))
+                         (marker-position (nth 1 sekken-live--pending))
+                         (nth 2 sekken-live--pending)))
   (sekken-live--forget)
   (sekken-live-update))
 

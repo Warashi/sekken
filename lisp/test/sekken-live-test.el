@@ -128,9 +128,10 @@
     (kill-buffer buffer)
     (funcall (cdr (car requests)))))
 
-(defmacro sekken-live-test--command (&rest body)
-  "BODY を 1 つのコマンドとして、前後の hook を挟んで実行する。"
-  `(progn
+(defmacro sekken-live-test--command (command &rest body)
+  "BODY を `this-command' が COMMAND のコマンドとして、前後の hook を挟んで実行する。"
+  (declare (indent 1))
+  `(let ((this-command ,command))
      (sekken-live-before-command)
      ,@body
      (sekken-live-after-command)))
@@ -148,7 +149,7 @@
   (with-temp-buffer
     (insert "Neko")
     (sekken-live-test--with-cache '(("Neko" "猫" "ねこ"))
-      (sekken-live-test--command (insert " ")))
+      (sekken-live-test--command #'self-insert-command (insert " ")))
     (should (equal (buffer-string) "猫 "))
     (should (= (point) (point-max)))
     (should (null sekken-overlay--overlay))))
@@ -157,15 +158,23 @@
   (with-temp-buffer
     (insert "Neko")
     (sekken-live-test--with-cache '(("Neko" "猫"))
-      (sekken-live-test--command (insert "\n")))
+      (sekken-live-test--command #'newline (insert "\n")))
     (should (equal (buffer-string) "猫\n"))
     (should (= (point) (point-max)))))
 
-(ert-deftest sekken-live/ポイントが語の末尾から離れれば確定する ()
+(ert-deftest sekken-live/移動のコマンドは確定してから確定した文字列の上を動く ()
   (with-temp-buffer
     (insert "Neko")
     (sekken-live-test--with-cache '(("Neko" "猫"))
-      (sekken-live-test--command (backward-char 1)))
+      (sekken-live-test--command #'backward-char (backward-char 1)))
+    (should (equal (buffer-string) "猫"))
+    (should (= (point) (point-min)))))
+
+(ert-deftest sekken-live/語を続けるコマンドの後にポイントが語の末尾から離れていれば確定する ()
+  (with-temp-buffer
+    (insert "Neko")
+    (sekken-live-test--with-cache '(("Neko" "猫"))
+      (sekken-live-test--command #'sekken-convert (backward-char 1)))
     (should (equal (buffer-string) "猫"))
     (should (= (point) (point-max)))))
 
@@ -173,21 +182,21 @@
   (with-temp-buffer
     (insert "Nek")
     (sekken-live-test--with-cache '(("Nek" "ねk"))
-      (sekken-live-test--command (insert "o")))
+      (sekken-live-test--command #'self-insert-command (insert "o")))
     (should (equal (buffer-string) "Neko"))))
 
 (ert-deftest sekken-live/語を縮める_backspace_では確定しない ()
   (with-temp-buffer
     (insert "Neko")
     (sekken-live-test--with-cache '(("Neko" "猫"))
-      (sekken-live-test--command (delete-char -1)))
+      (sekken-live-test--command #'delete-backward-char (delete-char -1)))
     (should (equal (buffer-string) "Nek"))))
 
 (ert-deftest sekken-live/コマンドが語を置き換えていれば重ねて確定しない ()
   (with-temp-buffer
     (insert "Neko")
     (sekken-live-test--with-cache '(("Neko" "猫"))
-      (sekken-live-test--command
+      (sekken-live-test--command #'undo
        (delete-region 1 5)
        (insert "ねこ")))
     (should (equal (buffer-string) "ねこ"))))
@@ -197,7 +206,7 @@
   (with-temp-buffer
     (insert "Neko")
     (sekken-live-test--with-cache '(("Neko" "猫"))
-      (sekken-live-test--command
+      (sekken-live-test--command #'self-insert-command
        (insert " ")
        (save-excursion
          (goto-char (point-min))
@@ -209,18 +218,68 @@
   (with-temp-buffer
     (insert "abc Neko")
     (sekken-live-test--with-cache '(("Neko" "猫"))
-      (sekken-live-test--command
+      (sekken-live-test--command #'self-insert-command
        (insert " ")
        (narrow-to-region 1 4)
        (goto-char (point-min))))
     (widen)
     (should (equal (buffer-string) "abc Neko "))))
 
-(ert-deftest sekken-live/ポイントが動かなければ確定しない ()
+(ert-deftest sekken-live/語を続けるコマンドではポイントが動かなければ確定しない ()
   (with-temp-buffer
     (insert "Neko")
     (sekken-live-test--with-cache '(("Neko" "猫"))
-      (sekken-live-test--command nil))
+      (sekken-live-test--command #'sekken-convert nil))
+    (should (equal (buffer-string) "Neko"))))
+
+(ert-deftest sekken-live/語を続けないコマンドはポイントが動かなくても走る前に確定する ()
+  (with-temp-buffer
+    (insert "Neko")
+    (sekken-live-test--with-cache '(("Neko" "猫"))
+      (sekken-live-test--command #'ignore
+        (should (equal (buffer-string) "猫"))
+        (should (= (point) (point-max)))
+        (should (null sekken-overlay--overlay))))
+    (should (equal (buffer-string) "猫"))
+    (should (= (point) (point-max)))))
+
+(ert-deftest sekken-live/語を持ち去る送信コマンドには確定した文字列が渡る ()
+  ;; agent-shell-submit のように、バッファから入力を読んで消す。
+  (with-temp-buffer
+    (insert "Neko")
+    (let (sent)
+      (sekken-live-test--with-cache '(("Neko" "猫"))
+        (sekken-live-test--command #'agent-shell-submit
+          (setq sent (buffer-string))
+          (delete-region (point-min) (point-max))))
+      (should (equal sent "猫"))
+      (should (equal (buffer-string) "")))))
+
+(ert-deftest sekken-live/語を続けるコマンドは走る前に確定しない ()
+  (dolist (command '(sekken-im-self-insert self-insert-command
+                     delete-backward-char backward-delete-char-untabify
+                     sekken-convert undo undo-redo))
+    (with-temp-buffer
+      (insert "Neko")
+      (sekken-live-test--with-cache '(("Neko" "猫"))
+        (sekken-live-test--command command
+          (should (equal (buffer-string) "Neko"))
+          (insert "g"))))))
+
+(ert-deftest sekken-live/読み取り専用なら走る前に確定せずエラーも出さない ()
+  (with-temp-buffer
+    (insert "Neko")
+    (setq buffer-read-only t)
+    (sekken-live-test--with-cache '(("Neko" "猫"))
+      (sekken-live-test--command #'ignore))
+    (should (equal (buffer-string) "Neko"))))
+
+(ert-deftest sekken-live/読み取り専用の文字なら走る前に確定せずエラーも出さない ()
+  (with-temp-buffer
+    (insert "Neko")
+    (put-text-property 1 5 'read-only t)
+    (sekken-live-test--with-cache '(("Neko" "猫"))
+      (sekken-live-test--command #'ignore))
     (should (equal (buffer-string) "Neko"))))
 
 (ert-deftest sekken-live/候補が届いていなければ待って引く ()
@@ -233,7 +292,7 @@
                    (setq called (list pieces cancel-on-input))
                    '("猫"))))
         (setq sekken-convert--cache nil)
-        (sekken-live-test--command (insert " ")))
+        (sekken-live-test--command #'self-insert-command (insert " ")))
       (should (equal called '([(:kind "convert" :text "ねこ")] nil))))
     (should (equal (buffer-string) "猫 "))))
 
@@ -244,7 +303,7 @@
               ((symbol-function 'sekken-server-henkan)
                (lambda (&rest _) (signal 'jsonrpc-error '("dead")))))
       (setq sekken-convert--cache nil)
-      (sekken-live-test--command (insert " ")))
+      (sekken-live-test--command #'self-insert-command (insert " ")))
     (should (equal (buffer-string) "Neko "))))
 
 (ert-deftest sekken-live/辞書を引く区間の無い語はかなと綴りに置き換わる ()
@@ -253,14 +312,14 @@
     (with-temp-buffer
       (insert (car case))
       (sekken-live-test--with-cache nil
-        (sekken-live-test--command (insert " ")))
+        (sekken-live-test--command #'self-insert-command (insert " ")))
       (should (equal (buffer-string) (cdr case))))))
 
 (ert-deftest sekken-live/境界で終わる語は確定しない ()
   (with-temp-buffer
     (insert "Neko;")
     (sekken-live-test--with-cache nil
-      (sekken-live-test--command (insert " ")))
+      (sekken-live-test--command #'self-insert-command (insert " ")))
     (should (equal (buffer-string) "Neko; "))))
 
 (ert-deftest sekken-live/sekken-mode_が前後の_hook_を付け外しする ()
