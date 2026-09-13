@@ -42,9 +42,11 @@
   :keymap sekken-mode-map
   (if sekken-mode
       (progn
-        (add-hook 'post-command-hook #'sekken-live-update nil t)
+        (add-hook 'pre-command-hook #'sekken-live-before-command nil t)
+        (add-hook 'post-command-hook #'sekken-live-after-command nil t)
         (add-hook 'completion-at-point-functions #'sekken-completion-at-point nil t))
-    (remove-hook 'post-command-hook #'sekken-live-update t)
+    (remove-hook 'pre-command-hook #'sekken-live-before-command t)
+    (remove-hook 'post-command-hook #'sekken-live-after-command t)
     (remove-hook 'completion-at-point-functions #'sekken-completion-at-point t)
     (sekken-overlay-clear)
     (when (and (equal current-input-method sekken-im-name)
