@@ -197,10 +197,10 @@ PIECES は `sekken-input-pieces' が返す、種類付きのかな区間のベ�
        (setq sekken-server--crashes (1+ sekken-server--crashes)))
      (signal (car err) (cdr err)))))
 
-(defun sekken-server-henkan-async (pieces top on-success)
+(defun sekken-server-henkan-async (pieces top on-success &optional on-failure)
   "PIECES を非同期に変換し、候補文字列のリスト（最大 TOP 個）を ON-SUCCESS に渡す。
-失敗とタイムアウトは `sekken-server-henkan' と同じく異常終了として数えるだけで、
-ON-SUCCESS は呼ばない。接続の起動に失敗すればその場でエラーを投げる。"
+失敗とタイムアウトは `sekken-server-henkan' と同じく異常終了として数え、
+ON-FAILURE があれば引数なしで呼ぶ。接続の起動に失敗すればその場でエラーを投げる。"
   (jsonrpc-async-request
    (sekken-server-connection) :henkan
    (list :pieces pieces :top top)
@@ -208,9 +208,11 @@ ON-SUCCESS は呼ばない。接続の起動に失敗すればその場でエラ
    :success-fn (lambda (result)
                  (funcall on-success (sekken-server--succeeded result)))
    :error-fn (lambda (err)
-               (sekken-server--count-crash (plist-get err :code)))
+               (sekken-server--count-crash (plist-get err :code))
+               (when on-failure (funcall on-failure)))
    :timeout-fn (lambda ()
-                 (sekken-server--count-crash nil))))
+                 (sekken-server--count-crash nil)
+                 (when on-failure (funcall on-failure)))))
 
 (defun sekken-server--configured-p ()
   "必須のエンジン設定がすべて揃っていれば non-nil を返す。"

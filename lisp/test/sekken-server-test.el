@@ -289,8 +289,9 @@
                           '(:code -32603 :message "internal"))
                  '(1))))
       (sekken-server-henkan-async [(:kind "convert" :text "ねこ")] 3
-                                  (lambda (candidates) (setq received candidates))))
-    (should-not received)
+                                  (lambda (candidates) (setq received candidates))
+                                  (lambda () (setq received 'failed))))
+    (should (eq received 'failed))
     (should (= sekken-server--crashes 1))))
 
 (ert-deftest sekken-server/非同期の変換の読み込み失敗はプロセスが生きていても異常終了として数える ()
@@ -311,7 +312,8 @@
 
 (ert-deftest sekken-server/非同期の変換のタイムアウトはプロセスが生きていれば異常終了として数えない ()
   (let ((sekken-server--connection 'connection)
-        (sekken-server--crashes 0))
+        (sekken-server--crashes 0)
+        failed)
     (cl-letf (((symbol-function 'sekken-server-connection)
                (lambda () 'connection))
               ((symbol-function 'jsonrpc-running-p)
@@ -320,7 +322,9 @@
                (lambda (&rest args)
                  (funcall (plist-get (nthcdr 3 args) :timeout-fn))
                  '(1))))
-      (sekken-server-henkan-async [(:kind "convert" :text "ねこ")] 3 #'ignore))
+      (sekken-server-henkan-async [(:kind "convert" :text "ねこ")] 3 #'ignore
+                                  (lambda () (setq failed t))))
+    (should failed)
     (should (= sekken-server--crashes 0))))
 
 (provide 'sekken-server-test)

@@ -36,6 +36,47 @@ CANCEL-ON-INPUT が non-nil なら打鍵で待つのをやめ、候補なしと�
         (setq sekken-convert--cache (cons roman candidates))
         candidates))))
 
+(defun sekken-convert-cached (roman)
+  "ROMAN の候補を覚えていればそのリスト。無ければ nil。"
+  (and (equal roman (car sekken-convert--cache))
+       (cdr sekken-convert--cache)))
+
+(defvar sekken-convert--in-flight nil
+  "非同期に引いている最中の入力。飛ばすのは同時に 1 本まで。")
+
+(defvar sekken-convert--wanted nil
+  "飛ばしている間に頼まれた (入力 . 知らせる関数)。返事が来たら最後の 1 つだけ送る。")
+
+(defun sekken-convert-prefetch (roman notify)
+  "ROMAN の候補を非同期に引いて覚え、届いたら NOTIFY を引数なしで呼ぶ。
+既に覚えていれば何もしない。別の入力を引いている最中なら覚えておき、
+その返事の後に送る。エンジンの起動に失敗しても知らせない。
+明示的な変換が同じ入力を待てば、そちらがエラーを見せる。"
+  (cond
+   ((sekken-convert-cached roman) nil)
+   (sekken-convert--in-flight
+    (setq sekken-convert--wanted (cons roman notify)))
+   (t
+    (setq sekken-convert--in-flight roman)
+    (condition-case nil
+        (sekken-server-henkan-async
+         (sekken-input-pieces roman) sekken-convert-max-candidates
+         (lambda (candidates)
+           (setq sekken-convert--in-flight nil
+                 sekken-convert--cache (cons roman candidates))
+           (let ((wanted sekken-convert--wanted))
+             (setq sekken-convert--wanted nil)
+             (funcall notify)
+             (when wanted
+               (sekken-convert-prefetch (car wanted) (cdr wanted)))))
+         ;; 失敗しても溜めた入力は送り直さない。次の打鍵が送る。
+         (lambda ()
+           (setq sekken-convert--in-flight nil
+                 sekken-convert--wanted nil)))
+      (error
+       (setq sekken-convert--in-flight nil
+             sekken-convert--wanted nil))))))
+
 (defun sekken-convert--complete (string action cancel-on-input)
   "変換候補を素通しする completion table の本体。
 

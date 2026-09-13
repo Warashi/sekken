@@ -104,6 +104,75 @@
       (should (eq (plist-get (nthcdr 3 capf) :exclusive) t))
       (should (eq (plist-get (nthcdr 3 capf) :company-prefix-length) t)))))
 
+(defmacro sekken-convert-test--with-async-engine (requests &rest body)
+  "非同期のエンジン呼び出しを、要求を REQUESTS に溜めるだけの偽物にして BODY を実行する。
+REQUESTS の各要素は (PIECES . ON-SUCCESS)。返事は呼び出し側が ON-SUCCESS で返す。"
+  (declare (indent 1))
+  `(cl-letf (((symbol-function 'sekken-server-henkan-async)
+              (lambda (pieces _top on-success &optional _on-failure)
+                (push (cons pieces on-success) ,requests))))
+     (setq sekken-convert--cache nil
+           sekken-convert--in-flight nil
+           sekken-convert--wanted nil)
+     ,@body))
+
+(ert-deftest sekken-convert/先読みは候補を覚えてから知らせる ()
+  (let (requests notified)
+    (sekken-convert-test--with-async-engine requests
+      (sekken-convert-prefetch "Neko" (lambda () (setq notified t)))
+      (should (equal (car (car requests)) [(:kind "convert" :text "ねこ")]))
+      (should-not notified)
+      (funcall (cdr (car requests)) '("猫" "ねこ"))
+      (should notified)
+      (should (equal (sekken-convert-cached "Neko") '("猫" "ねこ"))))))
+
+(ert-deftest sekken-convert/覚えている入力は先読みしない ()
+  (let (requests)
+    (sekken-convert-test--with-async-engine requests
+      (setq sekken-convert--cache '("Neko" "猫"))
+      (sekken-convert-prefetch "Neko" #'ignore)
+      (should-not requests))))
+
+(ert-deftest sekken-convert/飛ばしている間の入力は最後の_1_つだけ返事の後に送る ()
+  (let (requests)
+    (sekken-convert-test--with-async-engine requests
+      (sekken-convert-prefetch "Ne" #'ignore)
+      (sekken-convert-prefetch "Nek" #'ignore)
+      (sekken-convert-prefetch "Neko" #'ignore)
+      (should (= (length requests) 1))
+      (funcall (cdr (car requests)) '("ね"))
+      (should (= (length requests) 2))
+      (should (equal (car (car requests)) [(:kind "convert" :text "ねこ")]))
+      (funcall (cdr (car requests)) '("猫"))
+      (should (= (length requests) 2))
+      (should (equal (sekken-convert-cached "Neko") '("猫"))))))
+
+(ert-deftest sekken-convert/先読みが失敗すれば次の入力を送れる ()
+  (let (requests failures)
+    (cl-letf (((symbol-function 'sekken-server-henkan-async)
+               (lambda (pieces _top _on-success on-failure)
+                 (push pieces requests)
+                 (push on-failure failures))))
+      (setq sekken-convert--cache nil
+            sekken-convert--in-flight nil
+            sekken-convert--wanted nil)
+      (sekken-convert-prefetch "Ne" #'ignore)
+      (sekken-convert-prefetch "Nek" #'ignore)
+      (funcall (car failures))
+      (should-not sekken-convert--in-flight)
+      (should (= (length requests) 1))
+      (sekken-convert-prefetch "Neko" #'ignore)
+      (should (= (length requests) 2)))))
+
+(ert-deftest sekken-convert/先読みの起動失敗は握りつぶす ()
+  (cl-letf (((symbol-function 'sekken-server-henkan-async)
+             (lambda (&rest _) (user-error "設定がありません"))))
+    (setq sekken-convert--cache nil
+          sekken-convert--in-flight nil
+          sekken-convert--wanted nil)
+    (sekken-convert-prefetch "Neko" #'ignore)
+    (should-not sekken-convert--in-flight)))
+
 (ert-deftest sekken-convert/sticky_境界を変換候補に渡す ()
   (with-temp-buffer
     (insert ";shokai;kougi")
