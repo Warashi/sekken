@@ -20,21 +20,32 @@
   :type 'integer
   :group 'sekken)
 
+(defconst sekken-convert--cache-size 32
+  "覚えておく (入力 . 候補) の件数。")
+
 (defvar sekken-convert--cache nil
-  "直近の (入力 . 候補)。補完テーブルは同じ文字列で何度も呼ばれる。")
+  "引いた順に新しいものから並ぶ (入力 . 候補) の alist。
+補完テーブルは同じ文字列で何度も呼ばれ、ライブ変換は語を縮めたときに
+前に引いた語をもう一度見せる。")
+
+(defun sekken-convert--remember (roman candidates)
+  "ROMAN の候補 CANDIDATES を覚える。同じ入力の古い候補は捨てる。"
+  (setq sekken-convert--cache
+        (seq-take (cons (cons roman candidates)
+                        (assoc-delete-all roman sekken-convert--cache))
+                  sekken-convert--cache-size)))
 
 (defun sekken-convert--candidates (roman)
-  "ROMAN の変換候補。直近の結果と同じ入力なら引き直さない。応答を待つ。"
+  "ROMAN の変換候補。覚えている入力なら引き直さない。応答を待つ。"
   (or (sekken-convert-cached roman)
       (let ((candidates (sekken-server-henkan (sekken-input-pieces roman)
                                               sekken-convert-max-candidates)))
-        (setq sekken-convert--cache (cons roman candidates))
+        (sekken-convert--remember roman candidates)
         candidates)))
 
 (defun sekken-convert-cached (roman)
   "ROMAN の候補を覚えていればそのリスト。無ければ nil。"
-  (and (equal roman (car sekken-convert--cache))
-       (cdr sekken-convert--cache)))
+  (cdr (assoc roman sekken-convert--cache)))
 
 (defvar sekken-convert--in-flight nil
   "非同期に引いている最中の入力。飛ばすのは同時に 1 本まで。")
@@ -58,8 +69,8 @@
         (sekken-server-henkan-async
          (sekken-input-pieces roman) sekken-convert-max-candidates
          (lambda (candidates)
-           (setq sekken-convert--in-flight nil
-                 sekken-convert--cache (cons roman candidates))
+           (setq sekken-convert--in-flight nil)
+           (sekken-convert--remember roman candidates)
            ;; 溜めた入力を先に送る。NOTIFY が同じ入力を頼み直しても飛ばさない。
            (let ((wanted sekken-convert--wanted))
              (setq sekken-convert--wanted nil)
@@ -93,7 +104,7 @@ table を使い回すため、候補を閉じ込めると追従しない。"
       (sekken-convert--candidates string)))
    ((null action) string)
    ((eq action 'lambda)
-    (and (member string (cdr sekken-convert--cache)) t))
+    (and (member string (cdr (car sekken-convert--cache))) t))
    (t nil)))
 
 (defvar sekken-mode)

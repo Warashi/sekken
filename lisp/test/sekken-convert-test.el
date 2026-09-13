@@ -91,10 +91,41 @@ REQUESTS の各要素は (PIECES . ON-SUCCESS)。返事は呼び出し側が ON-
       (should notified)
       (should (equal (sekken-convert-cached "Neko") '("猫" "ねこ"))))))
 
+(ert-deftest sekken-convert/複数の入力の候補を覚え_縮めた語も引ける ()
+  (let (requests)
+    (sekken-convert-test--with-async-engine requests
+      (sekken-convert-prefetch "Ne" #'ignore)
+      (funcall (cdr (car requests)) '("根"))
+      (sekken-convert-prefetch "Neko" #'ignore)
+      (funcall (cdr (car requests)) '("猫"))
+      (should (equal (sekken-convert-cached "Ne") '("根")))
+      (should (equal (sekken-convert-cached "Neko") '("猫")))
+      (sekken-convert-prefetch "Ne" #'ignore)
+      (should (= (length requests) 2)))))
+
+(ert-deftest sekken-convert/同じ入力を引き直せば古い候補を捨てる ()
+  (let (requests)
+    (sekken-convert-test--with-async-engine requests
+      (setq sekken-convert--cache '(("Neko") ("Ne" "根")))
+      (sekken-convert-prefetch "Neko" #'ignore)
+      (funcall (cdr (car requests)) '("猫"))
+      (should (equal sekken-convert--cache '(("Neko" "猫") ("Ne" "根")))))))
+
+(ert-deftest sekken-convert/覚える件数には上限がある ()
+  (let (requests)
+    (sekken-convert-test--with-async-engine requests
+      (dotimes (i (1+ sekken-convert--cache-size))
+        (let ((roman (format "Neko%d" i)))
+          (sekken-convert-prefetch roman #'ignore)
+          (funcall (cdr (car requests)) (list roman))))
+      (should (= (length sekken-convert--cache) sekken-convert--cache-size))
+      (should-not (sekken-convert-cached "Neko0"))
+      (should (sekken-convert-cached (format "Neko%d" sekken-convert--cache-size))))))
+
 (ert-deftest sekken-convert/覚えている入力は先読みしない ()
   (let (requests)
     (sekken-convert-test--with-async-engine requests
-      (setq sekken-convert--cache '("Neko" "猫"))
+      (setq sekken-convert--cache '(("Neko" "猫")))
       (sekken-convert-prefetch "Neko" #'ignore)
       (should-not requests))))
 
