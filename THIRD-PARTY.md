@@ -9,8 +9,8 @@ sekken のコード（`sekken-rs/`、`lisp/`）は MIT License（`LICENSE`）で
 
 - 出典: [skkeleton](https://github.com/vim-skk/skkeleton) の
   `denops/skkeleton/kana/rom_hira.ts` にある `romToHira`
-- 変更点: TSV に書き直し、促音の「次の入力に残す文字」を省き、`z-` の
-  変換結果を 〜（U+301C）から ～（U+FF5E）に変えた。他の項目と変換結果は同じ
+- 変更点: TSV に書き直し、促音の「次の入力に残す文字」を省いた。
+  項目と変換結果は同じ
 - 由来の補足: skkeleton の表は ddskk（GPL-3.0 以降）の
   `skk-rom-kana-base-rule-list` に記号などを足した内容と一致する。
   ここでは直接の写し元である skkeleton の許諾に従う
