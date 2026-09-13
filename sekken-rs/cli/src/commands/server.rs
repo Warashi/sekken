@@ -3,6 +3,10 @@
 //! モデルの読み込みには数秒かかるので別スレッドで進め、読み込み中でも
 //! `version` と `shutdown` には即応答する。`henkan` は読み込みの完了を待つ。
 //!
+//! `henkan` の params は `{"pieces": [{"kind": "kana" | "convert" | "literal",
+//! "text": "..."}, ...], "top": n}`。エディタがローマ字をかなにし、区間の
+//! 種類を決めて送る。
+//!
 //! 入力中の補完は打鍵ごとに `henkan` を送り、Emacs 側は打鍵で待つのをやめる。
 //! 変換は 1 つずつしか処理できないので、溜まった `henkan` のうち後ろに
 //! 別の `henkan` があるものは変換せずに捨て、最新の入力だけを変換する。
@@ -14,8 +18,9 @@ use std::thread::JoinHandle;
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 
-use sekken_cli::engine::{Engine, EngineArgs, henkan_roman};
+use sekken_cli::engine::{Engine, EngineArgs};
 use sekken_cli::jsonrpc::{Request, Response, read_message, write_message};
+use sekken_core::input::{Input, Kind, Piece};
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -179,12 +184,13 @@ pub fn handle(loader: &mut EngineLoader, id: Value, req: &Request) -> Reply {
     match req.method.as_str() {
         "version" => Reply::ok(id, json!({ "version": VERSION })),
         "henkan" => {
-            let Some(input) = req.params["input"].as_str() else {
-                return Reply::err(id, -32602, "params.input must be a string");
+            let input = match parse_pieces(&req.params["pieces"]) {
+                Ok(input) => input,
+                Err(message) => return Reply::err(id, -32602, message),
             };
             let top = req.params["top"].as_u64().unwrap_or(10) as usize;
             match loader.engine() {
-                Ok(engine) => Reply::ok(id, json!({ "candidates": henkan_roman(engine, input, top) })),
+                Ok(engine) => Reply::ok(id, json!({ "candidates": engine.henkan(&input, top) })),
                 Err(err) => Reply {
                     response: Response::err(
                         id,
@@ -198,6 +204,31 @@ pub fn handle(loader: &mut EngineLoader, id: Value, req: &Request) -> Reply {
         "shutdown" => Reply::ok(id, Value::Null),
         other => Reply::err(id, -32601, format!("unknown method: {other}")),
     }
+}
+
+/// `params.pieces` を読む。種類と文字列が揃っていなければ理由を返す。
+pub fn parse_pieces(pieces: &Value) -> Result<Input, String> {
+    let Some(pieces) = pieces.as_array() else {
+        return Err("params.pieces must be an array".to_string());
+    };
+    pieces
+        .iter()
+        .map(|piece| {
+            let kind = match piece["kind"].as_str() {
+                Some("kana") => Kind::Kana,
+                Some("convert") => Kind::Convert,
+                Some("literal") => Kind::Literal,
+                _ => {
+                    return Err("params.pieces[].kind must be kana, convert or literal".to_string());
+                }
+            };
+            let Some(text) = piece["text"].as_str() else {
+                return Err("params.pieces[].text must be a string".to_string());
+            };
+            Ok(Piece::new(kind, text))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Input::new)
 }
 
 #[cfg(test)]
@@ -219,10 +250,19 @@ mod tests {
     #[test]
     fn 溜まった_henkan_は最後の_1_つだけ残す() {
         let mut batch = vec![
-            request("henkan", json!({ "input": "N" })),
+            request(
+                "henkan",
+                json!({ "pieces": [{ "kind": "convert", "text": "n" }] }),
+            ),
             request("version", Value::Null),
-            request("henkan", json!({ "input": "Ne" })),
-            request("henkan", json!({ "input": "Nek" })),
+            request(
+                "henkan",
+                json!({ "pieces": [{ "kind": "convert", "text": "ね" }] }),
+            ),
+            request(
+                "henkan",
+                json!({ "pieces": [{ "kind": "convert", "text": "ねk" }] }),
+            ),
             request("shutdown", Value::Null),
         ];
         batch[0].id = Some(json!(10));
@@ -230,7 +270,7 @@ mod tests {
         let (keep, stale) = drop_stale(batch);
         let methods: Vec<&str> = keep.iter().map(|r| r.method.as_str()).collect();
         assert_eq!(methods, ["version", "henkan", "shutdown"]);
-        assert_eq!(keep[1].params["input"], "Nek");
+        assert_eq!(keep[1].params["pieces"][0]["text"], "ねk");
         let ids: Vec<&Value> = stale.iter().map(|r| &r.id).collect();
         assert_eq!(ids, [&json!(10), &json!(12)]);
         assert!(
@@ -244,11 +284,58 @@ mod tests {
     fn henkan_が_1_つなら捨てない() {
         let batch = vec![
             request("version", Value::Null),
-            request("henkan", json!({ "input": "N" })),
+            request("henkan", json!({ "pieces": [] })),
         ];
         let (keep, stale) = drop_stale(batch);
         assert_eq!(keep.len(), 2);
         assert!(stale.is_empty());
+    }
+
+    #[test]
+    fn pieces_を種類付きの区間として読む() {
+        let input = parse_pieces(&json!([
+            { "kind": "kana", "text": "きょう" },
+            { "kind": "convert", "text": "は" },
+            { "kind": "literal", "text": "Emacs" },
+        ]))
+        .unwrap();
+        assert_eq!(
+            input.pieces,
+            [
+                Piece::kana("きょう"),
+                Piece::convert("は"),
+                Piece::literal("Emacs"),
+            ]
+        );
+        assert!(parse_pieces(&json!([])).unwrap().pieces.is_empty());
+    }
+
+    #[test]
+    fn pieces_の形が違えば理由を返す() {
+        assert!(parse_pieces(&Value::Null).unwrap_err().contains("array"));
+        assert!(
+            parse_pieces(&json!([{ "kind": "roman", "text": "neko" }]))
+                .unwrap_err()
+                .contains("kind")
+        );
+        assert!(
+            parse_pieces(&json!([{ "kind": "kana" }]))
+                .unwrap_err()
+                .contains("text")
+        );
+        // 読み込みを待たずに params の誤りを返す。
+        let (_tx, rx) = mpsc::channel::<()>();
+        let mut loader = EngineLoader::spawn(move || {
+            let _ = rx.recv();
+            Err(anyhow!("never loaded"))
+        });
+        let reply = handle(
+            &mut loader,
+            json!(1),
+            &request("henkan", json!({ "input": "Neko" })),
+        );
+        assert_eq!(reply.response.error.unwrap().code, -32602);
+        assert!(!reply.exit);
     }
 
     #[test]
@@ -273,7 +360,10 @@ mod tests {
         let reply = handle(
             &mut loader,
             json!(1),
-            &request("henkan", json!({ "input": "Neko" })),
+            &request(
+                "henkan",
+                json!({ "pieces": [{ "kind": "convert", "text": "ねこ" }] }),
+            ),
         );
         let error = reply.response.error.expect("error response");
         assert_eq!(error.code, LOAD_FAILED);
@@ -292,7 +382,10 @@ mod tests {
         let reply = handle(
             &mut loader,
             json!(1),
-            &request("henkan", json!({ "input": "Neko" })),
+            &request(
+                "henkan",
+                json!({ "pieces": [{ "kind": "convert", "text": "ねこ" }] }),
+            ),
         );
         let error = reply.response.error.expect("error response");
         assert_eq!(error.code, LOAD_FAILED);
