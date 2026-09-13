@@ -396,6 +396,18 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn 交互形はそのまま出す英字を読みに当てて採点する() {
+        let vocab = Vocab::build(["Emacsで猫が鳴く\tデネコガナク\u{1e}"], 1);
+        let s = scorer_with(vocab, Condition::Interleaved);
+        // 英字はまずそのまま現れるものとして読みに当たる。
+        let cost = s.costs("Emacsでねこがなく", &["Emacsで猫が鳴く".to_string()])[0];
+        let line = "\u{1e}Emacsデ\tEmacsで\u{1e}ネコガ\t猫が\u{1e}ナク\t鳴く";
+        let (expected, _) = reference_interleaved(&s, line);
+        assert!(cost.is_finite());
+        assert!((cost - expected).abs() < 1e-4, "{cost} vs {expected}");
+    }
+
+    #[test]
     fn 交互形の字の問い合わせは出力の字の位置で引く() {
         let vocab = Vocab::build(["猫が鳴く\tネコガナク\u{1e}"], 1);
         let s = scorer_with(vocab.clone(), Condition::Interleaved);

@@ -232,6 +232,35 @@ mod tests {
     }
 
     #[test]
+    fn そのまま出す区間は投機の位置合わせを経ても崩れない() {
+        let mut s = sekken();
+        s.speculator = Some(crate::speculate::Speculator {
+            verifier: Box::new(PrefersWa),
+            weight: 100.0,
+            rounds: 3,
+            width: 2,
+            stats: Default::default(),
+        });
+        let input = Input::new(vec![
+            Piece::literal("Emacs"),
+            Piece::convert("で"),
+            Piece::convert("わがはい"),
+            Piece::literal("Vim"),
+            Piece::convert("だ"),
+        ]);
+        // 文頭の英字は格子の外の head になり、検証器の問い合わせ位置はその分ずれる。
+        let r = s.henkan(&input, 3);
+        assert_eq!(r[0], "Emacsで我輩Vimだ", "{r:?}");
+        assert_eq!(r.len(), 3);
+        // どの候補も英字の区間はそのまま、間の変換区間だけが変わる。
+        assert!(
+            r.iter()
+                .all(|c| c.starts_with("Emacs") && c.contains("Vim")),
+            "{r:?}"
+        );
+    }
+
+    #[test]
     fn 途中のかな区間は辞書を引かずかなのまま入る() {
         let input = Input::new(vec![
             Piece::convert("ねこ"),
