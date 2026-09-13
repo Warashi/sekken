@@ -3,8 +3,9 @@
 ;; SPDX-License-Identifier: MIT
 
 ;;; Commentary:
-;; `sekken-convert' は、ポイント直前の語が大文字境界を含まなければ
-;; その場でひらがなに置き換え、含めば候補を completion-in-region に渡す。
+;; `sekken-convert' は、ポイント直前の語に辞書を引く区間が無ければ
+;; その場でかな（と綴りのままの英字）に置き換え、あれば候補を
+;; completion-in-region に渡す。
 ;; corfu などの completion-in-region-function がそのまま候補 UI になる。
 ;; 同じ候補を capf としても提供し、corfu-auto で入力中に出せるようにする。
 
@@ -78,7 +79,7 @@ corfu-auto など入力中の補完で使う。中断したときは候補なし
 
 (cl-defun sekken-convert ()
   "ポイント直前の語を変換する。
-大文字境界が無ければひらがなに置き換え、あれば候補から選ぶ。
+辞書を引く区間が無ければかなと綴りに置き換え、あれば候補から選ぶ。
 変換する入力が無ければ、このキーの元のコマンド（改行など）を実行する。"
   (interactive)
   (let ((bounds (sekken-input-bounds)))
@@ -93,14 +94,13 @@ corfu-auto など入力中の補完で使う。中断したときは候補なし
     (let* ((start (car bounds))
            (end (cdr bounds))
            (roman (buffer-substring-no-properties start end)))
-      (if (sekken-input-has-boundary-p roman)
+      (if (sekken-input-converts-p roman)
           (if (sekken-input-ready-p roman)
               (completion-in-region start end #'sekken-convert-table)
             (user-error "sekken: 変換境界の後に読みがありません"))
         (delete-region start end)
         (goto-char start)
-        (insert (sekken-kana-roman-to-kana
-                 (car (sekken-input-segment roman))))))))
+        (insert (sekken-input-literal roman))))))
 
 (defun sekken-completion-at-point ()
   "変換境界を含む入力中の語の変換候補を capf として返す。"

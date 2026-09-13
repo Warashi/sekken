@@ -23,6 +23,14 @@
     (should (equal (buffer-string) "きょうは"))
     (should (= (point) (point-max)))))
 
+(ert-deftest sekken-convert/辞書を引く区間が無ければエンジンを呼ばずに置き換える ()
+  (with-temp-buffer
+    (insert "kyouha'Emacs")
+    (sekken-convert-test--with-engine (error "エンジンを呼んではいけない")
+      (sekken-convert))
+    (should (equal (buffer-string) "きょうはEmacs"))
+    (should (= (point) (point-max)))))
+
 (ert-deftest sekken-convert/大文字があれば候補を_completion-in-region_に渡す ()
   (with-temp-buffer
     (insert "Neko")

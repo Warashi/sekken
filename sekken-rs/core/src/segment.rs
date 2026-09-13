@@ -1,6 +1,7 @@
 //! 大文字境界による入力の分割。
 //!
-//! 境界は大文字と `;` のほか、abbrev 区間を開く `/` と、接頭辞・接尾辞の印になる `>`。
+//! 境界は大文字と `;` のほか、abbrev 区間を開く `/`、綴りをそのまま出す literal 区間を
+//! 開く `'`、接頭辞・接尾辞の印になる `>`。
 //! エディタ側（lisp/sekken-input.el）も同じ規則で分けるので、規則を変えるときは両方を直す。
 
 /// 入力を境界で分割した結果。
@@ -15,10 +16,12 @@ pub struct Segmented {
 /// 境界で始まる 1 区間。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Segment {
-    /// 小文字に正規化したローマ字。abbrev なら打った綴りそのまま。
+    /// 小文字に正規化したローマ字。abbrev と literal なら打った綴りそのまま。
     pub text: String,
     /// `/` で開いた区間。かなにせず、綴りを abbrev の見出しとして引く。
     pub abbrev: bool,
+    /// `'` で開いた区間。かなにせず、綴りをそのまま出す。
+    pub literal: bool,
     /// 区間の直後に `>` がある。接頭辞の見出し（`お>`）でも引く。
     pub prefix: bool,
     /// 区間の直前に `>` がある。接尾辞の見出し（`>かい`）でも引く。
@@ -38,20 +41,31 @@ impl Segment {
 ///
 /// `;` `/` `>` で開いた直後の区間に大文字や `;` が続いても、新しい区間は作らず
 /// その区間を続ける（`O>Kai` や `;o>;kai` の `かい` が `>` の印を受け取るため）。
-/// 開いた直後の `/` はその区間を abbrev にする。
-/// abbrev 区間は次の `;` か `/` まで続き、中の大文字は境界にしない。
+/// 開いた直後の `/` はその区間を abbrev に、`'` は literal にする。
+/// abbrev と literal の区間は次の `;` `/` `'` まで続き、中の大文字は境界にしない。
+/// `''` はどこでもリテラルの `'` になる（`'don''t`）。
 pub fn segment(roman: &str) -> Segmented {
     let mut head = String::new();
     let mut segments: Vec<Segment> = Vec::new();
     let mut chars = roman.chars().peekable();
     // 境界で開いたばかりで、まだ文字の無い区間か。
     let mut fresh = false;
-    // `/` で開いた abbrev 区間の中か。
-    let mut in_abbrev = false;
+    // `/` か `'` で開いた、綴りのまま送る区間の中か。
+    let mut in_spelled = false;
     while let Some(c) = chars.next() {
-        if in_abbrev {
-            if c == ';' || c == '/' {
-                in_abbrev = false;
+        if c == '\'' && chars.peek() == Some(&'\'') {
+            chars.next();
+            if let Some(last) = segments.last_mut() {
+                last.text.push('\'');
+            } else {
+                head.push('\'');
+            }
+            fresh = false;
+            continue;
+        }
+        if in_spelled {
+            if c == ';' || c == '/' || c == '\'' {
+                in_spelled = false;
                 segments.push(Segment::convert(""));
                 fresh = true;
             } else if let Some(last) = segments.last_mut() {
@@ -82,16 +96,17 @@ pub fn segment(roman: &str) -> Segmented {
                 segments.push(Segment::convert(""));
             }
             fresh = true;
-        } else if c == '/' {
+        } else if c == '/' || c == '\'' {
             if !fresh {
                 segments.push(Segment::default());
             }
-            // abbrev は綴りで引くので `>` の印は持たない。
+            // 綴りのまま送る区間は `>` の印を持たない。
             *segments.last_mut().unwrap() = Segment {
-                abbrev: true,
+                abbrev: c == '/',
+                literal: c == '\'',
                 ..Segment::default()
             };
-            in_abbrev = true;
+            in_spelled = true;
             fresh = false;
         } else if c == '>' {
             if let Some(last) = segments.last_mut() {
@@ -214,6 +229,67 @@ mod tests {
             segment("Kyou/emacs").segments,
             [Segment::convert("kyou"), abbrev("emacs")]
         );
+    }
+
+    #[test]
+    fn アポストロフィで開いた区間は綴りのまま_literal_になる() {
+        let literal = |text: &str| Segment {
+            text: text.to_string(),
+            literal: true,
+            ..Segment::default()
+        };
+        assert_eq!(
+            segment("'emacs"),
+            Segmented {
+                head: String::new(),
+                segments: vec![literal("emacs")]
+            }
+        );
+        // 中の大文字は境界でなく綴りの一部。
+        assert_eq!(
+            segment("Kyouha'Emacs;wo").segments,
+            [
+                Segment::convert("kyouha"),
+                literal("Emacs"),
+                Segment::convert("wo")
+            ]
+        );
+        // `;` `/` `'` のどれでも閉じ、続きは変換区間になる。abbrev も `'` で閉じる。
+        assert_eq!(
+            segment("'emacs'Ha").segments,
+            [literal("emacs"), Segment::convert("ha")]
+        );
+        assert_eq!(
+            segment("'emacs/Ha").segments,
+            [literal("emacs"), Segment::convert("ha")]
+        );
+        assert_eq!(
+            segment("/emacs'Ha").segments,
+            [
+                Segment {
+                    text: "emacs".to_string(),
+                    abbrev: true,
+                    ..Segment::default()
+                },
+                Segment::convert("ha")
+            ]
+        );
+        // 境界の直後の `'` はその区間を literal にし、`>` の印は持たない。
+        assert_eq!(segment("O>'emacs").segments[1], literal("emacs"));
+        assert_eq!(segment(";'emacs").segments, [literal("emacs")]);
+    }
+
+    #[test]
+    fn 二重アポストロフィはリテラルのアポストロフィになる() {
+        assert_eq!(
+            segment("'don''t").segments,
+            [Segment {
+                text: "don't".to_string(),
+                literal: true,
+                ..Segment::default()
+            }]
+        );
+        assert_eq!(segment("ka''na"), seg("ka'na", &[]));
     }
 
     #[test]

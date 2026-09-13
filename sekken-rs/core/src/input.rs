@@ -86,7 +86,7 @@ impl Input {
     /// 大文字・`;` 境界付きのローマ字から組む。コマンドラインと評価のための入口で、
     /// エディタが自前の変換で作って送るものと同じ結果にする。
     /// 末尾の子音 1 文字は次の母音を待っている途中なので、エディタの表示と同じく
-    /// 変換せずに残す（`n` は単独で「ん」になるので除く）。abbrev 区間は綴りのまま送る。
+    /// 変換せずに残す（`n` は単独で「ん」になるので除く）。abbrev と literal の区間は綴りのまま送る。
     pub fn from_roman(table: &KanaTable, roman: &str) -> Input {
         let seg = segment(roman);
         let mut pieces = Vec::new();
@@ -96,6 +96,8 @@ impl Input {
         pieces.extend(seg.segments.iter().map(|s| {
             if s.abbrev {
                 Piece::abbrev(s.text.clone())
+            } else if s.literal {
+                Piece::literal(s.text.clone())
             } else {
                 Piece::convert(table.roman2kana(&s.text)).with_marks(s.prefix, s.suffix)
             }
@@ -105,7 +107,7 @@ impl Input {
             .last()
             .map_or(seg.head.as_str(), |s| s.text.as_str());
         if let Some(last) = pieces.last_mut()
-            && last.kind != Kind::Abbrev
+            && !matches!(last.kind, Kind::Abbrev | Kind::Literal)
             && let Some(c) = source.chars().last()
             && c.is_ascii_lowercase()
             && !"aeioun".contains(c)
@@ -206,6 +208,21 @@ mod tests {
             ]
         );
         assert!(Input::new(vec![Piece::abbrev("emacs")]).has_convert());
+    }
+
+    #[test]
+    fn アポストロフィで開いた区間は綴りのまま_literal_区間になる() {
+        // 末尾の子音を待つ扱いはしない。
+        assert_eq!(from_roman("'emacs"), [Piece::literal("emacs")]);
+        assert_eq!(
+            from_roman("Kyouha'Emacs;wo"),
+            [
+                Piece::convert("きょうは"),
+                Piece::literal("Emacs"),
+                Piece::convert("を")
+            ]
+        );
+        assert!(!Input::new(vec![Piece::literal("emacs")]).has_convert());
     }
 
     #[test]
