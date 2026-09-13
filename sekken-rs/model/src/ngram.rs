@@ -58,11 +58,13 @@ pub struct BuildParams {
 }
 
 impl Default for BuildParams {
-    /// 20 万記事のモデルで評価して選んだ値。PRIOR は 1 から 1000 まで比べて 300、
-    /// 小さいと疎な bigram を信じすぎて unigram で見れば明らかな誤りを選ぶ。
+    /// Wikipedia + FineWeb-2 の頻度で Dirichlet（prior 30〜1000）と Kneser-Ney
+    /// （割引 0.5〜0.95）を比べ、自分の文で最も良かった Kneser-Ney 割引 0.8。
     fn default() -> BuildParams {
         BuildParams {
-            smoothing: Smoothing::Dirichlet { prior: 300.0 },
+            smoothing: Smoothing::KneserNey {
+                discount: Some(0.8),
+            },
             unknown_char_cost: 4.0,
             min_bigram: 1,
         }
@@ -538,7 +540,12 @@ mod tests {
 
     #[test]
     fn よく出る語の方がコストが低い() {
-        let m = model();
+        // Kneser-Ney の unigram は継続確率（異なり先行数）なので、頻度の差は Dirichlet で見る。
+        let p = BuildParams {
+            smoothing: Smoothing::Dirichlet { prior: 3.0 },
+            ..BuildParams::default()
+        };
+        let m = NgramModel::build(&counter().counts(1), &p).unwrap();
         let neko = m.id("猫");
         let inu = m.id("犬");
         assert!(m.transition_cost(None, neko, 1) < m.transition_cost(None, inu, 1));
@@ -566,10 +573,14 @@ mod tests {
     }
 
     #[test]
-    fn 既定の平滑化は旧来の_dirichlet_の式と一致する() {
+    fn dirichlet_は旧来の式と一致する() {
         let c = counter();
         let counts = c.counts(1);
-        let m = c.freeze().unwrap();
+        let p = BuildParams {
+            smoothing: Smoothing::Dirichlet { prior: 300.0 },
+            ..BuildParams::default()
+        };
+        let m = NgramModel::build(&counts, &p).unwrap();
         let (neko, ga) = (c.vocab["猫"], c.vocab["が"]);
         let vocab = counts.tokens.len() as f64;
         let uni = (counts.unigram[ga as usize] as f64 + 1.0) / (counts.total as f64 + vocab);
