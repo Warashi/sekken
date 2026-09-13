@@ -43,7 +43,10 @@ fn is_hiragana(c: char) -> bool {
 
 /// 読みの途中に置けない字（きゃ の ゃ）。
 fn is_small_kana(c: char) -> bool {
-    matches!(c, 'ぁ' | 'ぃ' | 'ぅ' | 'ぇ' | 'ぉ' | 'ゃ' | 'ゅ' | 'ょ' | 'ゎ')
+    matches!(
+        c,
+        'ぁ' | 'ぃ' | 'ぅ' | 'ぇ' | 'ぉ' | 'ゃ' | 'ゅ' | 'ょ' | 'ゎ'
+    )
 }
 
 /// 区間を「読みになるかな」と「末尾の記号」に分ける。
@@ -299,7 +302,11 @@ mod tests {
 
     #[test]
     fn かな区間とそのまま出す区間はその文字列だけを候補にする() {
-        let pieces = [Piece::kana("きょう"), Piece::literal("Emacs"), Piece::convert("か")];
+        let pieces = [
+            Piece::kana("きょう"),
+            Piece::literal("Emacs"),
+            Piece::convert("か"),
+        ];
         assert_eq!(
             candidates_at(&dict(), &pieces, 0),
             [Candidate::ranked("きょう", 1, 0)]
@@ -313,6 +320,10 @@ mod tests {
     #[test]
     fn 変換区間でない次の区間は送り仮名にしない() {
         let pieces = [Piece::convert("か"), Piece::kana("く")];
-        assert!(candidates_at(&dict(), &pieces, 0).iter().all(|c| c.span == 1));
+        assert!(
+            candidates_at(&dict(), &pieces, 0)
+                .iter()
+                .all(|c| c.span == 1)
+        );
     }
 }

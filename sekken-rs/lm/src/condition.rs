@@ -69,7 +69,9 @@ mod tests {
     #[test]
     fn カタカナは読みをカタカナにして前置する() {
         assert_eq!(
-            Condition::Katakana.prefix("わがはいはねこである。").as_deref(),
+            Condition::Katakana
+                .prefix("わがはいはねこである。")
+                .as_deref(),
             Some("ワガハイハネコデアル。")
         );
         assert_eq!(

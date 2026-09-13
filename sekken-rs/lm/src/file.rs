@@ -52,7 +52,9 @@ fn read_condition(rest: &[u8]) -> Result<Condition> {
         Condition::None
     };
     if condition == Condition::Roman {
-        bail!("lm conditioned on roman input is no longer supported; retrain with katakana or interleaved reading");
+        bail!(
+            "lm conditioned on roman input is no longer supported; retrain with katakana or interleaved reading"
+        );
     }
     Ok(condition)
 }

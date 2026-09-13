@@ -146,13 +146,19 @@ mod tests {
 
     #[test]
     fn 末尾の子音はエディタの表示と同じく変換せずに残す() {
-        assert_eq!(from_roman("KaK"), [Piece::convert("か"), Piece::convert("k")]);
+        assert_eq!(
+            from_roman("KaK"),
+            [Piece::convert("か"), Piece::convert("k")]
+        );
         assert_eq!(from_roman("Kak"), [Piece::convert("かk")]);
         assert_eq!(from_roman("nek"), [Piece::kana("ねk")]);
         // n は単独で「ん」になり、母音や記号は待つものが無い。
         assert_eq!(from_roman("Kan"), [Piece::convert("かん")]);
         assert_eq!(from_roman("Neko."), [Piece::convert("ねこ。")]);
-        assert_eq!(from_roman("Neko;"), [Piece::convert("ねこ"), Piece::convert("")]);
+        assert_eq!(
+            from_roman("Neko;"),
+            [Piece::convert("ねこ"), Piece::convert("")]
+        );
     }
 
     #[test]
