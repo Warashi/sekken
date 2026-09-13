@@ -95,16 +95,6 @@ impl Tokenizer {
     }
 }
 
-/// ipadic の素性 `品詞,品詞細分類1,細分類2,細分類3,活用型,活用形,原形,読み,発音` の
-/// 先頭 6 欄（品詞から活用形まで）を、n-gram の品詞クラスの最細の名前として返す。
-/// 素性の部分文字列を返し、複製しない。6 欄に満たなければ素性全体。
-pub fn class_of(feature: &str) -> &str {
-    match feature.match_indices(',').nth(5) {
-        Some((end, _)) => &feature[..end],
-        None => feature,
-    }
-}
-
 /// ipadic の素性 `品詞,品詞細分類1,細分類2,細分類3,活用型,活用形,原形,読み,発音` から読みを取る。
 fn reading_of(feature: &str) -> Option<String> {
     let fields: Vec<&str> = feature.split(',').collect();
@@ -171,17 +161,6 @@ mod tests {
             tokens.push(s.to_string())
         });
         assert_eq!(tokens, ["名前", "は", "まだ", "無い", "。"]);
-    }
-
-    #[test]
-    fn ipadic_の素性から品詞クラスを取る() {
-        assert_eq!(
-            class_of("動詞,自立,*,*,五段・カ行イ音便,連用タ接続,書く,カイ,カイ"),
-            "動詞,自立,*,*,五段・カ行イ音便,連用タ接続"
-        );
-        assert_eq!(class_of("名詞,一般,*,*,*,*"), "名詞,一般,*,*,*,*");
-        assert_eq!(class_of("名詞,一般,*,*,*,*,猫"), "名詞,一般,*,*,*,*");
-        assert_eq!(class_of("記号,一般"), "記号,一般");
     }
 
     #[test]

@@ -84,113 +84,36 @@ impl<S: Segmenter> NgramScorer<S> {
         id
     }
 
-    /// `prev2 prev` の後に `next` が来るコスト。`prev` の `None` は文頭、
-    /// `prev2` の `None` は 2 つ前が無いこと、`next` の `None` は文末。
-    fn cost(&self, prev2: Option<Ctx>, prev: Ctx, next: Option<Word>) -> f64 {
+    fn cost(&self, prev: Option<Word>, next: Option<Word>) -> f64 {
+        let prev_id = match prev {
+            None => Some(crate::ngram::BOS),
+            Some(p) => p.id,
+        };
         let (next_id, chars) = match next {
             None => (Some(crate::ngram::EOS), 0),
             Some(n) => (n.id, n.chars),
         };
-        self.model
-            .transition_cost3(prev2.and_then(Ctx::id), prev.id(), next_id, chars)
-    }
-
-    /// 表層形の末尾 2 語。1 語なら前の方は `None`、語が無ければ `None`。
-    /// `with_words` は覚えた列を借りたまま閉包を呼ぶので、入れ子にせず複製して返す。
-    fn last_two(&self, surface: &str) -> Option<(Option<Word>, Word)> {
-        self.with_words(surface, |w| {
-            Some((w.len().checked_sub(2).map(|i| w[i]), *w.last()?))
-        })
-    }
-
-    /// 表層形の先頭 2 語。
-    fn first_two(&self, surface: &str) -> (Option<Word>, Option<Word>) {
-        self.with_words(surface, |w| (w.first().copied(), w.get(1).copied()))
-    }
-
-    /// 表層形の境界をまたぐ遷移のコスト。右の先頭の語は左の末尾 2 語を、右の 2 語目は
-    /// 左の末尾の語と右の先頭の語を文脈にするので、右の 2 語目までがここに入る。
-    fn boundary(&self, left2: Option<&str>, left: Option<&str>, right: Option<&str>) -> f64 {
-        let trigram = self.uses_left2();
-        // 左に語が無い（分かち書きが空）ことは無いはずだが、あれば文頭とみなす。
-        // trigram の無いモデルでは 2 つ前を引かず、境界の計算を bigram だけの頃と同じ量に保つ。
-        let (prev2, prev) = match left.and_then(|l| self.last_two(l)) {
-            None => (None, Ctx::Bos),
-            Some((_, last)) if !trigram => (None, Ctx::Word(last)),
-            Some((second_last, last)) => {
-                let prev2 = match second_last {
-                    Some(w) => Ctx::Word(w),
-                    None => match left2.and_then(|l2| self.last_two(l2)) {
-                        None => Ctx::Bos,
-                        Some((_, w)) => Ctx::Word(w),
-                    },
-                };
-                (Some(prev2), Ctx::Word(last))
-            }
-        };
-        let (first, second) = match right {
-            None => (None, None),
-            Some(r) => self.first_two(r),
-        };
-        let mut cost = self.cost(prev2, prev, first);
-        // 右の 2 語目は trigram でだけ左に依る。無ければ `unigram` 側に置く。
-        if let (true, Some(first), Some(second)) = (trigram, first, second) {
-            cost += self.cost(Some(prev), Ctx::Word(first), Some(second));
-        }
-        cost
-    }
-}
-
-/// 遷移の文脈になる語。
-#[derive(Clone, Copy)]
-enum Ctx {
-    /// 文頭。
-    Bos,
-    /// 表層形を分けた語。未知語なら id が無い。
-    Word(Word),
-}
-
-impl Ctx {
-    fn id(self) -> Option<u32> {
-        match self {
-            Ctx::Bos => Some(crate::ngram::BOS),
-            Ctx::Word(w) => w.id,
-        }
+        self.model.transition_cost(prev_id, next_id, chars)
     }
 }
 
 impl<S: Segmenter> Scorer for NgramScorer<S> {
-    /// 表層形の中の遷移。trigram を使うなら 3 語目から（先頭 2 語は左の文脈に依るので
-    /// `trigram` に入る）、使わないなら 2 語目から。
+    /// 表層形の中の遷移。2 語目から。
     fn unigram(&self, surface: &str) -> f64 {
-        let internal = |words: &[Word]| -> f64 {
-            if self.uses_left2() {
-                words
-                    .windows(3)
-                    .map(|w| self.cost(Some(Ctx::Word(w[0])), Ctx::Word(w[1]), Some(w[2])))
-                    .sum()
-            } else {
-                words
-                    .windows(2)
-                    .map(|w| self.cost(None, Ctx::Word(w[0]), Some(w[1])))
-                    .sum()
-            }
-        };
-        self.with_words(surface, internal)
+        self.with_words(surface, |words| {
+            words
+                .windows(2)
+                .map(|w| self.cost(Some(w[0]), Some(w[1])))
+                .sum()
+        })
     }
 
-    /// 2 つ前を見ないときの接続コスト。モデルが trigram を持つときは左が 1 語だと
-    /// 2 つ前を文頭とみなしてしまうので、そのときは `trigram` を使う。
     fn bigram(&self, left: Option<&str>, right: Option<&str>) -> f64 {
-        self.trigram(None, left, right)
-    }
-
-    fn trigram(&self, left2: Option<&str>, left: Option<&str>, right: Option<&str>) -> f64 {
-        self.boundary(left2, left, right)
-    }
-
-    fn uses_left2(&self) -> bool {
-        self.model.has_trigram()
+        // 左が文頭なら prev は None（BOS）。左に語が無い（分かち書きが空）ことは
+        // 無いはずだが、あれば文頭とみなす。
+        let prev = left.and_then(|s| self.with_words(s, |w| w.last().copied()));
+        let next = right.and_then(|s| self.with_words(s, |w| w.first().copied()));
+        self.cost(prev, next)
     }
 }
 
@@ -221,62 +144,29 @@ mod tests {
     }
 
     #[test]
-    fn 表層形の_3_語目からの内部遷移を_unigram_として足す() {
+    fn 表層形の_2_語目からの内部遷移を_unigram_として足す() {
         let s = scorer();
         assert!(s.unigram("が鳴く") < s.unigram("が書く"));
-        // 先頭 2 語は左の文脈に依るので境界の側で数える。
+        // 先頭の語は左の文脈に依るので境界の側で数える。
         assert_eq!(s.unigram("猫"), 0.0);
-        assert_eq!(s.unigram("鳴く"), 0.0);
-    }
-
-    #[test]
-    fn 境界の遷移は右の_2_語目まで含み_2_つ前の表層形を文脈にする() {
-        let s = scorer();
-        // 「猫 が」の後の 鳴 は trigram にあり、「書 が」の後は bigram に落ちる。
-        assert!(
-            s.trigram(Some("猫"), Some("が"), Some("鳴く"))
-                < s.trigram(Some("書"), Some("が"), Some("鳴く"))
-        );
-        // 右の 2 語目は左の末尾の語と右の先頭の語を文脈にする。
-        let whole = s.trigram(None, Some("猫"), Some("が鳴"));
-        let split =
-            s.trigram(None, Some("猫"), Some("が")) + s.trigram(Some("猫"), Some("が"), Some("鳴"));
-        assert!((whole - split).abs() < 1e-9, "{whole} vs {split}");
-        // 左が 2 語以上なら 2 つ前は左の中にある。
-        assert_eq!(
-            s.trigram(Some("犬"), Some("猫が"), Some("鳴く")),
-            s.trigram(Some("猫"), Some("が"), Some("鳴く"))
-        );
-        assert!(s.uses_left2());
-    }
-
-    #[test]
-    fn trigram_の無いモデルでは_2_つ前を見ない() {
-        let mut m = NgramCounter::new();
-        for _ in 0..500 {
-            m.add_sentence(["猫", "が", "鳴", "く"]);
-        }
-        let params = crate::ngram::BuildParams {
-            trigram: false,
-            ..Default::default()
-        };
-        let model = crate::ngram::NgramModel::build(&m.counts(1), &params).unwrap();
-        let s = NgramScorer::new(model, CharSegmenter);
-        assert!(!s.uses_left2());
-        assert_eq!(
-            s.trigram(Some("猫"), Some("が"), Some("鳴く")),
-            s.bigram(Some("が"), Some("鳴く"))
-        );
-        // 2 語目の遷移は境界でなく unigram 側に入る（bigram だけの頃と同じ分け方）。
-        assert_eq!(
-            s.bigram(Some("が"), Some("鳴く")),
-            s.bigram(Some("が"), Some("鳴"))
-        );
         assert!(s.unigram("鳴く") > 0.0);
         let path =
             s.bigram(None, Some("猫")) + s.bigram(Some("猫"), Some("が鳴く")) + s.unigram("が鳴く");
         let whole = s.bigram(None, Some("猫が鳴く")) + s.unigram("猫が鳴く");
         assert!((path - whole).abs() < 1e-9, "{path} vs {whole}");
+    }
+
+    #[test]
+    fn 分かち書きが空の表層形は文頭とみなす() {
+        struct EmptySegmenter;
+        impl Segmenter for EmptySegmenter {
+            fn split(&self, _: &str, _: &mut dyn FnMut(&str)) {}
+        }
+        let mut m = NgramCounter::new();
+        m.add_sentence(["猫", "が"]);
+        let s = NgramScorer::new(m.freeze().unwrap(), EmptySegmenter);
+        assert_eq!(s.unigram("猫"), 0.0);
+        assert_eq!(s.bigram(Some("猫"), Some("が")), s.bigram(None, None));
     }
 
     #[test]
