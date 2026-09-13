@@ -47,9 +47,6 @@ pub struct EngineArgs {
     /// 読みをそのままかなにした候補に加えるコスト
     #[arg(long, default_value_t = sekken_core::lattice::KANA_PENALTY)]
     pub kana_penalty: f64,
-    /// 候補を分かち書きした語 1 つごとに加えるコスト（正なら長い 1 語を有利にする）
-    #[arg(long, default_value_t = 0.0)]
-    pub word_penalty: f64,
 }
 
 pub type Engine = Sekken<NgramScorer<Tokenizer>>;
@@ -96,7 +93,7 @@ impl EngineArgs {
         Ok(Sekken {
             table: KanaTable::default_table(),
             dict,
-            scorer: NgramScorer::new(model, tokenizer).with_word_penalty(self.word_penalty),
+            scorer: NgramScorer::new(model, tokenizer),
             weights: sekken_core::lattice::Weights {
                 rank: self.rank_weight,
                 kana_penalty: self.kana_penalty,
