@@ -20,6 +20,7 @@
 (require 'sekken-server)
 (require 'sekken-overlay)
 (require 'sekken-convert)
+(require 'sekken-live)
 (require 'sekken-im)
 
 (defcustom sekken-convert-key "C-j"
@@ -41,9 +42,9 @@
   :keymap sekken-mode-map
   (if sekken-mode
       (progn
-        (add-hook 'post-command-hook #'sekken-overlay-update nil t)
+        (add-hook 'post-command-hook #'sekken-live-update nil t)
         (add-hook 'completion-at-point-functions #'sekken-completion-at-point nil t))
-    (remove-hook 'post-command-hook #'sekken-overlay-update t)
+    (remove-hook 'post-command-hook #'sekken-live-update t)
     (remove-hook 'completion-at-point-functions #'sekken-completion-at-point t)
     (sekken-overlay-clear)
     (when (and (equal current-input-method sekken-im-name)

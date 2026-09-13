@@ -1,19 +1,18 @@
-;;; sekken-overlay.el --- 入力中の語をかなで表示する overlay -*- lexical-binding: t -*-
+;;; sekken-overlay.el --- 入力中の語を置き換えて見せる overlay -*- lexical-binding: t -*-
 
 ;; SPDX-License-Identifier: MIT
 
 ;;; Commentary:
 ;; バッファの中身はローマ字のまま、ポイント直前の語だけ overlay の
-;; display でかなに見せる。ポイントが語の末尾にあるときだけ出す。
-;; 語の途中にポイントがあると display 置換の中に入って動きが読めなくなる。
+;; display で別の文字列に見せる。何を見せるかは呼ぶ側（sekken-live）が決める。
+;; ポイントが語の末尾にあるときだけ出す。語の途中にポイントがあると
+;; display 置換の中に入って動きが読めなくなる。
 
 ;;; Code:
 
-(require 'sekken-input)
-
 (defface sekken-preedit
   '((t :inherit underline))
-  "入力中の語のかな表示に使う face。"
+  "入力中の語の表示に使う face。"
   :group 'sekken)
 
 (defvar-local sekken-overlay--overlay nil
@@ -25,20 +24,13 @@
     (delete-overlay sekken-overlay--overlay)
     (setq sekken-overlay--overlay nil)))
 
-(defun sekken-overlay-update ()
-  "ポイント直前の語に合わせて overlay を張り直す。"
-  (let ((bounds (sekken-input-bounds)))
-    (if (null bounds)
-        (sekken-overlay-clear)
-      (let* ((start (car bounds))
-             (end (cdr bounds))
-             (roman (buffer-substring-no-properties start end))
-             (display (sekken-input-display roman)))
-        (unless sekken-overlay--overlay
-          (setq sekken-overlay--overlay (make-overlay start end nil t nil)))
-        (move-overlay sekken-overlay--overlay start end)
-        (overlay-put sekken-overlay--overlay 'display display)
-        (overlay-put sekken-overlay--overlay 'face 'sekken-preedit)))))
+(defun sekken-overlay-show (start end display)
+  "START から END の語を DISPLAY で見せる overlay を張り直す。"
+  (unless sekken-overlay--overlay
+    (setq sekken-overlay--overlay (make-overlay start end nil t nil)))
+  (move-overlay sekken-overlay--overlay start end)
+  (overlay-put sekken-overlay--overlay 'display display)
+  (overlay-put sekken-overlay--overlay 'face 'sekken-preedit))
 
 (provide 'sekken-overlay)
 ;;; sekken-overlay.el ends here

@@ -54,6 +54,7 @@ CANCEL-ON-INPUT が non-nil なら打鍵で待つのをやめ、候補なしと�
 明示的な変換が同じ入力を待てば、そちらがエラーを見せる。"
   (cond
    ((sekken-convert-cached roman) nil)
+   ((equal sekken-convert--in-flight roman) nil)
    (sekken-convert--in-flight
     (setq sekken-convert--wanted (cons roman notify)))
    (t
@@ -64,11 +65,12 @@ CANCEL-ON-INPUT が non-nil なら打鍵で待つのをやめ、候補なしと�
          (lambda (candidates)
            (setq sekken-convert--in-flight nil
                  sekken-convert--cache (cons roman candidates))
+           ;; 溜めた入力を先に送る。NOTIFY が同じ入力を頼み直しても飛ばさない。
            (let ((wanted sekken-convert--wanted))
              (setq sekken-convert--wanted nil)
-             (funcall notify)
              (when wanted
-               (sekken-convert-prefetch (car wanted) (cdr wanted)))))
+               (sekken-convert-prefetch (car wanted) (cdr wanted))))
+           (funcall notify))
          ;; 失敗しても溜めた入力は送り直さない。次の打鍵が送る。
          (lambda ()
            (setq sekken-convert--in-flight nil

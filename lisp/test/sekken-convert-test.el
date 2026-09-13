@@ -147,6 +147,17 @@ REQUESTS の各要素は (PIECES . ON-SUCCESS)。返事は呼び出し側が ON-
       (should (= (length requests) 2))
       (should (equal (sekken-convert-cached "Neko") '("猫"))))))
 
+(ert-deftest sekken-convert/返事の中で同じ入力を頼み直しても二重に送らない ()
+  (let (requests)
+    (sekken-convert-test--with-async-engine requests
+      (sekken-convert-prefetch "Ne"
+                               (lambda () (sekken-convert-prefetch "Neko" #'ignore)))
+      (sekken-convert-prefetch "Neko" #'ignore)
+      (funcall (cdr (car requests)) '("ね"))
+      (should (= (length requests) 2))
+      (should (equal sekken-convert--in-flight "Neko"))
+      (should-not sekken-convert--wanted))))
+
 (ert-deftest sekken-convert/先読みが失敗すれば次の入力を送れる ()
   (let (requests failures)
     (cl-letf (((symbol-function 'sekken-server-henkan-async)
