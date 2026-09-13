@@ -1,5 +1,6 @@
 pub mod candidates;
 pub mod dictionary;
+pub mod input;
 pub mod kana;
 pub mod lattice;
 pub mod rerank;
