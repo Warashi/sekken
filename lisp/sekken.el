@@ -52,7 +52,6 @@
     (remove-hook 'post-command-hook #'sekken-live-after-command t)
     (remove-hook 'before-change-functions #'sekken-input-before-change t)
     (remove-hook 'after-change-functions #'sekken-input-after-change t)
-    (sekken-input-forget-committed)
     (sekken-input-forget-origin)
     (sekken-overlay-clear)
     (when (and (equal current-input-method sekken-im-name)

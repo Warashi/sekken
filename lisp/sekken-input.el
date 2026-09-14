@@ -51,45 +51,23 @@ END が BEG の削除は打ち始めにしない。"
              (memq this-command sekken-input-typing-commands))
     (setq sekken-input--origin (copy-marker beg))))
 
-(defvar-local sekken-input--committed nil
-  "最後に確定した文字列の末尾の marker。無ければ nil。
-確定の結果が英字で終わるとき、その英字をもう一度語として拾わないための境。
-marker は直前への挿入で進まないので、確定の直後に打った文字は境の後ろに付く。")
-
-(defun sekken-input-remember-committed (position)
-  "確定した文字列の末尾 POSITION を覚える。"
-  (sekken-input-forget-committed)
-  (setq sekken-input--committed (copy-marker position)))
-
-(defun sekken-input-forget-committed ()
-  "確定した文字列の末尾を忘れる。"
-  (when sekken-input--committed
-    (set-marker sekken-input--committed nil)
-    (setq sekken-input--committed nil)))
-
 (defun sekken-input-before-change (beg _end)
-  "BEG から始まる編集が打ち始めか確定した文字列より前に触れば忘れる。
+  "BEG から始まる編集が打ち始めより前に触れば打ち始めを忘れる。
 `before-change-functions' 用。打ち始めへの挿入と、それより後ろの削除は
 語の中の編集なので忘れない。削除は marker を動かすので、動く前に見る。"
   (when (and sekken-input--origin
              (< beg sekken-input--origin))
-    (sekken-input-forget-origin))
-  (when (and sekken-input--committed
-             (< beg sekken-input--committed))
-    (sekken-input-forget-committed)))
+    (sekken-input-forget-origin)))
 
 (defun sekken-input-bounds ()
   "ポイント直前の入力中の語の (START . END)。無ければ nil。
-打ち始めと、最後に確定した文字列の末尾より前には伸びない。"
+打ち始めより前には伸びない。"
   (when (and sekken-input--origin
              (< sekken-input--origin (point)))
     (let ((end (point))
           (start (save-excursion
                    (skip-chars-backward sekken-input--chars)
-                   (point))))
-      (dolist (limit (list sekken-input--origin sekken-input--committed))
-        (when (and limit (> limit start))
-          (setq start (marker-position limit))))
+                   (max (point) sekken-input--origin))))
       (when (< start end)
         (cons start end)))))
 

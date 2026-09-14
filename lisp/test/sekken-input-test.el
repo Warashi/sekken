@@ -198,34 +198,5 @@
   (should (sekken-input-has-boundary-p "o>kai"))
   (should-not (sekken-input-ready-p "O>")))
 
-(ert-deftest sekken-input/確定した末尾より前には語が伸びない ()
-  (with-temp-buffer
-    (sekken-test-type "きょうはEmacs")
-    (sekken-input-remember-committed (point))
-    (should (null (sekken-input-bounds)))
-    (sekken-test-type "no")
-    (should (equal (sekken-input-bounds) (cons 10 12)))
-    (goto-char 8)
-    (should (null (sekken-input-bounds)))))
-
-(ert-deftest sekken-input/確定した文字に触る編集で末尾を忘れる ()
-  (with-temp-buffer
-    (sekken-test-type "きょうはEmacs")
-    (sekken-input-remember-committed (point))
-    (sekken-input-before-change 9 10)
-    (delete-region 9 10)
-    (should (equal (sekken-input-bounds) (cons 5 9)))))
-
-(ert-deftest sekken-input/確定した末尾への挿入とその後ろの削除では忘れない ()
-  (with-temp-buffer
-    (sekken-test-type "きょうはEmacs")
-    (sekken-input-remember-committed (point))
-    (sekken-input-before-change 10 10)
-    (sekken-test-type "no")
-    (should (equal (sekken-input-bounds) (cons 10 12)))
-    (sekken-input-before-change 11 12)
-    (delete-region 11 12)
-    (should (equal (sekken-input-bounds) (cons 10 11)))))
-
 (provide 'sekken-input-test)
 ;;; sekken-input-test.el ends here
