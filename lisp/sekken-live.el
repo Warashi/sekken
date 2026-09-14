@@ -76,10 +76,20 @@
     delete-backward-char backward-delete-char-untabify
     sekken-convert undo undo-redo undo-only)
   "入力中の語を続けるので、走る前に確定しないコマンド。
-これ以外のコマンドは、ポイントを動かさなくても走る前に語を確定する。
-後退削除を別のコマンドに割り当てていればここに足す。"
+これに加えて、そのバッファで DEL と backspace に割り当てられたコマンドも
+後退削除として語を続ける（`sekken-live-continue-p'）。それ以外のコマンドは、
+ポイントを動かさなくても走る前に語を確定する。"
   :type '(repeat function)
   :group 'sekken)
+
+(defun sekken-live-continue-p (command)
+  "COMMAND が入力中の語を続けるか。
+`sekken-live-continue-commands' にあるか、このバッファで DEL か backspace に
+割り当てられていれば続ける。org-mode のように major mode が後退削除を
+別のコマンドに張り替えても、キーで見れば漏れない。"
+  (or (memq command sekken-live-continue-commands)
+      (eq command (key-binding [?\d]))
+      (eq command (key-binding [backspace]))))
 
 (defvar-local sekken-live--pending nil
   "語を続けるコマンドの前にポイント直前にあった入力中の語 (START END ROMAN)。
@@ -100,7 +110,7 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
   (let ((bounds (sekken-input-bounds)))
     (when bounds
       (let ((roman (buffer-substring-no-properties (car bounds) (cdr bounds))))
-        (if (memq this-command sekken-live-continue-commands)
+        (if (sekken-live-continue-p this-command)
             (setq sekken-live--pending
                   (list (copy-marker (car bounds) t)
                         (copy-marker (cdr bounds))

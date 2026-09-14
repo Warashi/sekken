@@ -266,6 +266,22 @@
           (should (equal (buffer-string) "Neko"))
           (insert "g"))))))
 
+(ert-deftest sekken-live/DEL_に割り当てられたコマンドは列挙に無くても走る前に確定しない ()
+  ;; org-mode は DEL を org-delete-backward-char に張り替える。
+  (with-temp-buffer
+    (use-local-map (let ((map (make-sparse-keymap)))
+                     (define-key map (kbd "DEL") #'sekken-live-test-delete)
+                     (define-key map [backspace] #'sekken-live-test-backspace)
+                     map))
+    (dolist (command '(sekken-live-test-delete sekken-live-test-backspace))
+      (erase-buffer)
+      (insert "Neko")
+      (sekken-live-test--with-cache '(("Neko" "猫"))
+        (sekken-live-test--command command
+          (should (equal (buffer-string) "Neko"))
+          (delete-char -1)))
+      (should (equal (buffer-string) "Nek")))))
+
 (ert-deftest sekken-live/読み取り専用なら走る前に確定せずエラーも出さない ()
   (with-temp-buffer
     (insert "Neko")
