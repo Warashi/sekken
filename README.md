@@ -62,7 +62,11 @@ SKK 風の一括変換による Emacs 用日本語入力。
 
 区間の種類はエディタが決め、エンジンは文字から推測しない。打ち終えていない末尾の
 子音（`Kak` の `k`）は変換せずに送ると、エンジンが送り仮名の子音として扱う。
-応答は `{"candidates": ["今日はEmacs", ...]}`。他に `version`、`shutdown`、通知 `exit` がある。
+応答は `{"candidates": ["今日はEmacs", ...]}`。他に `version`、`register`、`shutdown`、通知 `exit` がある。
+
+`register` の params は `{"yomi": "わらし", "surface": "藁市"}`。送りなしの語として
+`--user-jisyo` のユーザー辞書に足し、そのファイルに書く。`--user-jisyo` が無い、語に `/` や `;` を
+含む、ファイルに書けない、のどれもエラーで断り、エンジンは動き続ける。
 
 ## 準備
 
@@ -91,6 +95,9 @@ nix build
 ```sh
 ./result/bin/sekken henkan --dic system.dic.zst --model model.zst --jisyo SKK-JISYO.L WagahaihaNekodearu.
 ```
+
+ユーザー辞書があれば `--user-jisyo user-jisyo` も渡す。形式は UTF-8 の SKK-JISYO と同じで、
+送りなしの見出しだけを読む。
 
 ## Emacs での設定
 
@@ -138,6 +145,19 @@ org-mode のように major mode が張り替えていても語を続ける。�
 起動後の idle 時に本番と同じ変換を一度通すため、通常は最初の入力より前に
 辞書とモデルの読み込みが終わる。打鍵で先読みが中断された場合は次の idle 時に再試行する。
 落ちた場合は次の変換で再起動し、連続して落ちたら `M-x sekken-server-restart` を待つ。
+
+### ユーザー辞書
+
+SKK 辞書に無い固有名詞や自分の語彙は `M-x sekken-register` で足す。置き換わった語を
+バッファで直し、直した語を region で選んで呼ぶと、読みは最後に置き換えた語のかなが
+既定値になるので、語も読みも打ち直さずに済む。region が無ければ語も聞く。読みはローマ字で
+打ってもかなになり、大文字や `;` の境界は読みに残らない。登録できるのは送りなしの語だけで、
+`/` と `;` を含む語は辞書の形式を壊すので断る。
+
+登録した語はエンジンがユーザー辞書（`sekken-server-user-jisyo`。既定は
+`user-emacs-directory` の `sekken-jisyo`）に書き、次の変換から SKK 辞書より先に引く。
+SKK 辞書に同じ読みの語があっても、単独や助詞付きなら登録した語が 1 位になる。
+文脈によって別の語が勝つことはある。
 
 ## ライセンス
 
