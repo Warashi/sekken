@@ -62,30 +62,54 @@ undo が置き換えを取り消してローマ字が同じ位置に戻ったと
     (set-marker (car sekken-input--finished) nil)
     (setq sekken-input--finished nil)))
 
+(defvar-local sekken-input--restored nil
+  "打つコマンド以外が、最後に置き換えた語の位置に戻した綴りの末尾。
+redo は挿入を戻してもポイントを挿入位置の先頭に置くので、コマンドの後に
+ポイントがそこに残っていれば、ここまで動かして語に戻す。")
+
+(defun sekken-input--restored-p (beg end)
+  "BEG から END への挿入が、最後に置き換えた語の位置に綴りの先頭部分を戻したか。"
+  (and sekken-input--finished
+       (marker-buffer (car sekken-input--finished))
+       (= beg (marker-position (car sekken-input--finished)))
+       (<= (- end beg) (length (cdr sekken-input--finished)))
+       (string-prefix-p (buffer-substring-no-properties beg end)
+                        (cdr sekken-input--finished))))
+
 (defun sekken-input-revive-word ()
-  "最後に置き換えた語のローマ字の先頭部分が同じ位置に戻り、ポイントがその末尾にあれば語に戻す。
+  "最後に置き換えた語のローマ字の先頭部分が同じ位置に戻り、ポイントがその中にあれば語に戻す。
 undo が置き換えを取り消したときに、打ち始めからその語を続けられるようにする。
 self-insert は打鍵を 20 文字ずつまとめて undo するので、戻るのは綴り全体とは
-限らず先頭部分になる。打ち始めがあれば何もしない。"
-  (when (and (null sekken-input--origin)
-             sekken-input--finished
-             (marker-buffer (car sekken-input--finished)))
-    (let ((start (marker-position (car sekken-input--finished)))
-          (roman (cdr sekken-input--finished)))
-      (when (and (> (point) start)
-                 (<= (- (point) start) (length roman))
-                 (string-prefix-p (buffer-substring-no-properties start (point)) roman))
-        (setq sekken-input--origin (copy-marker start))))))
+限らず先頭部分になる。redo のようにコマンドが綴りを戻してポイントをその先頭に
+残していれば、末尾へ動かしてから語に戻す。打ち始めがあれば何もしない。"
+  (let ((restored sekken-input--restored))
+    (setq sekken-input--restored nil)
+    (when (and sekken-input--finished
+               (marker-buffer (car sekken-input--finished)))
+      (let ((start (marker-position (car sekken-input--finished)))
+            (roman (cdr sekken-input--finished)))
+        ;; undo で語が空まで縮んだ後は打ち始めが残ったままなので、
+        ;; ポイントを動かすのは打ち始めの有無によらない。
+        (when (and restored (= (point) start))
+          (goto-char restored))
+        (when (and (null sekken-input--origin)
+                   (> (point) start)
+                   (<= (- (point) start) (length roman))
+                   (string-prefix-p (buffer-substring-no-properties start (point)) roman))
+          (setq sekken-input--origin (copy-marker start)))))))
 
 (defun sekken-input-after-change (beg end old-length)
   "文字を打つコマンドが BEG に文字を入れたら、打ち始めが無ければそこを打ち始めにする。
 `after-change-functions' 用。OLD-LENGTH が 0 でない置き換えと、
-END が BEG の削除は打ち始めにしない。"
-  (when (and (null sekken-input--origin)
-             (zerop old-length)
-             (< beg end)
-             (memq this-command sekken-input-typing-commands))
-    (setq sekken-input--origin (copy-marker beg))))
+END が BEG の削除は打ち始めにしない。打つコマンド以外が最後に置き換えた語の
+綴りを戻したなら、その末尾を覚える（`sekken-input-revive-word'）。"
+  (when (and (zerop old-length)
+             (< beg end))
+    (if (memq this-command sekken-input-typing-commands)
+        (unless sekken-input--origin
+          (setq sekken-input--origin (copy-marker beg)))
+      (when (sekken-input--restored-p beg end)
+        (setq sekken-input--restored end)))))
 
 (defun sekken-input-before-change (beg _end)
   "BEG から始まる編集が打ち始めより前に触れば打ち始めを忘れる。

@@ -457,6 +457,28 @@
         (insert "Ne猫"))
       (should (null (sekken-input-bounds))))))
 
+(ert-deftest sekken-live/redo_が綴りを戻してポイントを先頭に残せば末尾へ動かして語に戻す ()
+  (with-temp-buffer
+    (sekken-mode 1)
+    (sekken-test-type "Nekoga")
+    (sekken-live-test--with-cache '(("Nekoga" "猫が") ("Nek" "ねk"))
+      (sekken-live-test--command #'self-insert-command (insert " "))
+      (sekken-live-test--command #'undo (delete-region 1 3))
+      (should (equal (buffer-string) " "))
+      ;; redo は挿入を戻してもポイントを挿入位置の先頭に置く。
+      (sekken-live-test--command #'undo-redo
+        (goto-char 1)
+        (let ((this-command #'undo-redo))
+          (insert "Nek"))
+        (goto-char 1))
+      (should (= (point) 4))
+      (should (equal (sekken-input-bounds) (cons 1 4)))
+      ;; 先頭へ移動しただけでは動かさない。
+      (sekken-live-test--command #'beginning-of-line (goto-char 1))
+      (should (= (point) 1))
+      (should (null (sekken-input-bounds))))
+    (sekken-mode -1)))
+
 (ert-deftest sekken-live/打鍵をまとめた本物の_undo_でも戻った先頭部分が語になる ()
   ;; コマンドループを真似て undo の境界を入れ、self-insert のまとめ方をそのまま通す。
   (require 'ert-x)
@@ -478,6 +500,15 @@
         (should (equal (sekken-live-test--display) "▽わがはいは▽ねこである。▽な"))
         (run #'undo)
         (should (equal (buffer-string) ""))
+        (should (null (sekken-input-bounds)))
+        ;; redo で戻ればポイントを末尾へ動かして語に戻す。
+        (run #'undo-redo)
+        (should (equal (buffer-string) "WagahaihaNekodearu.Na"))
+        (should (= (point) 22))
+        (should (equal (sekken-input-bounds) (cons 1 22)))
+        ;; もう一度 redo すれば置き換えた状態に戻り、語ではない。
+        (run #'undo-redo)
+        (should (equal (buffer-string) "吾輩は猫である。名前はまだ無い。 "))
         (should (null (sekken-input-bounds))))
       (sekken-mode -1))))
 
