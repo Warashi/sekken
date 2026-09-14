@@ -430,15 +430,56 @@
       (sekken-live-test--command #'ignore))
     (should (equal (buffer-string) "猫"))))
 
-(ert-deftest sekken-live/undo_で戻したローマ字が確定した語と違えば語に戻さない ()
+(ert-deftest sekken-live/undo_で戻したローマ字が確定した語の先頭部分なら語に戻る ()
+  ;; self-insert は打鍵を 20 文字ずつまとめて undo するので、長い語は先頭部分だけ戻る。
+  (with-temp-buffer
+    (sekken-test-type "Nekoga")
+    (sekken-live-test--with-cache '(("Nekoga" "猫が") ("Nek" "ねk"))
+      (sekken-live-test--command #'self-insert-command (insert " "))
+      (should (equal (buffer-string) "猫が "))
+      (sekken-live-test--command #'undo
+        (delete-region 1 4)
+        (insert "Nek"))
+      (should (equal (sekken-input-bounds) (cons 1 4)))
+      ;; もう一度 undo で語が空になっても、続けて打てば同じ語。
+      (sekken-live-test--command #'undo (delete-region 1 4))
+      (should (null (sekken-input-bounds)))
+      (sekken-test-type "Ne")
+      (should (equal (sekken-input-bounds) (cons 1 3))))))
+
+(ert-deftest sekken-live/undo_で戻した文字が確定した語の先頭部分でなければ語に戻さない ()
   (with-temp-buffer
     (sekken-test-type "Neko")
     (sekken-live-test--with-cache '(("Neko" "猫"))
       (sekken-live-test--command #'self-insert-command (insert " "))
       (sekken-live-test--command #'undo
         (delete-region 1 3)
-        (insert "Nek"))
+        (insert "Ne猫"))
       (should (null (sekken-input-bounds))))))
+
+(ert-deftest sekken-live/打鍵をまとめた本物の_undo_でも戻った先頭部分が語になる ()
+  ;; コマンドループを真似て undo の境界を入れ、self-insert のまとめ方をそのまま通す。
+  (require 'ert-x)
+  (cl-flet ((run (command &optional char)
+              (let ((last-command-event (or char last-command-event)))
+                (ert-simulate-command (if char (list command 1) (list command)))
+                (undo-auto--add-boundary))))
+    (with-temp-buffer
+      (buffer-enable-undo)
+      (sekken-mode 1)
+      (sekken-live-test--with-cache '(("WagahaihaNekodearu.Namaehamadanai." "吾輩は猫である。名前はまだ無い。"))
+        (dolist (char (string-to-list "WagahaihaNekodearu.Namaehamadanai."))
+          (run #'self-insert-command char))
+        (run #'self-insert-command ?\s)
+        (should (equal (buffer-string) "吾輩は猫である。名前はまだ無い。 "))
+        (run #'undo)
+        (should (equal (buffer-string) "WagahaihaNekodearu.Na"))
+        (should (equal (sekken-input-bounds) (cons 1 22)))
+        (should (equal (sekken-live-test--display) "▽わがはいは▽ねこである。▽な"))
+        (run #'undo)
+        (should (equal (buffer-string) ""))
+        (should (null (sekken-input-bounds))))
+      (sekken-mode -1))))
 
 (ert-deftest sekken-live/語が置き換わった後に打った文字は新しい語になる ()
   (with-temp-buffer
