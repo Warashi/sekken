@@ -48,17 +48,27 @@ marker は直前への挿入で進まないので、打ち始めの位置に打�
   "最後に置き換えた語の (START . ROMAN)。START は marker。
 undo が置き換えを取り消してローマ字が同じ位置に戻ったとき、語に戻すため。")
 
+(defconst sekken-input--finished-limit 10
+  "覚えておく、置き換えた語のローマ字の件数。")
+
+(defvar-local sekken-input--finished-romans nil
+  "置き換えた語のローマ字。新しい順で `sekken-input--finished-limit' 件まで。
+外れた語を sekken で打ち直してから登録するとき、外れた語の読みに戻るため。")
+
 (defun sekken-input-finish-word (start roman)
   "START から始まっていた語 ROMAN を置き換え終えたことにする。
 打ち始めを忘れ、次に打った文字は新しい語になる。"
   (sekken-input-forget-origin)
   (when sekken-input--finished
     (set-marker (car sekken-input--finished) nil))
-  (setq sekken-input--finished (cons (copy-marker start) roman)))
+  (setq sekken-input--finished (cons (copy-marker start) roman)
+        sekken-input--finished-romans
+        (seq-take (cons roman (delete roman sekken-input--finished-romans))
+                  sekken-input--finished-limit)))
 
-(defun sekken-input-finished-roman ()
-  "最後に置き換えた語のローマ字。無ければ nil。"
-  (cdr sekken-input--finished))
+(defun sekken-input-finished-romans ()
+  "このバッファで置き換えた語のローマ字。新しい順。無ければ nil。"
+  sekken-input--finished-romans)
 
 (defun sekken-input-forget-finished ()
   "最後に置き換えた語を忘れる。"
