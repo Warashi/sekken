@@ -43,6 +43,10 @@
         (sekken-convert--remember roman candidates)
         candidates)))
 
+(defun sekken-convert-forget-all ()
+  "覚えている候補をすべて捨てる。辞書が変わったときに引き直すため。"
+  (setq sekken-convert--cache nil))
+
 (defun sekken-convert-cached (roman)
   "ROMAN の候補を覚えていればそのリスト。無ければ nil。"
   (cdr (assoc roman sekken-convert--cache)))

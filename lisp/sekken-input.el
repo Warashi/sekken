@@ -56,6 +56,10 @@ undo が置き換えを取り消してローマ字が同じ位置に戻ったと
     (set-marker (car sekken-input--finished) nil))
   (setq sekken-input--finished (cons (copy-marker start) roman)))
 
+(defun sekken-input-finished-roman ()
+  "最後に置き換えた語のローマ字。無ければ nil。"
+  (cdr sekken-input--finished))
+
 (defun sekken-input-forget-finished ()
   "最後に置き換えた語を忘れる。"
   (when sekken-input--finished

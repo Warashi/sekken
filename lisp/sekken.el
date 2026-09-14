@@ -23,6 +23,7 @@
 (require 'sekken-overlay)
 (require 'sekken-convert)
 (require 'sekken-live)
+(require 'sekken-register)
 (require 'sekken-im)
 
 (defcustom sekken-convert-key "C-j"
