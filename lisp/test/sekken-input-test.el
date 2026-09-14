@@ -99,6 +99,23 @@
   (should-not (sekken-input-ready-p "Neko;"))
   (should-not (sekken-input-ready-p ";;")))
 
+(ert-deftest sekken-input/数字と記号も入力中の語に含める ()
+  ;; 1on1 のような数字混じりの語を 1 語として打てるよう、空白以外の
+  ;; 打てる文字はすべて語の一部にする。
+  (dolist (roman '("Kyou1on1" "'1on1" "(Neko)" "\"Neko\"" "Neko#1" "a@b"))
+    (with-temp-buffer
+      (sekken-test-type roman)
+      (should (equal (sekken-input-bounds) (cons 1 (point-max)))))))
+
+(ert-deftest sekken-input/空白と改行で語が終わる ()
+  (dolist (delimiter '(" " "\n" "\t"))
+    (with-temp-buffer
+      (sekken-test-type "Neko")
+      (sekken-test-type delimiter)
+      (should (null (sekken-input-bounds)))
+      (sekken-test-type "Ga")
+      (should (equal (sekken-input-bounds) (cons 6 8))))))
+
 (ert-deftest sekken-input/セミコロンを入力中の語に含める ()
   (with-temp-buffer
     (sekken-test-type ";shokai;kougi")

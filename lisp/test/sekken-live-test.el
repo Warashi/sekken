@@ -333,6 +333,15 @@
         (sekken-live-test--command #'self-insert-command (insert " ")))
       (should (equal (buffer-string) (cdr case))))))
 
+(ert-deftest sekken-live/数字混じりの語も_1_語として置き換わる ()
+  (dolist (case '(("'1on1" . "1on1 ")
+                  ("Kyou1on1" . "今日1on1 ")))
+    (with-temp-buffer
+      (sekken-test-type (car case))
+      (sekken-live-test--with-cache '(("Kyou1on1" "今日1on1"))
+        (sekken-live-test--command #'self-insert-command (insert " ")))
+      (should (equal (buffer-string) (cdr case))))))
+
 (ert-deftest sekken-live/境界で終わる語は確定しない ()
   (with-temp-buffer
     (sekken-test-type "Neko;")

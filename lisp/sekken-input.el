@@ -3,9 +3,9 @@
 ;; SPDX-License-Identifier: MIT
 
 ;;; Commentary:
-;; 「入力中の語」は、自分が打ち始めた位置からポイントまでに連続する
-;; ローマ字と記号の並び。打ち始めは自己挿入のコマンドが文字を入れた
-;; 位置で、それより前には伸びない。もとからバッファにある文字や貼り
+;; 「入力中の語」は、自分が打ち始めた位置からポイントまでに連続する、
+;; 空白以外の打てる文字（印字可能な ASCII）の並び。打ち始めは自己挿入の
+;; コマンドが文字を入れた位置で、それより前には伸びない。もとからバッファにある文字や貼り
 ;; 付けた文字は打っていないので語にならず、確定の結果が英字で終わって
 ;; も、それをもう一度語として拾わない。
 ;; 表示用には大文字境界を ▽ で示し、かなにして返す。エンジンには
@@ -22,8 +22,10 @@
 (require 'sekken-kana)
 (require 'subr-x)
 
-(defconst sekken-input--chars "A-Za-z'.,!?:;/>\\[\\]-"
-  "入力中の語を構成する文字（`skip-chars-backward' 用）。")
+(defconst sekken-input--chars "!-~"
+  "入力中の語を構成する文字（`skip-chars-backward' 用）。
+空白を除く印字可能な ASCII、つまり `sekken-im' が拾う文字のうち空白以外。
+数字や括弧も語の一部にして、1on1 のような語を 1 語として打てるようにする。")
 
 (defcustom sekken-input-typing-commands
   '(sekken-im-self-insert self-insert-command)
