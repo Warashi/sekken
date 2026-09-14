@@ -395,6 +395,27 @@
       (sekken-live-test--command #'ignore))
     (should (equal (buffer-string) "abc猫"))))
 
+(ert-deftest sekken-live/undo_で語が縮んでも残りは語のまま ()
+  ;; self-insert は打鍵をまとめて undo するので、長い文の末尾がまとめて消える。
+  (with-temp-buffer
+    (sekken-test-type "Nekoga")
+    (sekken-live-test--with-cache '(("Neko" "猫"))
+      (sekken-live-test--command #'undo (delete-region 5 7))
+      (should (equal (sekken-input-bounds) (cons 1 5)))
+      (should (equal (sekken-live-test--display) "猫")))))
+
+(ert-deftest sekken-live/DEL_に割り当てられた_org_の後退削除でも確定しない ()
+  (require 'org)
+  (with-temp-buffer
+    (org-mode)
+    (should (eq (key-binding (kbd "DEL")) #'org-delete-backward-char))
+    (sekken-test-type "Neko")
+    (sekken-live-test--with-cache '(("Neko" "猫"))
+      (sekken-live-test--command #'org-delete-backward-char
+        (should (equal (buffer-string) "Neko"))
+        (delete-char -1)))
+    (should (equal (buffer-string) "Nek"))))
+
 (ert-deftest sekken-live/語が置き換わった後に打った文字は新しい語になる ()
   (with-temp-buffer
     (sekken-test-type "Neko")

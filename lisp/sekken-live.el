@@ -128,6 +128,13 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
        (<= end (point-max))
        (equal (buffer-substring-no-properties start end) roman)))
 
+(defun sekken-live--shrunk-p (start roman)
+  "START から始まる語 ROMAN が、ポイントまでの先頭部分だけ残って縮んだか。
+まとめて打った末尾を undo で消したときで、置き換わったのとは違い語は続く。"
+  (and (>= start (point-min))
+       (>= (point) start)
+       (string-prefix-p (buffer-substring-no-properties start (point)) roman)))
+
 (defun sekken-live--continuing-p (start end)
   "ポイントが START から END の語を続ける位置にあるか。
 語の途中に戻ったのは離れたと見る。"
@@ -171,14 +178,16 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
 
 (defun sekken-live-after-command ()
   "覚えた語から離れていれば確定し、overlay を張り直す。`post-command-hook' 用。
-語が置き換わっていれば確定はしないが、その語は終わったので打ち始めを忘れる。"
+語が置き換わっていれば確定はしないが、その語は終わったので打ち始めを忘れる。
+縮んだだけなら語は続く。"
   (when sekken-live--pending
     (let ((start (marker-position (nth 0 sekken-live--pending)))
           (end (marker-position (nth 1 sekken-live--pending)))
           (roman (nth 2 sekken-live--pending)))
       (cond
        ((not (sekken-live--intact-p start end roman))
-        (sekken-input-forget-origin))
+        (unless (sekken-live--shrunk-p start roman)
+          (sekken-input-forget-origin)))
        ((sekken-live--continuing-p start end) nil)
        (t
         (unless buffer-read-only
