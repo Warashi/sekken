@@ -117,7 +117,8 @@ table を使い回すため、候補を閉じ込めると追従しない。"
 (defun sekken-convert--remember-committed (_string status)
   "候補が入った末尾を確定として覚える。`completion-in-region' の exit-function。"
   (when (eq status 'finished)
-    (sekken-input-remember-committed (point))))
+    (sekken-input-remember-committed (point))
+    (sekken-input-forget-origin)))
 
 (cl-defun sekken-convert ()
   "ポイント直前の語を変換する。
@@ -150,7 +151,8 @@ table を使い回すため、候補を閉じ込めると追従しない。"
         (delete-region start end)
         (goto-char start)
         (insert (sekken-input-literal roman))
-        (sekken-input-remember-committed (point)))))))
+        (sekken-input-remember-committed (point))
+        (sekken-input-forget-origin))))))
 
 (provide 'sekken-convert)
 ;;; sekken-convert.el ends here

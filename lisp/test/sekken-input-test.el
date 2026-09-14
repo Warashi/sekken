@@ -5,13 +5,57 @@
 
 (require 'ert)
 (require 'sekken-input)
+(require 'sekken-test)
 
 (ert-deftest sekken-input/ポイント直前のローマ字と記号を語として切り出す ()
   (with-temp-buffer
-    (insert "hello WagahaihaNekodearu.")
+    (sekken-test-type "hello WagahaihaNekodearu.")
     (should (equal (sekken-input-bounds) (cons 7 26)))
-    (insert " ")
+    (sekken-test-type " ")
     (should (null (sekken-input-bounds)))))
+
+(ert-deftest sekken-input/打っていない文字は語にしない ()
+  ;; org の PROPERTIES ドロワーのように、もとからバッファにある文字。
+  (with-temp-buffer
+    (insert ":END:")
+    (should (null (sekken-input-bounds)))
+    (sekken-test-type "ne")
+    (should (equal (sekken-input-bounds) (cons 6 8)))))
+
+(ert-deftest sekken-input/打ち始めより前に戻れば語は無い ()
+  (with-temp-buffer
+    (insert "abc")
+    (sekken-test-type "ne")
+    (goto-char 3)
+    (should (null (sekken-input-bounds)))))
+
+(ert-deftest sekken-input/自己挿入でない挿入では打ち始めにしない ()
+  (with-temp-buffer
+    (let ((this-command #'yank))
+      (insert "neko")
+      (sekken-input-after-change 1 5 0))
+    (should (null (sekken-input-bounds)))))
+
+(ert-deftest sekken-input/打ち始めより前を編集すれば忘れる ()
+  (with-temp-buffer
+    (insert "abc")
+    (sekken-test-type "neko")
+    (sekken-input-before-change 3 4)
+    (delete-region 3 4)
+    (should (null (sekken-input-bounds)))
+    ;; 語の中の削除では忘れない。
+    (sekken-test-type "ne")
+    (sekken-input-before-change 8 9)
+    (delete-region 8 9)
+    (should (equal (sekken-input-bounds) (cons 7 8)))))
+
+(ert-deftest sekken-input/忘れた後の打鍵は新しい打ち始めになる ()
+  (with-temp-buffer
+    (sekken-test-type "neko")
+    (sekken-input-forget-origin)
+    (should (null (sekken-input-bounds)))
+    (sekken-test-type "ga")
+    (should (equal (sekken-input-bounds) (cons 5 7)))))
 
 (ert-deftest sekken-input/大文字境界を▽で示してかなにする ()
   (should (equal (sekken-input-display "WagahaihaNek") "▽わがはいは▽ねk"))
@@ -57,12 +101,12 @@
 
 (ert-deftest sekken-input/セミコロンを入力中の語に含める ()
   (with-temp-buffer
-    (insert ";shokai;kougi")
+    (sekken-test-type ";shokai;kougi")
     (should (equal (sekken-input-bounds) (cons 1 (point-max))))))
 
 (ert-deftest sekken-input/スラッシュと山括弧を入力中の語に含める ()
   (with-temp-buffer
-    (insert "Kyou/emacs;O>Kai")
+    (sekken-test-type "Kyou/emacs;O>Kai")
     (should (equal (sekken-input-bounds) (cons 1 (point-max))))))
 
 (ert-deftest sekken-input/境界の直後の大文字やセミコロンは新しい区間を作らない ()
@@ -156,17 +200,17 @@
 
 (ert-deftest sekken-input/確定した末尾より前には語が伸びない ()
   (with-temp-buffer
-    (insert "きょうはEmacs")
+    (sekken-test-type "きょうはEmacs")
     (sekken-input-remember-committed (point))
     (should (null (sekken-input-bounds)))
-    (insert "no")
+    (sekken-test-type "no")
     (should (equal (sekken-input-bounds) (cons 10 12)))
     (goto-char 8)
     (should (null (sekken-input-bounds)))))
 
 (ert-deftest sekken-input/確定した文字に触る編集で末尾を忘れる ()
   (with-temp-buffer
-    (insert "きょうはEmacs")
+    (sekken-test-type "きょうはEmacs")
     (sekken-input-remember-committed (point))
     (sekken-input-before-change 9 10)
     (delete-region 9 10)
@@ -174,10 +218,10 @@
 
 (ert-deftest sekken-input/確定した末尾への挿入とその後ろの削除では忘れない ()
   (with-temp-buffer
-    (insert "きょうはEmacs")
+    (sekken-test-type "きょうはEmacs")
     (sekken-input-remember-committed (point))
     (sekken-input-before-change 10 10)
-    (insert "no")
+    (sekken-test-type "no")
     (should (equal (sekken-input-bounds) (cons 10 12)))
     (sekken-input-before-change 11 12)
     (delete-region 11 12)

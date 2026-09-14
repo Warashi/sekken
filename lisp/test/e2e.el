@@ -15,6 +15,11 @@
 
 (require 'sekken)
 
+(defun e2e-type (string)
+  "STRING を自己挿入のコマンドとして打つ。`sekken-mode' の hook が打ち始めを覚える。"
+  (let ((this-command #'self-insert-command))
+    (insert string)))
+
 (let ((bin (getenv "SEKKEN_BIN"))
       (dic (getenv "SEKKEN_DIC"))
       (model (getenv "SEKKEN_MODEL"))
@@ -35,11 +40,11 @@
       (unless (and sekken-mode
                    (equal current-input-method-title "-かな:-"))
         (error "e2e: input method が有効になっていない"))
-      (insert "kyouha")
+      (e2e-type "kyouha")
       (sekken-convert)
       (unless (equal (buffer-string) "きょうは")
         (error "e2e: ひらがな置換が %S" (buffer-string)))
-      (insert " IiTenkidesune.")
+      (e2e-type " IiTenkidesune.")
       (sekken-live-update)
       (let ((display (overlay-get sekken-overlay--overlay 'display)))
         (unless (equal display "▽いい▽てんきですね。")
@@ -61,7 +66,7 @@
       (unless (string-prefix-p "きょうは " (buffer-string))
         (error "e2e: 変換結果が %S" (buffer-string)))
       (erase-buffer)
-      (insert ";wagahai;ha;neko;dearu.")
+      (e2e-type ";wagahai;ha;neko;dearu.")
       (let ((completion-in-region-function
              (lambda (start end table &optional _pred)
                (let ((cands (all-completions (buffer-substring start end) table)))
@@ -73,7 +78,7 @@
         (error "e2e: sticky 変換結果が %S" (buffer-string)))
       ;; 語の後に空白を打つと、確定の打鍵なしで 1 位候補に置き換わる。
       (erase-buffer)
-      (insert "WagahaihaNekodearu.")
+      (e2e-type "WagahaihaNekodearu.")
       (sekken-live-before-command)
       (insert " ")
       (sekken-live-after-command)

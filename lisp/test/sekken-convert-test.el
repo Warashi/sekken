@@ -6,6 +6,7 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'sekken-convert)
+(require 'sekken-test)
 
 (defmacro sekken-convert-test--with-engine (candidates &rest body)
   "エンジン呼び出しを CANDIDATES を返す偽物に差し替えて BODY を実行する。"
@@ -17,7 +18,7 @@
 
 (ert-deftest sekken-convert/大文字が無ければひらがなに置き換える ()
   (with-temp-buffer
-    (insert "kyouha")
+    (sekken-test-type "kyouha")
     (sekken-convert-test--with-engine nil
       (sekken-convert))
     (should (equal (buffer-string) "きょうは"))
@@ -25,7 +26,7 @@
 
 (ert-deftest sekken-convert/辞書を引く区間が無ければエンジンを呼ばずに置き換える ()
   (with-temp-buffer
-    (insert "kyouha'Emacs")
+    (sekken-test-type "kyouha'Emacs")
     (sekken-convert-test--with-engine (error "エンジンを呼んではいけない")
       (sekken-convert))
     (should (equal (buffer-string) "きょうはEmacs"))
@@ -34,14 +35,14 @@
 (ert-deftest sekken-convert/開いたばかりの区間で終わる語は置き換えずに知らせる ()
   (dolist (roman '("neko'" "'" "Neko;" "Kyouha'"))
     (with-temp-buffer
-      (insert roman)
+      (sekken-test-type roman)
       (sekken-convert-test--with-engine (error "エンジンを呼んではいけない")
         (should-error (sekken-convert) :type 'user-error))
       (should (equal (buffer-string) roman)))))
 
 (ert-deftest sekken-convert/大文字があれば候補を_completion-in-region_に渡す ()
   (with-temp-buffer
-    (insert "Neko")
+    (sekken-test-type "Neko")
     (let (called)
       (sekken-convert-test--with-engine '("猫" "ねこ")
         (cl-letf (((symbol-function 'completion-in-region)
@@ -56,7 +57,8 @@
 
 (ert-deftest sekken-convert/選んだ候補の末尾を確定として覚える ()
   (with-temp-buffer
-    (insert "kyouha'Emacs Neko")
+    (insert "kyouha'Emacs ")
+    (sekken-test-type "Neko")
     (sekken-convert-test--with-engine '("猫")
       (cl-letf (((symbol-function 'completion-in-region)
                  (lambda (start end _table &optional _pred)
@@ -71,7 +73,7 @@
 
 (ert-deftest sekken-convert/かなと綴りに置き換えた末尾を確定として覚える ()
   (with-temp-buffer
-    (insert "kyouha'Emacs")
+    (sekken-test-type "kyouha'Emacs")
     (sekken-convert-test--with-engine nil
       (sekken-convert))
     (should (equal (buffer-string) "きょうはEmacs"))
@@ -205,7 +207,7 @@ REQUESTS の各要素は (PIECES . ON-SUCCESS)。返事は呼び出し側が ON-
 
 (ert-deftest sekken-convert/sticky_境界を変換候補に渡す ()
   (with-temp-buffer
-    (insert ";shokai;kougi")
+    (sekken-test-type ";shokai;kougi")
     (let (called)
       (sekken-convert-test--with-engine '("初回講義")
         (cl-letf (((symbol-function 'completion-in-region)
@@ -220,7 +222,7 @@ REQUESTS の各要素は (PIECES . ON-SUCCESS)。返事は呼び出し側が ON-
 
 (ert-deftest sekken-convert/sticky_待機中は候補を出さない ()
   (with-temp-buffer
-    (insert ";")
+    (sekken-test-type ";")
     (sekken-convert-test--with-engine
         (error "境界だけでエンジンを呼んではならない")
       (should (equal (all-completions ";" #'sekken-convert-table) nil)))
@@ -228,7 +230,7 @@ REQUESTS の各要素は (PIECES . ON-SUCCESS)。返事は呼び出し側が ON-
 
 (ert-deftest sekken-convert/二重セミコロンはリテラルとして確定する ()
   (with-temp-buffer
-    (insert "semi;;koron")
+    (sekken-test-type "semi;;koron")
     (sekken-convert-test--with-engine nil
       (sekken-convert))
     (should (equal (buffer-string) "せみ;ころん"))))

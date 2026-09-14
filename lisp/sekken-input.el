@@ -3,9 +3,11 @@
 ;; SPDX-License-Identifier: MIT
 
 ;;; Commentary:
-;; 「入力中の語」は、ポイント直前に連続するローマ字と記号の並び。ただし
-;; 最後に確定した文字列の末尾より前には伸びない。確定の結果が英字で
-;; 終わっても、それをもう一度語として拾わないため。
+;; 「入力中の語」は、自分が打ち始めた位置からポイントまでに連続する
+;; ローマ字と記号の並び。打ち始めは自己挿入のコマンドが文字を入れた
+;; 位置で、それより前には伸びない。もとからバッファにある文字や貼り
+;; 付けた文字は打っていないので語にならず、確定の結果が英字で終わって
+;; も、それをもう一度語として拾わない。
 ;; 表示用には大文字境界を ▽ で示し、かなにして返す。エンジンには
 ;; 同じ分割をかなにし、区間の種類を付けた列として送る。
 ;;
@@ -22,6 +24,32 @@
 
 (defconst sekken-input--chars "A-Za-z'.,!?:;/>\\[\\]-"
   "入力中の語を構成する文字（`skip-chars-backward' 用）。")
+
+(defcustom sekken-input-typing-commands
+  '(sekken-im-self-insert self-insert-command)
+  "文字を打つコマンド。これらが入れた文字だけを入力中の語にする。"
+  :type '(repeat function)
+  :group 'sekken)
+
+(defvar-local sekken-input--origin nil
+  "入力中の語の打ち始めの marker。無ければ語は無い。
+marker は直前への挿入で進まないので、打ち始めの位置に打った文字は語に入る。")
+
+(defun sekken-input-forget-origin ()
+  "打ち始めを忘れる。次に打った文字が新しい語の打ち始めになる。"
+  (when sekken-input--origin
+    (set-marker sekken-input--origin nil)
+    (setq sekken-input--origin nil)))
+
+(defun sekken-input-after-change (beg end old-length)
+  "文字を打つコマンドが BEG に文字を入れたら、打ち始めが無ければそこを打ち始めにする。
+`after-change-functions' 用。OLD-LENGTH が 0 でない置き換えと、
+END が BEG の削除は打ち始めにしない。"
+  (when (and (null sekken-input--origin)
+             (zerop old-length)
+             (< beg end)
+             (memq this-command sekken-input-typing-commands))
+    (setq sekken-input--origin (copy-marker beg))))
 
 (defvar-local sekken-input--committed nil
   "最後に確定した文字列の末尾の marker。無ければ nil。
@@ -40,25 +68,30 @@ marker は直前への挿入で進まないので、確定の直後に打った�
     (setq sekken-input--committed nil)))
 
 (defun sekken-input-before-change (beg _end)
-  "BEG から始まる編集が確定した文字列に触れば末尾を忘れる。`before-change-functions' 用。
-末尾への挿入と末尾より後ろの削除は確定した文字列に触らないので忘れない。
-削除は marker を動かすので、動く前に見る。"
+  "BEG から始まる編集が打ち始めか確定した文字列より前に触れば忘れる。
+`before-change-functions' 用。打ち始めへの挿入と、それより後ろの削除は
+語の中の編集なので忘れない。削除は marker を動かすので、動く前に見る。"
+  (when (and sekken-input--origin
+             (< beg sekken-input--origin))
+    (sekken-input-forget-origin))
   (when (and sekken-input--committed
              (< beg sekken-input--committed))
     (sekken-input-forget-committed)))
 
 (defun sekken-input-bounds ()
   "ポイント直前の入力中の語の (START . END)。無ければ nil。
-最後に確定した文字列の末尾より前には伸びない。"
-  (let ((end (point))
-        (start (save-excursion
-                 (skip-chars-backward sekken-input--chars)
-                 (point))))
-    (when (and sekken-input--committed
-               (> sekken-input--committed start))
-      (setq start (marker-position sekken-input--committed)))
-    (when (< start end)
-      (cons start end))))
+打ち始めと、最後に確定した文字列の末尾より前には伸びない。"
+  (when (and sekken-input--origin
+             (< sekken-input--origin (point)))
+    (let ((end (point))
+          (start (save-excursion
+                   (skip-chars-backward sekken-input--chars)
+                   (point))))
+      (dolist (limit (list sekken-input--origin sekken-input--committed))
+        (when (and limit (> limit start))
+          (setq start (marker-position limit))))
+      (when (< start end)
+        (cons start end)))))
 
 (defun sekken-input-segment (roman)
   "ROMAN を変換境界で分け、(HEAD . SEGMENTS) を返す。
