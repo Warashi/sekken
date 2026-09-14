@@ -100,6 +100,7 @@ impl EngineArgs {
         }
         Ok(Sekken {
             dict,
+            user: Dictionary::default(),
             scorer: NgramScorer::new(model, tokenizer),
             weights: sekken_core::lattice::Weights {
                 rank: self.rank_weight,

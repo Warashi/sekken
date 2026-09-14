@@ -11,6 +11,8 @@ use crate::speculate::Speculator;
 
 pub struct Sekken<S: Scorer> {
     pub dict: Dictionary,
+    /// 使う本人が登録した語。送りなしの見出しだけを持ち、`dict` より先に引く。
+    pub user: Dictionary,
     pub scorer: S,
     /// 格子の候補に付ける順位とかなのコストの重み。
     pub weights: Weights,
@@ -46,7 +48,7 @@ impl<S: Scorer> Sekken<S> {
         let lattice = Lattice {
             weights: self.weights,
             candidates: (0..pieces.len())
-                .map(|i| candidates_at(&self.dict, pieces, i))
+                .map(|i| candidates_at(&self.dict, &self.user, pieces, i))
                 .collect(),
         };
         if let Some(speculator) = &self.speculator {
@@ -119,6 +121,7 @@ mod tests {
     fn sekken() -> Sekken<PreferKanji> {
         Sekken {
             dict: Dictionary::parse(FIXTURE),
+            user: Dictionary::default(),
             scorer: PreferKanji,
             weights: Weights::default(),
             reranker: None,

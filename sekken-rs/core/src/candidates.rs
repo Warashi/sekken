@@ -15,6 +15,9 @@ pub struct Candidate {
     pub rank: usize,
     /// 辞書を引かず読みをそのままかなにした候補か。
     pub kana: bool,
+    /// ユーザー辞書の候補か。使う本人が足した語で、モデルが知らない語でも
+    /// 分かち書きの内部コストを払わない。
+    pub user: bool,
 }
 
 impl Candidate {
@@ -24,6 +27,7 @@ impl Candidate {
             span: 1,
             rank: 0,
             kana: true,
+            user: false,
         }
     }
 
@@ -33,6 +37,38 @@ impl Candidate {
             span,
             rank,
             kana: false,
+            user: false,
+        }
+    }
+
+    fn user(surface: impl Into<String>, rank: usize) -> Candidate {
+        Candidate {
+            surface: surface.into(),
+            span: 1,
+            rank,
+            kana: false,
+            user: true,
+        }
+    }
+}
+
+/// ユーザー辞書と SKK 辞書の送りなし見出し `key` を引き、ユーザー辞書の候補を先に
+/// `out` に足す。同じ表記が両方にあればユーザー辞書の側だけを残す。
+fn push_okuri_nasi(
+    out: &mut Vec<Candidate>,
+    dict: &Dictionary,
+    user: &Dictionary,
+    key: &str,
+    suffix: &str,
+) {
+    let first = out.len();
+    for (rank, surface) in user.okuri_nasi(key).iter().enumerate() {
+        out.push(Candidate::user(format!("{surface}{suffix}"), rank));
+    }
+    for (rank, surface) in dict.okuri_nasi(key).iter().enumerate() {
+        let candidate = Candidate::ranked(format!("{surface}{suffix}"), 1, rank);
+        if !out[first..].iter().any(|c| c.surface == candidate.surface) {
+            out.push(candidate);
         }
     }
 }
@@ -123,11 +159,17 @@ fn okuri_ari(dict: &Dictionary, yomi: &str, okuri: &str) -> Vec<String> {
 /// 次の変換区間（`か` `く`）でも表せる。`>` の印が付いた区間は接頭辞（`お>`）
 /// や接尾辞（`>かい`）の見出しでも引く。abbrev 区間は綴りをそのまま見出しにする。
 /// かな区間とそのまま出す区間は、その文字列 1 つだけを候補にする。
-pub fn candidates_at(dict: &Dictionary, pieces: &[Piece], index: usize) -> Vec<Candidate> {
+/// 送りなしと abbrev の見出しは `user`（ユーザー辞書）を先に引く。
+pub fn candidates_at(
+    dict: &Dictionary,
+    user: &Dictionary,
+    pieces: &[Piece],
+    index: usize,
+) -> Vec<Candidate> {
     let piece = &pieces[index];
     match piece.kind {
         Kind::Convert => {}
-        Kind::Abbrev => return abbrev(dict, &piece.text),
+        Kind::Abbrev => return abbrev(dict, user, &piece.text),
         Kind::Kana | Kind::Literal => return vec![Candidate::ranked(piece.text.clone(), 1, 0)],
     }
     let (reading, symbols) = split_trailing_symbols(&piece.text);
@@ -161,9 +203,7 @@ pub fn candidates_at(dict: &Dictionary, pieces: &[Piece], index: usize) -> Vec<C
         for (rank, surface) in okuri_ari(dict, &yomi, &rest).into_iter().enumerate() {
             out.push(Candidate::ranked(format!("{surface}{suffix}"), 1, rank));
         }
-        for (rank, surface) in dict.okuri_nasi(&yomi).iter().enumerate() {
-            out.push(Candidate::ranked(format!("{surface}{suffix}"), 1, rank));
-        }
+        push_okuri_nasi(&mut out, dict, user, &yomi, &suffix);
         // 接頭辞・接尾辞の見出しは通常の見出しと同じ語を持つことがあるので、重複は足さない。
         let mut affix = |key: String| {
             for (rank, surface) in dict.okuri_nasi(&key).iter().enumerate() {
@@ -192,13 +232,9 @@ pub fn candidates_at(dict: &Dictionary, pieces: &[Piece], index: usize) -> Vec<C
 }
 
 /// abbrev 区間の候補。綴りそのままの見出しを引き、無ければ綴りのまま出す。
-fn abbrev(dict: &Dictionary, text: &str) -> Vec<Candidate> {
-    let mut out: Vec<Candidate> = dict
-        .okuri_nasi(text)
-        .iter()
-        .enumerate()
-        .map(|(rank, surface)| Candidate::ranked(surface.clone(), 1, rank))
-        .collect();
+fn abbrev(dict: &Dictionary, user: &Dictionary, text: &str) -> Vec<Candidate> {
+    let mut out = Vec::new();
+    push_okuri_nasi(&mut out, dict, user, text, "");
     out.push(Candidate::kana(text));
     out
 }
@@ -237,13 +273,13 @@ emacs /Ｅｍａｃｓ/イーマックス/
 
     #[test]
     fn 送りなし候補とかな候補を出す() {
-        let c = candidates_at(&dict(), &convert(&["ねこ"]), 0);
+        let c = candidates_at(&dict(), &Dictionary::default(), &convert(&["ねこ"]), 0);
         assert_eq!(surfaces(&c), ["猫", "ねこ", "ネコ"]);
     }
 
     #[test]
     fn 次の区間を送り仮名として送りあり候補を出す() {
-        let c = candidates_at(&dict(), &convert(&["か", "く"]), 0);
+        let c = candidates_at(&dict(), &Dictionary::default(), &convert(&["か", "く"]), 0);
         assert_eq!(c[0], Candidate::ranked("書く", 2, 0));
         assert_eq!(c[1], Candidate::ranked("掛く", 2, 1));
         assert_eq!(c[2], Candidate::ranked("可", 1, 0));
@@ -251,28 +287,33 @@ emacs /Ｅｍａｃｓ/イーマックス/
 
     #[test]
     fn 区間内の残りを送り仮名として送りあり候補を出す() {
-        let c = candidates_at(&dict(), &convert(&["かきます"]), 0);
+        let c = candidates_at(&dict(), &Dictionary::default(), &convert(&["かきます"]), 0);
         assert!(c.contains(&Candidate::ranked("書きます", 1, 0)));
         assert!(c.contains(&Candidate::ranked("可きます", 1, 0)));
     }
 
     #[test]
     fn っで始まる送り仮名はっの次の字で送りあり候補を引く() {
-        let c = candidates_at(&dict(), &convert(&["とった"]), 0);
+        let c = candidates_at(&dict(), &Dictionary::default(), &convert(&["とった"]), 0);
         assert!(c.contains(&Candidate::ranked("採った", 1, 0)));
         assert!(c.contains(&Candidate::ranked("取った", 1, 1)));
     }
 
     #[test]
     fn 次の区間がっで始まっても送りあり候補を引く() {
-        let c = candidates_at(&dict(), &convert(&["と", "った"]), 0);
+        let c = candidates_at(
+            &dict(),
+            &Dictionary::default(),
+            &convert(&["と", "った"]),
+            0,
+        );
         assert_eq!(c[0], Candidate::ranked("採った", 2, 0));
     }
 
     #[test]
     fn 綴りが違っても同じかなの送り仮名は両方の見出しを引く() {
         // ち は ti の t と chi の c の両方で登録されている。重複は 1 つにする。
-        let c = candidates_at(&dict(), &convert(&["とち"]), 0);
+        let c = candidates_at(&dict(), &Dictionary::default(), &convert(&["とち"]), 0);
         let okuri: Vec<&Candidate> = c.iter().filter(|c| !c.kana).collect();
         assert_eq!(
             okuri.iter().map(|c| c.surface.as_str()).collect::<Vec<_>>(),
@@ -282,59 +323,74 @@ emacs /Ｅｍａｃｓ/イーマックス/
 
     #[test]
     fn 母音で始まる送り仮名も引く() {
-        let c = candidates_at(&dict(), &convert(&["おおい"]), 0);
+        let c = candidates_at(&dict(), &Dictionary::default(), &convert(&["おおい"]), 0);
         assert!(c.contains(&Candidate::ranked("多い", 1, 0)));
     }
 
     #[test]
     fn 打ち終えていない綴りの英字は送り仮名の子音として使う() {
         // `KaK` と打っている途中。エディタは末尾の子音を変換せずに送る。
-        let c = candidates_at(&dict(), &convert(&["か", "k"]), 0);
+        let c = candidates_at(&dict(), &Dictionary::default(), &convert(&["か", "k"]), 0);
         assert_eq!(c[0], Candidate::ranked("書k", 2, 0));
-        let c = candidates_at(&dict(), &convert(&["かk"]), 0);
+        let c = candidates_at(&dict(), &Dictionary::default(), &convert(&["かk"]), 0);
         assert!(c.contains(&Candidate::ranked("書k", 1, 0)));
     }
 
     #[test]
     fn 読みの前方一致で辞書を引き残りをかなにする() {
-        let c = candidates_at(&dict(), &convert(&["ねこは"]), 0);
+        let c = candidates_at(&dict(), &Dictionary::default(), &convert(&["ねこは"]), 0);
         assert_eq!(surfaces(&c), ["猫は", "ネコは", "ねこは", "ネコハ"]);
     }
 
     #[test]
     fn 小書きの字の手前では読みを切らない() {
-        let c = candidates_at(&dict(), &convert(&["きゃ"]), 0);
+        let c = candidates_at(&dict(), &Dictionary::default(), &convert(&["きゃ"]), 0);
         assert_eq!(surfaces(&c), ["きゃ", "キャ"]);
     }
 
     #[test]
     fn カタカナの前方一致にかなを続けた候補を出す() {
-        let c = candidates_at(&dict(), &convert(&["すこっとらんどは"]), 0);
+        let c = candidates_at(
+            &dict(),
+            &Dictionary::default(),
+            &convert(&["すこっとらんどは"]),
+            0,
+        );
         assert!(c.contains(&Candidate::kana("スコットランドは")));
     }
 
     #[test]
     fn 記号を含む区間はまとめてかなにする() {
-        let c = candidates_at(&dict(), &convert(&["ねこ・"]), 0);
+        let c = candidates_at(&dict(), &Dictionary::default(), &convert(&["ねこ・"]), 0);
         assert!(c.contains(&Candidate::ranked("猫・", 1, 0)));
         assert!(c.contains(&Candidate::kana("ねこ・")));
     }
 
     #[test]
     fn 途中の長音記号は読みの一部として扱う() {
-        let c = candidates_at(&dict(), &convert(&["たーげっとにする"]), 0);
+        let c = candidates_at(
+            &dict(),
+            &Dictionary::default(),
+            &convert(&["たーげっとにする"]),
+            0,
+        );
         assert!(c.contains(&Candidate::kana("ターゲットにする")));
     }
 
     #[test]
     fn 末尾の記号は読みから外して候補に付け直す() {
-        let c = candidates_at(&dict(), &convert(&["ねこ。"]), 0);
+        let c = candidates_at(&dict(), &Dictionary::default(), &convert(&["ねこ。"]), 0);
         assert_eq!(surfaces(&c), ["猫。", "ねこ。", "ネコ。"]);
     }
 
     #[test]
     fn 記号で終わる区間は次の区間を送り仮名にしない() {
-        let c = candidates_at(&dict(), &convert(&["か。", "く"]), 0);
+        let c = candidates_at(
+            &dict(),
+            &Dictionary::default(),
+            &convert(&["か。", "く"]),
+            0,
+        );
         assert!(c.iter().all(|c| c.span == 1));
     }
 
@@ -346,18 +402,23 @@ emacs /Ｅｍａｃｓ/イーマックス/
             Piece::convert("か"),
         ];
         assert_eq!(
-            candidates_at(&dict(), &pieces, 0),
+            candidates_at(&dict(), &Dictionary::default(), &pieces, 0),
             [Candidate::ranked("きょう", 1, 0)]
         );
         assert_eq!(
-            candidates_at(&dict(), &pieces, 1),
+            candidates_at(&dict(), &Dictionary::default(), &pieces, 1),
             [Candidate::ranked("Emacs", 1, 0)]
         );
     }
 
     #[test]
     fn abbrev_区間は綴りそのままの見出しを引き最後に綴りのまま出す() {
-        let c = candidates_at(&dict(), &[Piece::abbrev("emacs")], 0);
+        let c = candidates_at(
+            &dict(),
+            &Dictionary::default(),
+            &[Piece::abbrev("emacs")],
+            0,
+        );
         assert_eq!(
             c,
             [
@@ -367,7 +428,7 @@ emacs /Ｅｍａｃｓ/イーマックス/
             ]
         );
         assert_eq!(
-            candidates_at(&dict(), &[Piece::abbrev("vim")], 0),
+            candidates_at(&dict(), &Dictionary::default(), &[Piece::abbrev("vim")], 0),
             [Candidate::kana("vim")]
         );
     }
@@ -378,12 +439,12 @@ emacs /Ｅｍａｃｓ/イーマックス/
             Piece::convert("お").with_marks(true, false),
             Piece::convert("かい").with_marks(false, true),
         ];
-        let c = candidates_at(&dict(), &pieces, 0);
+        let c = candidates_at(&dict(), &Dictionary::default(), &pieces, 0);
         assert!(c.contains(&Candidate::ranked("尾", 1, 0)));
         assert!(c.contains(&Candidate::ranked("御", 1, 0)));
         // `>` の次の区間は送り仮名にしない。
         assert!(c.iter().all(|c| c.span == 1));
-        let c = candidates_at(&dict(), &pieces, 1);
+        let c = candidates_at(&dict(), &Dictionary::default(), &pieces, 1);
         assert!(c.contains(&Candidate::ranked("貝", 1, 0)));
         assert!(c.contains(&Candidate::ranked("会", 1, 0)));
         // 通常の見出しにもある語は重ねて出さない。
@@ -394,12 +455,14 @@ emacs /Ｅｍａｃｓ/イーマックス/
     fn 接尾辞は残りのかなを続けられるが接頭辞は読み全体で引く() {
         let c = candidates_at(
             &dict(),
+            &Dictionary::default(),
             &[Piece::convert("かいは").with_marks(false, true)],
             0,
         );
         assert!(c.contains(&Candidate::ranked("会は", 1, 0)));
         let c = candidates_at(
             &dict(),
+            &Dictionary::default(),
             &[Piece::convert("おは").with_marks(true, false)],
             0,
         );
@@ -407,10 +470,46 @@ emacs /Ｅｍａｃｓ/イーマックス/
     }
 
     #[test]
+    fn ユーザー辞書の候補を印付きで先に出し同じ表記は重ねない() {
+        let user = Dictionary::parse(
+            "\
+;; okuri-nasi entries.
+ねこ /猫/根子/
+",
+        );
+        let c = candidates_at(&dict(), &user, &convert(&["ねこ"]), 0);
+        assert_eq!(
+            c,
+            [
+                Candidate::user("猫", 0),
+                Candidate::user("根子", 1),
+                Candidate::kana("ねこ"),
+                Candidate::kana("ネコ"),
+            ]
+        );
+    }
+
+    #[test]
+    fn ユーザー辞書は残りのかなと_abbrev_でも引く() {
+        let user = Dictionary::parse(
+            "\
+;; okuri-nasi entries.
+ねこ /根子/
+emacs /Emacs/
+",
+        );
+        let c = candidates_at(&dict(), &user, &convert(&["ねこは"]), 0);
+        assert_eq!(c[0], Candidate::user("根子は", 0));
+        let c = candidates_at(&dict(), &user, &[Piece::abbrev("emacs")], 0);
+        assert_eq!(c[0], Candidate::user("Emacs", 0));
+        assert_eq!(c[1], Candidate::ranked("Ｅｍａｃｓ", 1, 0));
+    }
+
+    #[test]
     fn 変換区間でない次の区間は送り仮名にしない() {
         let pieces = [Piece::convert("か"), Piece::kana("く")];
         assert!(
-            candidates_at(&dict(), &pieces, 0)
+            candidates_at(&dict(), &Dictionary::default(), &pieces, 0)
                 .iter()
                 .all(|c| c.span == 1)
         );

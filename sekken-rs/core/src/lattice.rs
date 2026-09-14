@@ -140,8 +140,15 @@ impl<'a> Search<'a> {
                     (surfaces.len() - 1) as u32
                 });
                 pos_ids.push(id);
-                pos_uni.push(
+                // ユーザー辞書の語は 1 語として登録されたもので、分かち書きが
+                // 分けた語の間の遷移を課すとモデルが知らない語ほど負ける。
+                let unigram = if cand.user {
+                    0.0
+                } else {
                     scorer.unigram(&cand.surface)
+                };
+                pos_uni.push(
+                    unigram
                         + lattice.weights.rank * (1.0 + cand.rank as f64).ln()
                         + if cand.kana {
                             lattice.weights.kana_penalty
@@ -374,6 +381,7 @@ mod tests {
             span,
             rank: 0,
             kana: false,
+            user: false,
         }
     }
 
@@ -433,12 +441,14 @@ mod tests {
                     span: 1,
                     rank: 1,
                     kana: false,
+                    user: false,
                 },
                 Candidate {
                     surface: "法貨".into(),
                     span: 1,
                     rank: 0,
                     kana: false,
+                    user: false,
                 },
             ]],
         };
@@ -447,6 +457,30 @@ mod tests {
             bi: HashMap::new(),
         };
         assert_eq!(lattice.nbest(&scorer, 1)[0].surfaces, ["法貨"]);
+    }
+
+    #[test]
+    fn ユーザー辞書の候補は表層形の内部コストを払わない() {
+        let lattice = Lattice {
+            weights: Weights::default(),
+            candidates: vec![vec![
+                cand("童", 1),
+                Candidate {
+                    surface: "藁市".into(),
+                    span: 1,
+                    rank: 0,
+                    kana: false,
+                    user: true,
+                },
+            ]],
+        };
+        let scorer = MapScorer {
+            uni: HashMap::from([("童", 1.0), ("藁市", 9.0)]),
+            bi: HashMap::new(),
+        };
+        let result = lattice.nbest(&scorer, 2);
+        assert_eq!(result[0].surfaces, ["藁市"]);
+        assert_eq!(result[0].cost, 0.0);
     }
 
     #[test]
@@ -545,6 +579,7 @@ mod tests {
                 span: 1,
                 rank: 0,
                 kana: false,
+                user: false,
             })
             .collect();
         let lattice = Lattice {
