@@ -53,6 +53,7 @@
     (remove-hook 'before-change-functions #'sekken-input-before-change t)
     (remove-hook 'after-change-functions #'sekken-input-after-change t)
     (sekken-input-forget-origin)
+    (sekken-input-forget-finished)
     (sekken-overlay-clear)
     (when (and (equal current-input-method sekken-im-name)
                (not sekken-im--deactivating))

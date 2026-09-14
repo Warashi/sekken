@@ -416,6 +416,30 @@
         (delete-char -1)))
     (should (equal (buffer-string) "Nek"))))
 
+(ert-deftest sekken-live/undo_で確定を取り消せば語に戻る ()
+  (with-temp-buffer
+    (sekken-test-type "Neko")
+    (sekken-live-test--with-cache '(("Neko" "猫"))
+      (sekken-live-test--command #'self-insert-command (insert " "))
+      (should (equal (buffer-string) "猫 "))
+      (sekken-live-test--command #'undo
+        (delete-region 1 3)
+        (insert "Neko"))
+      (should (equal (sekken-input-bounds) (cons 1 5)))
+      (should (equal (sekken-live-test--display) "猫"))
+      (sekken-live-test--command #'ignore))
+    (should (equal (buffer-string) "猫"))))
+
+(ert-deftest sekken-live/undo_で戻したローマ字が確定した語と違えば語に戻さない ()
+  (with-temp-buffer
+    (sekken-test-type "Neko")
+    (sekken-live-test--with-cache '(("Neko" "猫"))
+      (sekken-live-test--command #'self-insert-command (insert " "))
+      (sekken-live-test--command #'undo
+        (delete-region 1 3)
+        (insert "Nek"))
+      (should (null (sekken-input-bounds))))))
+
 (ert-deftest sekken-live/語が置き換わった後に打った文字は新しい語になる ()
   (with-temp-buffer
     (sekken-test-type "Neko")

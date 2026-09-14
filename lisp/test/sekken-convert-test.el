@@ -79,6 +79,17 @@
     (should (equal (buffer-string) "きょうはEmacs"))
     (should (null (sekken-input-bounds)))))
 
+(ert-deftest sekken-convert/undo_で置き換えを取り消せば語に戻る ()
+  (with-temp-buffer
+    (sekken-test-type "kyouha")
+    (sekken-convert-test--with-engine nil
+      (sekken-convert))
+    (should (null (sekken-input-bounds)))
+    (delete-region 1 5)
+    (insert "kyouha")
+    (sekken-input-revive-word)
+    (should (equal (sekken-input-bounds) (cons 1 7)))))
+
 (ert-deftest sekken-convert/入力が無ければ元のキーのコマンドを実行する ()
   (with-temp-buffer
     (insert "abc ")

@@ -7,7 +7,8 @@
 ;; 空白以外の打てる文字（印字可能な ASCII）の並び。打ち始めは自己挿入の
 ;; コマンドが文字を入れた位置で、それより前には伸びない。もとからバッファにある文字や貼り
 ;; 付けた文字は打っていないので語にならず、確定の結果が英字で終わって
-;; も、それをもう一度語として拾わない。
+;; も、それをもう一度語として拾わない。確定を undo で取り消してローマ字
+;; が同じ位置に戻れば、打ち始めを復元して語に戻す。
 ;; 表示用には大文字境界を ▽ で示し、かなにして返す。エンジンには
 ;; 同じ分割をかなにし、区間の種類を付けた列として送る。
 ;;
@@ -42,6 +43,40 @@ marker は直前への挿入で進まないので、打ち始めの位置に打�
   (when sekken-input--origin
     (set-marker sekken-input--origin nil)
     (setq sekken-input--origin nil)))
+
+(defvar-local sekken-input--finished nil
+  "最後に置き換えた語の (START . ROMAN)。START は marker。
+undo が置き換えを取り消してローマ字が同じ位置に戻ったとき、語に戻すため。")
+
+(defun sekken-input-finish-word (start roman)
+  "START から始まっていた語 ROMAN を置き換え終えたことにする。
+打ち始めを忘れ、次に打った文字は新しい語になる。"
+  (sekken-input-forget-origin)
+  (when sekken-input--finished
+    (set-marker (car sekken-input--finished) nil))
+  (setq sekken-input--finished (cons (copy-marker start) roman)))
+
+(defun sekken-input-forget-finished ()
+  "最後に置き換えた語を忘れる。"
+  (when sekken-input--finished
+    (set-marker (car sekken-input--finished) nil)
+    (setq sekken-input--finished nil)))
+
+(defun sekken-input-revive-word ()
+  "最後に置き換えた語のローマ字が同じ位置に戻り、ポイントがその中にあれば語に戻す。
+undo が置き換えを取り消したときに、打ち始めからその語を続けられるようにする。
+打ち始めがあれば何もしない。"
+  (when (and (null sekken-input--origin)
+             sekken-input--finished
+             (marker-buffer (car sekken-input--finished)))
+    (let* ((start (marker-position (car sekken-input--finished)))
+           (roman (cdr sekken-input--finished))
+           (end (+ start (length roman))))
+      (when (and (<= end (point-max))
+                 (>= (point) start)
+                 (<= (point) end)
+                 (equal (buffer-substring-no-properties start end) roman))
+        (setq sekken-input--origin (copy-marker start))))))
 
 (defun sekken-input-after-change (beg end old-length)
   "文字を打つコマンドが BEG に文字を入れたら、打ち始めが無ければそこを打ち始めにする。

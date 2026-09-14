@@ -172,6 +172,7 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
                 (goto-char start)
                 (delete-region start end)
                 (insert text))
+              (sekken-input-finish-word start roman)
               (when inside
                 (goto-char (+ start (length text)))))
           (text-read-only nil))))))
@@ -179,7 +180,7 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
 (defun sekken-live-after-command ()
   "覚えた語から離れていれば確定し、overlay を張り直す。`post-command-hook' 用。
 語が置き換わっていれば確定はしないが、その語は終わったので打ち始めを忘れる。
-縮んだだけなら語は続く。"
+縮んだだけなら語は続く。undo が確定を取り消していれば語に戻す。"
   (when sekken-live--pending
     (let ((start (marker-position (nth 0 sekken-live--pending)))
           (end (marker-position (nth 1 sekken-live--pending)))
@@ -195,6 +196,7 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
         ;; 境界で終わる語のように置き換えなくても、離れた語は終わり。
         (sekken-input-forget-origin)))))
   (sekken-live--forget)
+  (sekken-input-revive-word)
   (sekken-live-update))
 
 (provide 'sekken-live)
