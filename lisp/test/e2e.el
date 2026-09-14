@@ -6,13 +6,14 @@
 ;; ERT の単体テストはエンジン呼び出しを差し替えている。ここでは本物の
 ;; `sekken server' を起動し、JSON-RPC の枠組み・overlay・終了処理まで通す。
 ;; 環境変数 SEKKEN_BIN / SEKKEN_DIC / SEKKEN_MODEL / SEKKEN_JISYO が
-;; 揃っていなければ何もせず終わる。
+;; 揃っていなければ何もせず終わる。ユーザー辞書は一時ファイルに書く。
 ;;
 ;;   SEKKEN_BIN=... SEKKEN_DIC=... SEKKEN_MODEL=... SEKKEN_JISYO=... \
 ;;     emacs -Q --batch -L lisp -l lisp/test/e2e.el
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'sekken)
 
 (defun e2e-type (string)
@@ -29,7 +30,9 @@
     (setq sekken-server-program bin
           sekken-server-dic dic
           sekken-server-model model
-          sekken-server-jisyo jisyo)
+          sekken-server-jisyo jisyo
+          sekken-server-user-jisyo (make-temp-file "sekken-e2e-jisyo-" nil nil))
+    (delete-file sekken-server-user-jisyo)
     (let ((henkan (sekken-server-henkan
                    (sekken-input-pieces "WagahaihaNekodearu.") 3)))
       (message "henkan: %S" henkan)
@@ -85,7 +88,34 @@
       (unless (member (buffer-string)
                       '("我輩は猫である。 " "吾輩は猫である。 "))
         (error "e2e: ライブ変換の確定結果が %S" (buffer-string)))
+      ;; 置き換わった語を直して region で選び、登録すると次の変換から 1 位になる。
+      (erase-buffer)
+      (e2e-type "Warashi")
+      (sekken-live-before-command)
+      (insert " ")
+      (sekken-live-after-command)
+      (unless (equal (buffer-string) "童 ")
+        (error "e2e: 登録前の確定結果が %S" (buffer-string)))
+      (delete-region (point-min) (point-max))
+      (insert "藁市")
+      (push-mark (point-min) t t)
+      (let ((transient-mark-mode t)
+            (yomi-default nil))
+        (cl-letf (((symbol-function 'read-string)
+                   (lambda (_prompt &optional _initial _history default &rest _)
+                     (setq yomi-default default)
+                     default)))
+          (call-interactively #'sekken-register))
+        (unless (equal yomi-default "わらし")
+          (error "e2e: 読みの既定値が %S" yomi-default)))
+      (unless (file-exists-p sekken-server-user-jisyo)
+        (error "e2e: ユーザー辞書が書かれていない"))
+      (unless (equal (car (sekken-server-henkan (sekken-input-pieces "Warashi") 1))
+                     "藁市")
+        (error "e2e: 登録した語が 1 位でない: %S"
+               (sekken-server-henkan (sekken-input-pieces "Warashi") 3)))
       (deactivate-input-method))
+    (delete-file sekken-server-user-jisyo)
     (let ((proc (jsonrpc--process (sekken-server-connection))))
       (sekken-server-shutdown)
       (when (process-live-p proc)
