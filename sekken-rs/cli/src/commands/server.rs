@@ -7,11 +7,15 @@
 //! "text": "...", "prefix": bool, "suffix": bool}, ...], "top": n}`。エディタがローマ字を
 //! かなにし、区間の種類を決めて送る。`prefix` `suffix` は `>` の印で、省略すれば偽。
 //!
+//! `register` の params は `{"yomi": "...", "surface": "..."}`。送りなしの語として
+//! ユーザー辞書に足し、`--user-jisyo` のファイルに書く。
+//!
 //! 入力中の補完は打鍵ごとに `henkan` を送り、Emacs 側は打鍵で待つのをやめる。
 //! 変換は 1 つずつしか処理できないので、溜まった `henkan` のうち後ろに
 //! 別の `henkan` があるものは変換せずに捨て、最新の入力だけを変換する。
 
 use std::io::Write as _;
+use std::path::Path;
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 
@@ -37,6 +41,11 @@ pub const LOAD_FAILED: i64 = -32000;
 /// 後から来た `henkan` に置き換えられて変換しなかったときの JSON-RPC エラーコード。
 pub const SUPERSEDED: i64 = -32001;
 
+/// ユーザー辞書への登録に失敗したときの JSON-RPC エラーコード。
+/// `--user-jisyo` が無い、語が形式を壊す、ファイルに書けない、のどれも
+/// エンジンは生きているので Emacs 側は異常終了として数えない。
+pub const REGISTER_FAILED: i64 = -32002;
+
 /// 別スレッドで読み込み中のエンジン。初回利用時に完了を待つ。
 pub enum EngineLoader {
     Loading(JoinHandle<Result<Engine>>),
@@ -56,7 +65,7 @@ impl EngineLoader {
     }
 
     /// 読み込みの完了を待って結果を返す。
-    pub fn engine(&mut self) -> &Result<Engine> {
+    pub fn engine(&mut self) -> &mut Result<Engine> {
         if let EngineLoader::Loading(_) = self {
             let EngineLoader::Loading(handle) = std::mem::replace(
                 self,
@@ -107,6 +116,7 @@ impl Reply {
 }
 
 pub fn run(args: Args) -> Result<()> {
+    let user_jisyo = args.engine.user_jisyo.clone();
     let mut loader = EngineLoader::spawn(move || args.engine.build());
     let mut stdout = std::io::stdout().lock();
     // 変換の間も要求を読み進め、溜まった分をまとめて見られるように読みを分ける。
@@ -147,7 +157,7 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 continue;
             };
-            let reply = handle(&mut loader, id, &req);
+            let reply = handle(&mut loader, user_jisyo.as_deref(), id, &req);
             write_message(&mut stdout, &reply.response)?;
             if reply.exit {
                 std::process::exit(1);
@@ -180,7 +190,12 @@ pub fn drop_stale(batch: Vec<Request>) -> (Vec<Request>, Vec<Response>) {
     (keep, stale)
 }
 
-pub fn handle(loader: &mut EngineLoader, id: Value, req: &Request) -> Reply {
+pub fn handle(
+    loader: &mut EngineLoader,
+    user_jisyo: Option<&Path>,
+    id: Value,
+    req: &Request,
+) -> Reply {
     match req.method.as_str() {
         "version" => Reply::ok(id, json!({ "version": VERSION })),
         "henkan" => {
@@ -201,9 +216,52 @@ pub fn handle(loader: &mut EngineLoader, id: Value, req: &Request) -> Reply {
                 },
             }
         }
+        "register" => {
+            let (yomi, surface) = match parse_word(&req.params) {
+                Ok(word) => word,
+                Err(message) => return Reply::err(id, -32602, message),
+            };
+            let Some(path) = user_jisyo else {
+                return Reply::err(id, REGISTER_FAILED, "user dictionary is not configured");
+            };
+            match loader.engine() {
+                Ok(engine) => match register(engine, path, yomi, surface) {
+                    Ok(()) => Reply::ok(id, Value::Null),
+                    Err(err) => Reply::err(id, REGISTER_FAILED, format!("{err:#}")),
+                },
+                Err(err) => Reply {
+                    response: Response::err(
+                        id,
+                        LOAD_FAILED,
+                        format!("failed to load engine: {err:#}"),
+                    ),
+                    exit: true,
+                },
+            }
+        }
         "shutdown" => Reply::ok(id, Value::Null),
         other => Reply::err(id, -32601, format!("unknown method: {other}")),
     }
+}
+
+/// `params.yomi` と `params.surface` を読む。
+pub fn parse_word(params: &Value) -> Result<(&str, &str), String> {
+    let Some(yomi) = params["yomi"].as_str() else {
+        return Err("params.yomi must be a string".to_string());
+    };
+    let Some(surface) = params["surface"].as_str() else {
+        return Err("params.surface must be a string".to_string());
+    };
+    Ok((yomi, surface))
+}
+
+/// 語をユーザー辞書に足してファイルに書く。書けなければメモリにも残さない。
+fn register(engine: &mut Engine, path: &Path, yomi: &str, surface: &str) -> Result<()> {
+    let mut user = engine.user.clone();
+    user.register_okuri_nasi(yomi, surface)?;
+    user.save(path)?;
+    engine.user = user;
+    Ok(())
 }
 
 /// `params.pieces` を読む。種類と文字列が揃っていなければ理由を返す。
@@ -355,10 +413,44 @@ mod tests {
         });
         let reply = handle(
             &mut loader,
+            None,
             json!(1),
             &request("henkan", json!({ "input": "Neko" })),
         );
         assert_eq!(reply.response.error.unwrap().code, -32602);
+        assert!(!reply.exit);
+    }
+
+    #[test]
+    fn register_は読み込みを待たずに_params_の誤りと辞書の未設定を返す() {
+        let (_tx, rx) = mpsc::channel::<()>();
+        let mut loader = EngineLoader::spawn(move || {
+            let _ = rx.recv();
+            Err(anyhow!("never loaded"))
+        });
+        let reply = handle(
+            &mut loader,
+            Some(Path::new("/tmp/user-jisyo")),
+            json!(1),
+            &request("register", json!({ "yomi": "ねこ" })),
+        );
+        let error = reply.response.error.unwrap();
+        assert_eq!(error.code, -32602);
+        assert!(error.message.contains("surface"), "{}", error.message);
+        assert!(!reply.exit);
+        let reply = handle(
+            &mut loader,
+            None,
+            json!(1),
+            &request("register", json!({ "yomi": "ねこ", "surface": "根子" })),
+        );
+        let error = reply.response.error.unwrap();
+        assert_eq!(error.code, REGISTER_FAILED);
+        assert!(
+            error.message.contains("not configured"),
+            "{}",
+            error.message
+        );
         assert!(!reply.exit);
     }
 
@@ -369,10 +461,20 @@ mod tests {
             let _ = rx.recv();
             Err(anyhow!("never loaded"))
         });
-        let reply = handle(&mut loader, json!(1), &request("version", Value::Null));
+        let reply = handle(
+            &mut loader,
+            None,
+            json!(1),
+            &request("version", Value::Null),
+        );
         assert_eq!(reply.response.result, Some(json!({ "version": VERSION })));
         assert!(!reply.exit);
-        let reply = handle(&mut loader, json!(1), &request("shutdown", Value::Null));
+        let reply = handle(
+            &mut loader,
+            None,
+            json!(1),
+            &request("shutdown", Value::Null),
+        );
         assert_eq!(reply.response.result, Some(Value::Null));
         assert!(!reply.exit);
     }
@@ -383,6 +485,7 @@ mod tests {
             EngineLoader::spawn(|| Err(anyhow!("No such file")).context("load SKK dictionary"));
         let reply = handle(
             &mut loader,
+            None,
             json!(1),
             &request(
                 "henkan",
@@ -405,6 +508,7 @@ mod tests {
         let mut loader = EngineLoader::spawn(|| panic!("boom"));
         let reply = handle(
             &mut loader,
+            None,
             json!(1),
             &request(
                 "henkan",

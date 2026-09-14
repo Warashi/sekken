@@ -28,6 +28,9 @@ pub struct EngineArgs {
     /// SKK 辞書（SKK-JISYO.L など）
     #[arg(long)]
     pub jisyo: PathBuf,
+    /// ユーザー辞書。`register` で登録した語を書き、無ければ最初の登録で作る
+    #[arg(long)]
+    pub user_jisyo: Option<PathBuf>,
     /// 候補を採点する文字言語モデル（train-lm の出力）。無ければ格子の順のまま
     #[arg(long)]
     pub lm: Option<PathBuf>,
@@ -69,6 +72,10 @@ impl EngineArgs {
             .with_context(|| format!("open {}", self.model.display()))?;
         let model = NgramModel::load(std::io::BufReader::new(file)).context("load model")?;
         let dict = Dictionary::load(&self.jisyo).context("load SKK dictionary")?;
+        let user = match &self.user_jisyo {
+            Some(path) => Dictionary::load_or_empty(path).context("load user dictionary")?,
+            None => Dictionary::default(),
+        };
         let mut reranker = None;
         let mut speculator = None;
         if let Some(path) = &self.lm {
@@ -100,7 +107,7 @@ impl EngineArgs {
         }
         Ok(Sekken {
             dict,
-            user: Dictionary::default(),
+            user,
             scorer: NgramScorer::new(model, tokenizer),
             weights: sekken_core::lattice::Weights {
                 rank: self.rank_weight,
