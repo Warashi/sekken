@@ -36,6 +36,11 @@
   "N-best を並べ替える文字言語モデルファイル（train-lm の出力）。nil なら並べ替えない。"
   :type '(choice (const nil) file))
 
+(defcustom sekken-server-user-jisyo (locate-user-emacs-file "sekken-jisyo")
+  "ユーザー辞書ファイル。`sekken-register' で登録した語をエンジンが書く。
+最初の登録まで無くてよい。nil なら登録できない。"
+  :type '(choice (const nil) file))
+
 (defcustom sekken-server-timeout 5
   "変換要求の応答を待つ秒数。"
   :type 'number)
@@ -89,7 +94,9 @@ nil の間はモデルの読み込み中とみなし、`sekken-server-startup-ti
          "--model" (expand-file-name sekken-server-model)
          "--jisyo" (expand-file-name sekken-server-jisyo))
    (when sekken-server-lm
-     (list "--lm" (expand-file-name sekken-server-lm)))))
+     (list "--lm" (expand-file-name sekken-server-lm)))
+   (when sekken-server-user-jisyo
+     (list "--user-jisyo" (expand-file-name sekken-server-user-jisyo)))))
 
 (defun sekken-server--make-process ()
   "エンジンのプロセスを作る。"
@@ -213,6 +220,18 @@ ON-FAILURE があれば引数なしで呼ぶ。接続の起動に失敗すれば
    :timeout-fn (lambda ()
                  (sekken-server--count-crash nil)
                  (when on-failure (funcall on-failure)))))
+
+(defun sekken-server-register (yomi surface)
+  "送りなしの読み YOMI の語 SURFACE をユーザー辞書に登録する。
+エンジンがメモリに足してファイルに書く。断られれば `user-error' にする。"
+  (condition-case err
+      (jsonrpc-request (sekken-server-connection) :register
+                       (list :yomi yomi :surface surface)
+                       :timeout (sekken-server--henkan-timeout))
+    (jsonrpc-error
+     (user-error "sekken: 登録できませんでした: %s"
+                 (or (alist-get 'jsonrpc-error-message (cdr err))
+                     (error-message-string err))))))
 
 (defun sekken-server--configured-p ()
   "必須のエンジン設定がすべて揃っていれば non-nil を返す。"

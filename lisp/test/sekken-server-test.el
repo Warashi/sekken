@@ -10,7 +10,8 @@
   (let ((sekken-server-program "/opt/sekken")
         (sekken-server-dic "/d/system.dic.zst")
         (sekken-server-model "/d/model.zst")
-        (sekken-server-jisyo "/d/SKK-JISYO.L"))
+        (sekken-server-jisyo "/d/SKK-JISYO.L")
+        (sekken-server-user-jisyo nil))
     (should (equal (sekken-server--command)
                    '("/opt/sekken" "server"
                      "--dic" "/d/system.dic.zst"
@@ -22,6 +23,7 @@
         (sekken-server-dic "/d/system.dic.zst")
         (sekken-server-model "/d/model.zst")
         (sekken-server-jisyo "/d/SKK-JISYO.L")
+        (sekken-server-user-jisyo nil)
         (sekken-server-lm "/d/lm.zst"))
     (should (equal (sekken-server--command)
                    '("/opt/sekken" "server"
@@ -29,6 +31,39 @@
                      "--model" "/d/model.zst"
                      "--jisyo" "/d/SKK-JISYO.L"
                      "--lm" "/d/lm.zst")))))
+
+(ert-deftest sekken-server/ユーザー辞書は既定で付き_nilなら付けない ()
+  (let ((sekken-server-program "/opt/sekken")
+        (sekken-server-dic "/d/system.dic.zst")
+        (sekken-server-model "/d/model.zst")
+        (sekken-server-jisyo "/d/SKK-JISYO.L")
+        (sekken-server-user-jisyo "~/.config/sekken/user-jisyo"))
+    (should (equal (last (sekken-server--command) 2)
+                   (list "--user-jisyo"
+                         (expand-file-name "~/.config/sekken/user-jisyo"))))
+    (should (stringp (default-value 'sekken-server-user-jisyo)))))
+
+(ert-deftest sekken-server/登録は読みと語を_register_に送る ()
+  (let (request-args)
+    (cl-letf (((symbol-function 'sekken-server-connection)
+               (lambda () 'connection))
+              ((symbol-function 'jsonrpc-request)
+               (lambda (&rest args) (setq request-args args) nil)))
+      (sekken-server-register "わらし" "藁市"))
+    (should (eq (nth 1 request-args) :register))
+    (should (equal (nth 2 request-args) '(:yomi "わらし" :surface "藁市")))))
+
+(ert-deftest sekken-server/登録を断られればエンジンの理由を_user-error_にする ()
+  (cl-letf (((symbol-function 'sekken-server-connection)
+             (lambda () 'connection))
+            ((symbol-function 'jsonrpc-request)
+             (lambda (&rest _)
+               (signal 'jsonrpc-error
+                       '("request id=1 failed:"
+                         (jsonrpc-error-code . -32002)
+                         (jsonrpc-error-message . "surface must not contain slash"))))))
+    (let ((err (should-error (sekken-server-register "ねこ" "猫/犬") :type 'user-error)))
+      (should (string-match-p "surface must not contain slash" (cadr err))))))
 
 (ert-deftest sekken-server/設定が欠けていればエラーにする ()
   (let ((sekken-server-dic nil))
