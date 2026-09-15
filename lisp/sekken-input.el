@@ -268,7 +268,8 @@ abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字
        t))
 
 (defun sekken-input-ready-p (roman)
-  "ROMAN の最後の変換境界より後に入力があれば non-nil を返す。"
+  "ROMAN の最後の変換境界より後に入力があれば non-nil を返す。
+境界で終わる語は確定も変換もできるが、先読みは待って表示に境界を残す。"
   (let ((segments (cdr (sekken-input-segment roman))))
     (and segments
          (not (string-empty-p (plist-get (car (last segments)) :text))))))

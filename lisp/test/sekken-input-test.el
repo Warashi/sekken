@@ -108,7 +108,8 @@
   (should-not (sekken-input-has-boundary-p "neko"))
   (should-not (sekken-input-has-boundary-p "semi;;koron")))
 
-(ert-deftest sekken-input/境界の後に読みがあれば変換できる ()
+(ert-deftest sekken-input/境界の後に読みがあれば先読みする ()
+  ;; 境界で終わる語も確定はできるが、先読みはせず表示に境界を残す。
   (should (sekken-input-ready-p ";neko"))
   (should (sekken-input-ready-p "N"))
   (should-not (sekken-input-ready-p ";"))
