@@ -383,12 +383,39 @@
         (sekken-live-test--command #'newline (insert "\n")))
       (should (equal (buffer-string) (cdr case))))))
 
-(ert-deftest sekken-live/境界で終わる語は確定しない ()
-  (with-temp-buffer
-    (sekken-test-type "Neko;")
-    (sekken-live-test--with-cache nil
-      (sekken-live-test--command #'self-insert-command (insert " ")))
-    (should (equal (buffer-string) "Neko; "))))
+(ert-deftest sekken-live/境界で終わる語は手前までを確定する ()
+  ;; 末尾の `;' `'' `>' は前の区間を閉じただけなので、その手前の語として引く。
+  (dolist (case '(("Neko;" [(:kind "convert" :text "ねこ")] "猫")
+                  ("O>" [(:kind "convert" :text "お" :prefix t)] "御")))
+    (with-temp-buffer
+      (sekken-test-type (nth 0 case))
+      (let (called)
+        (cl-letf (((symbol-function 'sekken-convert-prefetch) #'ignore)
+                  ((symbol-function 'sekken-server-henkan)
+                   (lambda (pieces &rest _)
+                     (setq called pieces)
+                     (list (nth 2 case)))))
+          (setq sekken-convert--cache nil)
+          (sekken-live-test--command #'self-insert-command (insert " ")))
+        (should (equal called (nth 1 case))))
+      (should (equal (buffer-string) (concat (nth 2 case) " ")))))
+  ;; 辞書を引く区間が無ければエンジンを呼ばずに置き換える。
+  ;; `neko'' のように literal が開いたままなら空白でも語は続くので、ここには入らない。
+  (dolist (case '(("'git branch;" . "git branch ")
+                  ("'emacs'" . "emacs ")))
+    (with-temp-buffer
+      (sekken-test-type (car case))
+      (sekken-live-test--with-cache nil
+        (sekken-live-test--command #'self-insert-command (insert " ")))
+      (should (equal (buffer-string) (cdr case))))))
+
+(ert-deftest sekken-live/境界だけの語は残す ()
+  (dolist (roman '(";" ">"))
+    (with-temp-buffer
+      (sekken-test-type roman)
+      (sekken-live-test--with-cache nil
+        (sekken-live-test--command #'self-insert-command (insert " ")))
+      (should (equal (buffer-string) (concat roman " "))))))
 
 (ert-deftest sekken-live/確定した英字を直後の語として拾い直さない ()
   ;; 保存や M-x のように、ポイントを動かさず確定する経路が 2 回続く。

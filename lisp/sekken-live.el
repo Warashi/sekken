@@ -150,11 +150,9 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
 (defun sekken-live--result (roman)
   "確定で ROMAN を置き換える文字列。置き換えないなら nil。
 辞書を引く区間があれば 1 位候補（届いていなければ待って引く）、
-無ければかなと綴り。境界で終わる語と、エンジンの失敗は nil。"
+無ければかなと綴り。境界だけの語と、エンジンの失敗は nil。"
   (cond
-   ((and (sekken-input-has-boundary-p roman)
-         (not (sekken-input-ready-p roman)))
-    nil)
+   ((seq-empty-p (sekken-input-pieces roman)) nil)
    ((sekken-input-converts-p roman)
     (car (or (sekken-convert-cached roman)
              (condition-case nil
@@ -201,7 +199,7 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
        (t
         (unless buffer-read-only
           (sekken-live--commit start end roman))
-        ;; 境界で終わる語のように置き換えなくても、離れた語は終わり。
+        ;; 境界だけの語のように置き換えなくても、離れた語は終わり。
         (sekken-input-forget-origin)))))
   (sekken-live--forget)
   (sekken-input-revive-word)
