@@ -163,6 +163,17 @@
     (should (equal (buffer-string) "猫\n"))
     (should (= (point) (point-max)))))
 
+(ert-deftest sekken-live/literal_の中の空白では置き換わらず改行で一括して置き換わる ()
+  (with-temp-buffer
+    (sekken-test-type "'git")
+    (sekken-live-test--with-cache nil
+      (sekken-live-test--command #'self-insert-command (insert " "))
+      (should (equal (buffer-string) "'git "))
+      (sekken-test-type "branch")
+      (sekken-live-test--command #'newline (insert "\n")))
+    (should (equal (buffer-string) "git branch\n"))
+    (should (= (point) (point-max)))))
+
 (ert-deftest sekken-live/移動のコマンドは確定してから確定した文字列の上を動く ()
   (with-temp-buffer
     (sekken-test-type "Neko")
@@ -354,21 +365,22 @@
     (should (equal (buffer-string) "Neko "))))
 
 (ert-deftest sekken-live/辞書を引く区間の無い語はかなと綴りに置き換わる ()
-  (dolist (case '(("kyouha" . "きょうは ")
-                  ("kyouha'Emacs" . "きょうはEmacs ")))
+  ;; literal で終わる語は空白では終わらないので、改行で終える。
+  (dolist (case '(("kyouha" . "きょうは\n")
+                  ("kyouha'Emacs" . "きょうはEmacs\n")))
     (with-temp-buffer
       (sekken-test-type (car case))
       (sekken-live-test--with-cache nil
-        (sekken-live-test--command #'self-insert-command (insert " ")))
+        (sekken-live-test--command #'newline (insert "\n")))
       (should (equal (buffer-string) (cdr case))))))
 
 (ert-deftest sekken-live/数字混じりの語も_1_語として置き換わる ()
-  (dolist (case '(("'1on1" . "1on1 ")
-                  ("Kyou1on1" . "今日1on1 ")))
+  (dolist (case '(("'1on1" . "1on1\n")
+                  ("Kyou1on1" . "今日1on1\n")))
     (with-temp-buffer
       (sekken-test-type (car case))
       (sekken-live-test--with-cache '(("Kyou1on1" "今日1on1"))
-        (sekken-live-test--command #'self-insert-command (insert " ")))
+        (sekken-live-test--command #'newline (insert "\n")))
       (should (equal (buffer-string) (cdr case))))))
 
 (ert-deftest sekken-live/境界で終わる語は確定しない ()

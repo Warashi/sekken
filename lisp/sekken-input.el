@@ -4,7 +4,8 @@
 
 ;;; Commentary:
 ;; 「入力中の語」は、自分が打ち始めた位置からポイントまでに連続する、
-;; 空白以外の打てる文字（印字可能な ASCII）の並び。打ち始めは自己挿入の
+;; 空白以外の打てる文字（印字可能な ASCII）の並び。ただし literal 区間の
+;; 中の空白は語を終えない。打ち始めは自己挿入の
 ;; コマンドが文字を入れた位置で、それより前には伸びない。もとからバッファにある文字や貼り
 ;; 付けた文字は打っていないので語にならず、確定の結果が英字で終わって
 ;; も、それをもう一度語として拾わない。確定を undo で取り消してローマ字
@@ -23,10 +24,11 @@
 (require 'sekken-kana)
 (require 'subr-x)
 
-(defconst sekken-input--chars "!-~"
-  "入力中の語を構成する文字（`skip-chars-backward' 用）。
+(defun sekken-input--word-char-p (char)
+  "CHAR が入力中の語を構成する文字か。
 空白を除く印字可能な ASCII、つまり `sekken-im' が拾う文字のうち空白以外。
-数字や括弧も語の一部にして、1on1 のような語を 1 語として打てるようにする。")
+数字や括弧も語の一部にして、1on1 のような語を 1 語として打てるようにする。"
+  (and (<= ?! char) (<= char ?~)))
 
 (defcustom sekken-input-typing-commands
   '(sekken-im-self-insert self-insert-command)
@@ -133,15 +135,26 @@ END が BEG の削除は打ち始めにしない。打つコマンド以外が�
              (< beg sekken-input--origin))
     (sekken-input-forget-origin)))
 
+(defun sekken-input--literal-open-p (roman)
+  "ROMAN が `'' で開いた literal 区間の中で終わっているか。"
+  (and (plist-get (car (last (cdr (sekken-input-segment roman)))) :literal) t))
+
 (defun sekken-input-bounds ()
   "ポイント直前の入力中の語の (START . END)。無ければ nil。
-打ち始めより前には伸びない。"
+打ち始めより前には伸びない。空白は語を終えるが、literal 区間の中の空白は
+語に含める。日本語の文に英語を数語挟んでも文を 1 語のまま保つため。"
   (when (and sekken-input--origin
              (< sekken-input--origin (point)))
-    (let ((end (point))
-          (start (save-excursion
-                   (skip-chars-backward sekken-input--chars)
-                   (max (point) sekken-input--origin))))
+    (let* ((end (point))
+           (start (marker-position sekken-input--origin))
+           (index start))
+      ;; 打ち始めから走査し、literal の外の空白の直後を語の始まりにする。
+      (while (< index end)
+        (unless (or (sekken-input--word-char-p (char-after index))
+                    (sekken-input--literal-open-p
+                     (buffer-substring-no-properties start index)))
+          (setq start (1+ index)))
+        (setq index (1+ index)))
       (when (< start end)
         (cons start end)))))
 

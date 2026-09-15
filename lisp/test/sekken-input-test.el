@@ -116,6 +116,39 @@
       (sekken-test-type "Ga")
       (should (equal (sekken-input-bounds) (cons 6 8))))))
 
+(ert-deftest sekken-input/literal_の中の空白は語を切らない ()
+  ;; 日本語の文に英語を数語挟んでも、文は改行まで 1 語のまま。
+  (with-temp-buffer
+    (sekken-test-type "Kyouha'git branch")
+    (should (equal (sekken-input-bounds) (cons 1 (point-max))))
+    (sekken-test-type ";wo;tsukau")
+    (should (equal (sekken-input-bounds) (cons 1 (point-max)))))
+  (with-temp-buffer
+    (sekken-test-type "'git branch")
+    (should (equal (sekken-input-bounds) (cons 1 (point-max)))))
+  ;; `''' はリテラルのアポストロフィなので literal は続く。
+  (with-temp-buffer
+    (sekken-test-type "'don''t stop")
+    (should (equal (sekken-input-bounds) (cons 1 (point-max))))))
+
+(ert-deftest sekken-input/literal_を閉じた後の空白は語を切る ()
+  (dolist (roman '("'git;" "'git'" "'git/" "/git"))
+    (with-temp-buffer
+      (sekken-test-type roman)
+      (sekken-test-type " ")
+      (should (null (sekken-input-bounds)))
+      (sekken-test-type "Ga")
+      (should (equal (sekken-input-bounds)
+                     (cons (+ (length roman) 2) (point-max)))))))
+
+(ert-deftest sekken-input/literal_の中の空白は綴りのまま送り_表示する ()
+  (should (equal (sekken-input-pieces "Kyouha'git branch;wo")
+                 [(:kind "convert" :text "きょうは")
+                  (:kind "literal" :text "git branch")
+                  (:kind "convert" :text "を")]))
+  (should (equal (sekken-input-display "'git branch") "▽'git branch"))
+  (should (equal (sekken-input-literal "'git branch") "git branch")))
+
 (ert-deftest sekken-input/セミコロンを入力中の語に含める ()
   (with-temp-buffer
     (sekken-test-type ";shokai;kougi")
