@@ -12,7 +12,7 @@
   "エンジン呼び出しを CANDIDATES を返す偽物に差し替えて BODY を実行する。"
   (declare (indent 1))
   `(cl-letf (((symbol-function 'sekken-server-henkan)
-              (lambda (_input _top &optional _cancel-on-input) ,candidates)))
+              (lambda (_input _top) ,candidates)))
      (setq sekken-convert--cache nil)
      ,@body))
 

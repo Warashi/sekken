@@ -50,18 +50,11 @@
 エンジンはモデルの読み込みを終えるまで変換に応答しない。"
   :type 'number)
 
-(defcustom sekken-server-prewarm-delay 1
-  "起動後に変換エンジンを先読みするまでのアイドル秒数。"
-  :type 'number)
-
 (defconst sekken-server-version "0.4.0"
   "この Lisp が想定するエンジンのバージョン。")
 
 (defconst sekken-server--max-crashes 3
   "自動再起動をやめるまでの連続異常終了回数。")
-
-(defconst sekken-server--input-canceled 'sekken-server-input-canceled
-  "打鍵によって JSON-RPC 要求を中断したことを表す値。")
 
 (defconst sekken-server--load-failed-code -32000
   "エンジンがモデルの読み込みに失敗したときの JSON-RPC エラーコード。
@@ -77,9 +70,6 @@ nil の間はモデルの読み込み中とみなし、`sekken-server-startup-ti
 
 (defvar sekken-server--crashes 0
   "直近の連続異常終了回数。正常応答で 0 に戻す。")
-
-(defvar sekken-server--prewarm-timer nil
-  "変換エンジンを先読みする idle timer。")
 
 (defun sekken-server--command ()
   "エンジンを起動するコマンドライン。設定が欠けていればエラーにする。"
@@ -117,8 +107,7 @@ nil の間はモデルの読み込み中とみなし、`sekken-server-startup-ti
 
 (defun sekken-server--connect ()
   "接続を作り、バージョンを照合して返す。
-エンジンはモデルの読み込み中でも version に即応答するので、打鍵で
-取り消さない。取り消すと読み込み中のプロセスを kill してしまう。"
+エンジンはモデルの読み込み中でも version に即応答する。"
   (let ((conn (make-instance 'jsonrpc-process-connection
                              :name "sekken"
                              :process #'sekken-server--make-process
@@ -181,22 +170,15 @@ nil の間はモデルの読み込み中とみなし、`sekken-server-startup-ti
         sekken-server--warmed t)
   (append (plist-get result :candidates) nil))
 
-(defun sekken-server-henkan (pieces top &optional cancel-on-input)
+(defun sekken-server-henkan (pieces top)
   "PIECES を変換し、候補文字列のリストを最大 TOP 個返す。
 PIECES は `sekken-input-pieces' が返す、種類付きのかな区間のベクタ。"
   (condition-case err
-      (let ((result
-             (jsonrpc-request
-              (sekken-server-connection) :henkan
-              (list :pieces pieces :top top)
-              :timeout (sekken-server--henkan-timeout)
-              :cancel-on-input cancel-on-input
-              :cancel-on-input-retval sekken-server--input-canceled)))
-        (if (eq result sekken-server--input-canceled)
-            (progn
-              (setq sekken-server--crashes 0)
-              result)
-          (sekken-server--succeeded result)))
+      (sekken-server--succeeded
+       (jsonrpc-request
+        (sekken-server-connection) :henkan
+        (list :pieces pieces :top top)
+        :timeout (sekken-server--henkan-timeout)))
     (error
      ;; エンジンの異常終了もタイムアウトも jsonrpc-error で届くので、
      ;; エラーの種類ではなくプロセスが死んだかどうかで数える。
@@ -233,45 +215,9 @@ ON-FAILURE があれば引数なしで呼ぶ。接続の起動に失敗すれば
                  (or (alist-get 'jsonrpc-error-message (cdr err))
                      (error-message-string err))))))
 
-(defun sekken-server--configured-p ()
-  "必須のエンジン設定がすべて揃っていれば non-nil を返す。"
-  (and sekken-server-program
-       sekken-server-dic
-       sekken-server-model
-       sekken-server-jisyo))
-
-(defun sekken-server--prewarm-attempt ()
-  "入力が無い間に本番と同じ変換要求まで通す。
-打鍵によって中断された場合は nil、完了した場合は t を返す。"
-  (condition-case nil
-      (not (eq (sekken-server-henkan [(:kind "convert" :text "かな")] 1 t)
-               sekken-server--input-canceled))
-    (quit nil)))
-
-(defun sekken-server--run-prewarm ()
-  "予約された先読みを実行し、中断された場合は予約し直す。"
-  (setq sekken-server--prewarm-timer nil)
-  (when (sekken-server--configured-p)
-    (unless (sekken-server--prewarm-attempt)
-      (sekken-server-schedule-prewarm))))
-
-(defun sekken-server-schedule-prewarm ()
-  "変換エンジンの先読みを予約する。
-設定値は timer の実行時に確認するため、設定より前に呼んでもよい。"
-  (when (and (not sekken-server--prewarm-timer)
-             (not (and sekken-server--connection
-                       (jsonrpc-running-p sekken-server--connection)
-                       sekken-server--warmed)))
-    (setq sekken-server--prewarm-timer
-          (run-with-idle-timer sekken-server-prewarm-delay nil
-                               #'sekken-server--run-prewarm))))
-
 (defun sekken-server-shutdown ()
   "エンジンを止める。"
   (interactive)
-  (when sekken-server--prewarm-timer
-    (cancel-timer sekken-server--prewarm-timer)
-    (setq sekken-server--prewarm-timer nil))
   (when sekken-server--connection
     (let ((conn sekken-server--connection))
       (setq sekken-server--connection nil)
@@ -289,9 +235,6 @@ ON-FAILURE があれば引数なしで呼ぶ。接続の起動に失敗すれば
   (sekken-server-connection))
 
 (add-hook 'kill-emacs-hook #'sekken-server-shutdown)
-(if after-init-time
-    (sekken-server-schedule-prewarm)
-  (add-hook 'emacs-startup-hook #'sekken-server-schedule-prewarm))
 
 (provide 'sekken-server)
 ;;; sekken-server.el ends here

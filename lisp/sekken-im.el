@@ -15,7 +15,6 @@
 (defvar sekken-mode)
 
 (declare-function sekken-mode "sekken" (&optional arg))
-(declare-function sekken-server-schedule-prewarm "sekken-server" ())
 
 (defun sekken-im--event (char)
   "Return the private input event for ASCII character CHAR."
@@ -67,8 +66,7 @@
   "Activate sekken for the current buffer."
   (setq-local input-method-function #'sekken-im-filter)
   (setq-local deactivate-current-input-method-function #'sekken-im-deactivate)
-  (sekken-mode 1)
-  (sekken-server-schedule-prewarm))
+  (sekken-mode 1))
 
 (defun sekken-im-deactivate ()
   "Deactivate sekken for the current buffer."
