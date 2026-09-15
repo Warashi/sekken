@@ -26,14 +26,9 @@
 (require 'sekken-register)
 (require 'sekken-im)
 
-(defcustom sekken-convert-key "C-j"
-  "`sekken-convert' を割り当てるキー。"
-  :type 'key-sequence
-  :group 'sekken)
-
 (defvar sekken-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd sekken-convert-key) #'sekken-convert)
+    (keymap-set map "C-j" #'sekken-convert)
     (sekken-im-bind-map map)
     map)
   "`sekken-mode' のキーマップ。")

@@ -103,15 +103,17 @@ nix build
 ## Emacs での設定
 
 ```elisp
-(setq sekken-server-program "/path/to/sekken"
-      sekken-server-dic "~/.config/sekken/system.dic.zst"
-      sekken-server-model "~/.config/sekken/model.zst"
-      sekken-server-jisyo "~/.config/sekken/SKK-JISYO.L"
-      default-input-method "japanese-sekken")
 (require 'sekken)
+(setopt sekken-server-program "/path/to/sekken"
+        sekken-server-dic "~/.config/sekken/system.dic.zst"
+        sekken-server-model "~/.config/sekken/model.zst"
+        sekken-server-jisyo "~/.config/sekken/SKK-JISYO.L"
+        default-input-method "japanese-sekken")
 ;; 言語モデルで再探索するなら（1 打鍵あたり 10 ms ほど、文全体の変換で 40〜110 ms ほど遅くなる）
-;; (setq sekken-server-lm "~/.config/sekken/lm.zst")
+;; (setopt sekken-server-lm "~/.config/sekken/lm.zst")
 ```
+
+設定はエンジンの起動時に読むので、`require` との順序は問わない。
 
 `C-\` で sekken を有効・無効にする。有効なバッファでは mode-line 左端に
 `-かな:-` が出て、入力中の語が overlay に表示される。入力中の語は、自分が打ち始めた
@@ -134,8 +136,8 @@ org-mode のように major mode が張り替えていても語を続ける。�
 `sekken-live-continue-commands` に足す。足さないと、そのキーを押した時点で語が
 置き換わってから削除が走る。
 
-1 位以外の候補を選ぶには `C-j`（`sekken-convert-key`。`require` より前に設定する）
-を使う。候補が `completion-in-region` に渡るので、corfu を使っていればその
+1 位以外の候補を選ぶには `C-j`（`sekken-mode-map` の `sekken-convert`。別のキーにするなら
+`keymap-set sekken-mode-map` で付け替える）を使う。候補が `completion-in-region` に渡るので、corfu を使っていればその
 ポップアップに出る。一覧が出ている間は、一覧を動く・絞る・閉じるキーで
 語は置き換わらない。候補を選んでそのまま次の語を打ち始められる。ポイント直前に変換する入力が無ければ、そのキーの元の
 コマンド（改行など）が動く。
