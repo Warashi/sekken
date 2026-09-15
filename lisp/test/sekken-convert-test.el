@@ -32,13 +32,36 @@
     (should (equal (buffer-string) "きょうはEmacs"))
     (should (= (point) (point-max)))))
 
-(ert-deftest sekken-convert/開いたばかりの区間で終わる語は置き換えずに知らせる ()
-  (dolist (roman '("neko'" "'" "Neko;" "Kyouha'"))
+(ert-deftest sekken-convert/境界だけの語は置き換えずに知らせる ()
+  (dolist (roman '("'" ";" ">"))
     (with-temp-buffer
       (sekken-test-type roman)
       (sekken-convert-test--with-engine (error "エンジンを呼んではいけない")
         (should-error (sekken-convert) :type 'user-error))
       (should (equal (buffer-string) roman)))))
+
+(ert-deftest sekken-convert/境界で終わる語は手前までを置き換える ()
+  ;; 末尾の `;' `'' は前の区間を閉じただけなので、辞書を引く区間が無ければその場で置き換える。
+  (dolist (case '(("neko'" . "ねこ") ("'git branch;" . "git branch")))
+    (with-temp-buffer
+      (sekken-test-type (car case))
+      (sekken-convert-test--with-engine (error "エンジンを呼んではいけない")
+        (sekken-convert))
+      (should (equal (buffer-string) (cdr case)))))
+  ;; 辞書を引く区間があれば、手前の語の候補を一覧に渡す。
+  (with-temp-buffer
+    (sekken-test-type "Neko;")
+    (let (called)
+      (sekken-convert-test--with-engine '("猫" "ねこ")
+        (cl-letf (((symbol-function 'completion-in-region)
+                   (lambda (start end table &optional _pred)
+                     (setq called
+                           (list start end
+                                 (all-completions
+                                  (buffer-substring-no-properties start end)
+                                  table))))))
+          (sekken-convert)))
+      (should (equal called '(1 6 ("猫" "ねこ")))))))
 
 (ert-deftest sekken-convert/大文字があれば候補を_completion-in-region_に渡す ()
   (with-temp-buffer

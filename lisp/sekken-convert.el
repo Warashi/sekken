@@ -104,7 +104,7 @@ table を使い回すため、候補を閉じ込めると追従しない。"
                (cycle-sort-function . identity)))
    ((eq (car-safe action) 'boundaries) nil)
    ((eq action t)
-    (when (sekken-input-ready-p string)
+    (unless (seq-empty-p (sekken-input-pieces string))
       (sekken-convert--candidates string)))
    ((null action) string)
    ((eq action 'lambda)
@@ -144,8 +144,7 @@ exact で呼ぶ。"
            (end (cdr bounds))
            (roman (buffer-substring-no-properties start end)))
       (cond
-       ((and (sekken-input-has-boundary-p roman)
-             (not (sekken-input-ready-p roman)))
+       ((seq-empty-p (sekken-input-pieces roman))
         (user-error "sekken: 変換境界の後に読みがありません"))
        ((sekken-input-converts-p roman)
         ;; corfu は開始時点の `completion-extra-properties' を保存して
