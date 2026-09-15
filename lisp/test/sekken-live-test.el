@@ -5,6 +5,7 @@
 
 (require 'ert)
 (require 'cl-lib)
+(require 'sekken)
 (require 'sekken-live)
 (require 'sekken-test)
 
@@ -594,7 +595,6 @@
     (should (equal (buffer-string) "ねこが"))))
 
 (ert-deftest sekken-live/sekken-mode_は編集の_hook_も付け外しする ()
-  (require 'sekken)
   (with-temp-buffer
     (sekken-mode 1)
     (should (memq #'sekken-input-before-change before-change-functions))
@@ -618,7 +618,6 @@
     (should-not (memq #'sekken-input-after-change after-change-functions))))
 
 (ert-deftest sekken-live/sekken-mode_が前後の_hook_を付け外しする ()
-  (require 'sekken)
   (with-temp-buffer
     (sekken-mode 1)
     (should (memq #'sekken-live-before-command pre-command-hook))
