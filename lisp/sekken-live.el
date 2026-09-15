@@ -184,14 +184,18 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
 (defun sekken-live-after-command ()
   "覚えた語から離れていれば確定し、overlay を張り直す。`post-command-hook' 用。
 語が置き換わっていれば確定はしないが、その語は終わったので打ち始めを忘れる。
-縮んだだけなら語は続く。undo が確定を取り消していれば語に戻す。"
+その後ろで新しい語が始まっていれば、その打ち始めは残す。縮んだだけなら語は続く。undo が確定を取り消していれば語に戻す。"
   (when sekken-live--pending
     (let ((start (marker-position (nth 0 sekken-live--pending)))
           (end (marker-position (nth 1 sekken-live--pending)))
           (roman (nth 2 sekken-live--pending)))
       (cond
        ((not (sekken-live--intact-p start end roman))
-        (unless (sekken-live--shrunk-p start roman)
+        ;; 候補の選択が語を終えてから同じコマンドで文字を打つと、
+        ;; 打ち始めは新しい語のもの。置き換わった語のものだけ忘れる。
+        (unless (or (sekken-live--shrunk-p start roman)
+                    (and sekken-input--origin
+                         (> sekken-input--origin start)))
           (sekken-input-forget-origin)))
        ((sekken-live--continuing-p start end) nil)
        (t

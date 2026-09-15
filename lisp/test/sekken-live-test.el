@@ -279,6 +279,24 @@
           (should (equal (buffer-string) "Neko")))))
     (should (equal (buffer-string) "Neko"))))
 
+(ert-deftest sekken-live/候補を選んだ直後に打った文字は新しい語の先頭になる ()
+  ;; corfu は C-n で選んだ後に corfu 以外のキーを押すと、pre-command で候補を
+  ;; 入れて exit-function を exact で呼び、それからそのキーのコマンドが走る。
+  (with-temp-buffer
+    (sekken-test-type "Neko")
+    (sekken-live-test--with-cache '(("Neko" "猫") ("Ga" "が"))
+      (let ((exit (sekken-convert--finish (point-min) "Neko")))
+        (sekken-live-test--command #'self-insert-command
+          (let ((completion-in-region-mode t))
+            (completion--replace (point-min) (point-max) "猫")
+            (funcall exit "猫" 'exact))
+          (sekken-test-type "G")))
+      (should (equal (sekken-input-bounds) (cons 2 3)))
+      (sekken-test-type "a")
+      (should (equal (sekken-input-bounds) (cons 2 4)))
+      (sekken-live-test--command #'ignore))
+    (should (equal (buffer-string) "猫が"))))
+
 (ert-deftest sekken-live/DEL_に割り当てられたコマンドは列挙に無くても走る前に確定しない ()
   ;; org-mode は DEL を org-delete-backward-char に張り替える。
   (with-temp-buffer

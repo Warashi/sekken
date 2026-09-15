@@ -71,6 +71,22 @@
     (should (equal (buffer-string) "kyouha'Emacs 猫"))
     (should (null (sekken-input-bounds)))))
 
+(ert-deftest sekken-convert/status_が_finished_でなくても候補が入れば語を終える ()
+  ;; corfu は選んだ候補を入れて一覧を抜けるとき exact で呼ぶ。
+  (with-temp-buffer
+    (sekken-test-type "Neko")
+    (sekken-convert-test--with-engine '("猫")
+      (cl-letf (((symbol-function 'completion-in-region)
+                 (lambda (start end _table &optional _pred)
+                   (delete-region start end)
+                   (goto-char start)
+                   (insert "猫")
+                   (funcall (plist-get completion-extra-properties :exit-function)
+                            "猫" 'exact))))
+        (sekken-convert)))
+    (should (null (sekken-input-bounds)))
+    (should (equal (sekken-input-finished-romans) '("Neko")))))
+
 (ert-deftest sekken-convert/かなと綴りに置き換えた末尾を確定として覚える ()
   (with-temp-buffer
     (sekken-test-type "kyouha'Emacs")
