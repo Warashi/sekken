@@ -8,9 +8,9 @@
 ;; 繋いで見せ、かなに戻さない。それも無い間と、辞書を引く区間の無い
 ;; 語は、かな（と綴りのままの英字）を見せる。
 ;;
-;; 確定の打鍵は無い。語を続けるコマンド（文字の挿入、後退削除、候補の
-;; 選択、undo）以外のコマンドは、走る前に見せていたものをバッファに
-;; 入れる。送信・保存・バッファの切り替えのようにポイントを動かさず
+;; 確定の打鍵は無い。語を続けるコマンド（文字の挿入、後退削除、undo、
+;; 候補一覧が出ている間のすべて）以外のコマンドは、走る前に見せていた
+;; ものをバッファに入れる。送信・保存・バッファの切り替えのようにポイントを動かさず
 ;; 入力を持ち去る経路も、これで確定を通る。語を続けるコマンドは走った
 ;; 後にポイントが語の末尾から離れていれば確定し、語を伸ばす・縮める
 ;; 打鍵と、語が置き換わったコマンドでは何もしない。1 位以外を選ぶには
@@ -84,10 +84,14 @@
 
 (defun sekken-live-continue-p (command)
   "COMMAND が入力中の語を続けるか。
+completion-in-region の候補一覧が出ている間はどのコマンドも続ける。一覧を
+動く・絞る・閉じるコマンドは corfu のような UI ごとに違うので、名前では
+なく `completion-in-region-mode' で見る。それ以外は
 `sekken-live-continue-commands' にあるか、このバッファで DEL か backspace に
 割り当てられていれば続ける。org-mode のように major mode が後退削除を
 別のコマンドに張り替えても、キーで見れば漏れない。"
-  (or (memq command sekken-live-continue-commands)
+  (or completion-in-region-mode
+      (memq command sekken-live-continue-commands)
       (eq command (key-binding [?\d]))
       (eq command (key-binding [backspace]))))
 

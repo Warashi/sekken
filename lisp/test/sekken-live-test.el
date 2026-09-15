@@ -268,6 +268,17 @@
           (should (equal (buffer-string) "Neko"))
           (insert "g"))))))
 
+(ert-deftest sekken-live/候補一覧が出ている間は列挙に無いコマンドでも走る前に確定しない ()
+  ;; corfu の C-n は列挙に無い corfu-next。走る前に確定すると一覧が閉じ、
+  ;; 先頭以外の候補を選べない。
+  (with-temp-buffer
+    (sekken-test-type "Neko")
+    (sekken-live-test--with-cache '(("Neko" "猫"))
+      (let ((completion-in-region-mode t))
+        (sekken-live-test--command #'corfu-next
+          (should (equal (buffer-string) "Neko")))))
+    (should (equal (buffer-string) "Neko"))))
+
 (ert-deftest sekken-live/DEL_に割り当てられたコマンドは列挙に無くても走る前に確定しない ()
   ;; org-mode は DEL を org-delete-backward-char に張り替える。
   (with-temp-buffer
