@@ -81,9 +81,25 @@
                  [(:kind "convert" :text "か") (:kind "convert" :text "k")]))
   (should (equal (sekken-input-pieces "Kak") [(:kind "convert" :text "かk")]))
   (should (equal (sekken-input-pieces "nek") [(:kind "kana" :text "ねk")]))
-  (should (equal (sekken-input-pieces "Kan") [(:kind "convert" :text "かん")]))
-  (should (equal (sekken-input-pieces "Neko;")
-                 [(:kind "convert" :text "ねこ") (:kind "convert" :text "")])))
+  (should (equal (sekken-input-pieces "Kan") [(:kind "convert" :text "かん")])))
+
+(ert-deftest sekken-input/境界で終わる語は末尾の空の区間を落として送る ()
+  ;; 末尾の `;' は前の語を閉じる意図しか持たないので、打たなかったものとして扱う。
+  (should (equal (sekken-input-pieces "Neko;") (sekken-input-pieces "Neko")))
+  (should (equal (sekken-input-pieces "'git branch;")
+                 [(:kind "literal" :text "git branch")]))
+  (should (equal (sekken-input-pieces "'emacs'") [(:kind "literal" :text "emacs")]))
+  (should (equal (sekken-input-pieces "Neko/") [(:kind "convert" :text "ねこ")]))
+  ;; 接頭辞の印は残し、`お>' の見出しで引けるようにする。
+  (should (equal (sekken-input-pieces "O>") [(:kind "convert" :text "お" :prefix t)]))
+  ;; 境界だけなら何も残らない。
+  (should (equal (sekken-input-pieces ";") []))
+  (should (equal (sekken-input-pieces ">") []))
+  (should (equal (sekken-input-literal "'git branch;") "git branch"))
+  (should (equal (sekken-input-literal "neko'") "ねこ"))
+  (should-not (sekken-input-converts-p "'emacs'"))
+  ;; 表示は境界が開いていることを示したまま。
+  (should (equal (sekken-input-display "Neko;") "▽ねこ▽")))
 
 (ert-deftest sekken-input/変換境界の有無を判定する ()
   (should (sekken-input-has-boundary-p "Neko"))

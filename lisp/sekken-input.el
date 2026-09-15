@@ -245,6 +245,17 @@ abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字
         (push current segments)))
     (cons head (nreverse segments))))
 
+(defun sekken-input--settle (roman)
+  "ROMAN を `sekken-input-segment' で分け、末尾の空の区間を落として返す。
+語の終わりの `;' `/' `'' `>' は前の区間を閉じる意図しか持たないので、
+打たなかったものとして扱う。前の区間の接頭辞の印は残す。"
+  (let* ((segmented (sekken-input-segment roman))
+         (segments (cdr segmented)))
+    (if (and segments
+             (string-empty-p (plist-get (car (last segments)) :text)))
+        (cons (car segmented) (butlast segments))
+      segmented)))
+
 (defun sekken-input-has-boundary-p (roman)
   "ROMAN が変換境界（大文字・単独のセミコロン・`/'・`''・`>'）を含むか。"
   (and (cdr (sekken-input-segment roman)) t))
@@ -253,7 +264,7 @@ abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字
   "ROMAN に辞書を引く区間（convert か abbrev）があるか。
 無ければエンジンに送っても文字列をつなぐだけなので、エディタで置き換えられる。"
   (and (cl-some (lambda (segment) (not (plist-get segment :literal)))
-                (cdr (sekken-input-segment roman)))
+                (cdr (sekken-input--settle roman)))
        t))
 
 (defun sekken-input-ready-p (roman)
@@ -265,7 +276,7 @@ abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字
 (defun sekken-input-literal (roman)
   "辞書を引く区間の無い ROMAN を、エンジンに送らずに出す文字列にする。
 先頭の小文字はかなに、literal 区間は綴りのままつなぐ。"
-  (let ((segmented (sekken-input-segment roman)))
+  (let ((segmented (sekken-input--settle roman)))
     (concat (sekken-kana-roman-to-kana (car segmented))
             (mapconcat (lambda (segment) (plist-get segment :text))
                        (cdr segmented) ""))))
@@ -285,8 +296,9 @@ abbrev と literal の区間は綴りのまま返す。"
 先頭の小文字は kana、変換境界で始まる各部分は convert、`/' で開いた部分は
 abbrev、`'' で開いた部分は literal の区間になり、`>' の印は :prefix と
 :suffix で付ける。
+末尾の空の区間は送らない（`sekken-input--settle'）。
 jsonrpc.el が JSON の配列にするようベクタで返す。"
-  (let* ((segmented (sekken-input-segment roman))
+  (let* ((segmented (sekken-input--settle roman))
          (head (car segmented))
          (segments (cdr segmented))
          (pieces nil))
