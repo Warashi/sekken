@@ -92,7 +92,7 @@
                             "猫" 'finished))))
         (sekken-convert)))
     (should (equal (buffer-string) "kyouha'Emacs 猫"))
-    (should (null (sekken-input-bounds)))))
+    (should (null (sekken-word-bounds)))))
 
 (ert-deftest sekken-convert/status_が_finished_でなくても候補が入れば語を終える ()
   ;; corfu は選んだ候補を入れて一覧を抜けるとき exact で呼ぶ。
@@ -107,8 +107,8 @@
                    (funcall (plist-get completion-extra-properties :exit-function)
                             "猫" 'exact))))
         (sekken-convert)))
-    (should (null (sekken-input-bounds)))
-    (should (equal (sekken-input-finished-romans) '("Neko")))))
+    (should (null (sekken-word-bounds)))
+    (should (equal (sekken-word-finished-romans) '("Neko")))))
 
 (ert-deftest sekken-convert/かなと綴りに置き換えた末尾を確定として覚える ()
   (with-temp-buffer
@@ -116,18 +116,18 @@
     (sekken-convert-test--with-engine nil
       (sekken-convert))
     (should (equal (buffer-string) "きょうはEmacs"))
-    (should (null (sekken-input-bounds)))))
+    (should (null (sekken-word-bounds)))))
 
 (ert-deftest sekken-convert/undo_で置き換えを取り消せば語に戻る ()
   (with-temp-buffer
     (sekken-test-type "kyouha")
     (sekken-convert-test--with-engine nil
       (sekken-convert))
-    (should (null (sekken-input-bounds)))
+    (should (null (sekken-word-bounds)))
     (delete-region 1 5)
     (insert "kyouha")
-    (sekken-input-revive-word)
-    (should (equal (sekken-input-bounds) (cons 1 7)))))
+    (sekken-word-revive)
+    (should (equal (sekken-word-bounds) (cons 1 7)))))
 
 (ert-deftest sekken-convert/入力が無ければ元のキーのコマンドを実行する ()
   (with-temp-buffer

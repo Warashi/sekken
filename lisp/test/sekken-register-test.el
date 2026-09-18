@@ -20,27 +20,27 @@
   (with-temp-buffer
     (should-not (sekken-register-recent-yomi))
     (sekken-test-type "Warashi")
-    (sekken-input-finish-word (point-min) "Warashi")
+    (sekken-word-finish (point-min) "Warashi")
     (should (equal (sekken-register-recent-yomi) '("わらし")))
     ;; 外れた語を sekken で打ち直すと、直した語が最後になる。
     (sekken-test-type "Wara;Ichi")
-    (sekken-input-finish-word (- (point) 9) "Wara;Ichi")
+    (sekken-word-finish (- (point) 9) "Wara;Ichi")
     (should (equal (sekken-register-recent-yomi) '("わらいち" "わらし")))))
 
 (ert-deftest sekken-register/読みの既定値から末尾の記号を落とす ()
   (with-temp-buffer
     (sekken-test-type "Sawadadazai.")
-    (sekken-input-finish-word (point-min) "Sawadadazai.")
+    (sekken-word-finish (point-min) "Sawadadazai.")
     (sekken-test-type "...")
-    (sekken-input-finish-word (- (point) 3) "...")
+    (sekken-word-finish (- (point) 3) "...")
     (should (equal (sekken-register-recent-yomi) '("さわだだざい")))))
 
 (ert-deftest sekken-register/前に置き換えた語の読みは履歴で聞く ()
   (with-temp-buffer
     (sekken-test-type "Warashi")
-    (sekken-input-finish-word (point-min) "Warashi")
+    (sekken-word-finish (point-min) "Warashi")
     (sekken-test-type "Wara;Ichi")
-    (sekken-input-finish-word (- (point) 9) "Wara;Ichi")
+    (sekken-word-finish (- (point) 9) "Wara;Ichi")
     (let (registered history)
       (cl-letf (((symbol-function 'sekken-server-register)
                  (lambda (yomi surface) (setq registered (cons yomi surface))))
@@ -69,7 +69,7 @@
     (push-mark (point-min) t t)
     (goto-char (point-max))
     (sekken-test-type "Warashi")
-    (sekken-input-finish-word (- (point-max) 7) "Warashi")
+    (sekken-word-finish (- (point-max) 7) "Warashi")
     (let ((transient-mark-mode t)
           registered prompts)
       (cl-letf (((symbol-function 'sekken-server-register)

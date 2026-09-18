@@ -20,6 +20,7 @@
 
 (require 'sekken-convert)
 (require 'sekken-input)
+(require 'sekken-word)
 (require 'sekken-overlay)
 
 (defun sekken-live--base (roman)
@@ -62,7 +63,7 @@
 
 (defun sekken-live-update ()
   "ポイント直前の語に合わせて overlay を張り直し、候補が無ければ先読みする。"
-  (let ((bounds (sekken-input-bounds)))
+  (let ((bounds (sekken-word-bounds)))
     (if (null bounds)
         (sekken-overlay-clear)
       (let* ((start (car bounds))
@@ -111,7 +112,7 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
 (defun sekken-live-before-command ()
   "語を続けるコマンドなら入力中の語を覚え、それ以外なら確定する。`pre-command-hook' 用。"
   (sekken-live--forget)
-  (let ((bounds (sekken-input-bounds)))
+  (let ((bounds (sekken-word-bounds)))
     (if (sekken-live-continue-p this-command)
         (when bounds
           (setq sekken-live--pending
@@ -123,7 +124,7 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
                              (buffer-substring-no-properties (car bounds) (cdr bounds)))
         (sekken-overlay-clear))
       ;; 語が無くても、語を続けないコマンドの後に打つ文字は新しい語。
-      (sekken-input-forget-origin))))
+      (sekken-word-forget-origin))))
 
 (defun sekken-live--intact-p (start end roman)
   "START から END の語 ROMAN がそのまま残っているか。
@@ -142,7 +143,7 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
 (defun sekken-live--continuing-p (start end)
   "ポイントが START から END の語を続ける位置にあるか。
 語の途中に戻ったのは離れたと見る。"
-  (let ((bounds (sekken-input-bounds)))
+  (let ((bounds (sekken-word-bounds)))
     (and bounds
          (= (car bounds) start)
          (>= (point) end))))
@@ -174,7 +175,7 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
                 (goto-char start)
                 (delete-region start end)
                 (insert text))
-              (sekken-input-finish-word start roman)
+              (sekken-word-finish start roman)
               (when inside
                 (goto-char (+ start (length text)))))
           (text-read-only nil))))))
@@ -192,17 +193,17 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
         ;; 候補の選択が語を終えてから同じコマンドで文字を打つと、
         ;; 打ち始めは新しい語のもの。置き換わった語のものだけ忘れる。
         (unless (or (sekken-live--shrunk-p start roman)
-                    (and sekken-input--origin
-                         (> sekken-input--origin start)))
-          (sekken-input-forget-origin)))
+                    (and sekken-word--origin
+                         (> sekken-word--origin start)))
+          (sekken-word-forget-origin)))
        ((sekken-live--continuing-p start end) nil)
        (t
         (unless buffer-read-only
           (sekken-live--commit start end roman))
         ;; 境界だけの語のように置き換えなくても、離れた語は終わり。
-        (sekken-input-forget-origin)))))
+        (sekken-word-forget-origin)))))
   (sekken-live--forget)
-  (sekken-input-revive-word)
+  (sekken-word-revive)
   (sekken-live-update))
 
 (provide 'sekken-live)

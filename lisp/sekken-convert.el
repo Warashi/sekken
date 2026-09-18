@@ -13,6 +13,7 @@
 
 (require 'cl-lib)
 (require 'sekken-input)
+(require 'sekken-word)
 (require 'sekken-server)
 
 (defcustom sekken-convert-max-candidates 10
@@ -124,14 +125,14 @@ exit-function が呼ばれた時点で候補はバッファに入っているの
 見ない。corfu は選んだ候補を入れて一覧を抜けるとき finished ではなく
 exact で呼ぶ。"
   (lambda (_string _status)
-    (sekken-input-finish-word start roman)))
+    (sekken-word-finish start roman)))
 
 (cl-defun sekken-convert ()
   "ポイント直前の語を変換する。
 辞書を引く区間が無ければかなと綴りに置き換え、あれば候補から選ぶ。
 変換する入力が無ければ、このキーの元のコマンド（改行など）を実行する。"
   (interactive)
-  (let ((bounds (sekken-input-bounds)))
+  (let ((bounds (sekken-word-bounds)))
     (unless bounds
       (let ((fallback (sekken-convert--fallback-command)))
         (if (and fallback (not (eq fallback #'sekken-convert)))
@@ -156,7 +157,7 @@ exact で呼ぶ。"
         (delete-region start end)
         (goto-char start)
         (insert (sekken-input-literal roman))
-        (sekken-input-finish-word start roman))))))
+        (sekken-word-finish start roman))))))
 
 (provide 'sekken-convert)
 ;;; sekken-convert.el ends here

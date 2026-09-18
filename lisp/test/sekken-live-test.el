@@ -303,9 +303,9 @@
             (completion--replace (point-min) (point-max) "猫")
             (funcall exit "猫" 'exact))
           (sekken-test-type "G")))
-      (should (equal (sekken-input-bounds) (cons 2 3)))
+      (should (equal (sekken-word-bounds) (cons 2 3)))
       (sekken-test-type "a")
-      (should (equal (sekken-input-bounds) (cons 2 4)))
+      (should (equal (sekken-word-bounds) (cons 2 4)))
       (sekken-live-test--command #'ignore))
     (should (equal (buffer-string) "猫が"))))
 
@@ -460,7 +460,7 @@
     (insert "abc")
     (sekken-test-type "Neko")
     (sekken-live-test--with-cache '(("Neko" "猫"))
-      (should (equal (sekken-input-bounds) (cons 4 8)))
+      (should (equal (sekken-word-bounds) (cons 4 8)))
       (sekken-live-test--command #'ignore))
     (should (equal (buffer-string) "abc猫"))))
 
@@ -470,7 +470,7 @@
     (sekken-test-type "Nekoga")
     (sekken-live-test--with-cache '(("Neko" "猫"))
       (sekken-live-test--command #'undo (delete-region 5 7))
-      (should (equal (sekken-input-bounds) (cons 1 5)))
+      (should (equal (sekken-word-bounds) (cons 1 5)))
       (should (equal (sekken-live-test--display) "猫")))))
 
 (ert-deftest sekken-live/DEL_に割り当てられた_org_の後退削除でも確定しない ()
@@ -494,7 +494,7 @@
       (sekken-live-test--command #'undo
         (delete-region 1 3)
         (insert "Neko"))
-      (should (equal (sekken-input-bounds) (cons 1 5)))
+      (should (equal (sekken-word-bounds) (cons 1 5)))
       (should (equal (sekken-live-test--display) "猫"))
       (sekken-live-test--command #'ignore))
     (should (equal (buffer-string) "猫"))))
@@ -509,12 +509,12 @@
       (sekken-live-test--command #'undo
         (delete-region 1 4)
         (insert "Nek"))
-      (should (equal (sekken-input-bounds) (cons 1 4)))
+      (should (equal (sekken-word-bounds) (cons 1 4)))
       ;; もう一度 undo で語が空になっても、続けて打てば同じ語。
       (sekken-live-test--command #'undo (delete-region 1 4))
-      (should (null (sekken-input-bounds)))
+      (should (null (sekken-word-bounds)))
       (sekken-test-type "Ne")
-      (should (equal (sekken-input-bounds) (cons 1 3))))))
+      (should (equal (sekken-word-bounds) (cons 1 3))))))
 
 (ert-deftest sekken-live/undo_で戻した文字が確定した語の先頭部分でなければ語に戻さない ()
   (with-temp-buffer
@@ -524,7 +524,7 @@
       (sekken-live-test--command #'undo
         (delete-region 1 3)
         (insert "Ne猫"))
-      (should (null (sekken-input-bounds))))))
+      (should (null (sekken-word-bounds))))))
 
 (ert-deftest sekken-live/redo_が綴りを戻してポイントを先頭に残せば末尾へ動かして語に戻す ()
   (with-temp-buffer
@@ -541,11 +541,11 @@
           (insert "Nek"))
         (goto-char 1))
       (should (= (point) 4))
-      (should (equal (sekken-input-bounds) (cons 1 4)))
+      (should (equal (sekken-word-bounds) (cons 1 4)))
       ;; 先頭へ移動しただけでは動かさない。
       (sekken-live-test--command #'beginning-of-line (goto-char 1))
       (should (= (point) 1))
-      (should (null (sekken-input-bounds))))
+      (should (null (sekken-word-bounds))))
     (sekken-mode -1)))
 
 (ert-deftest sekken-live/打鍵をまとめた本物の_undo_でも戻った先頭部分が語になる ()
@@ -565,20 +565,20 @@
         (should (equal (buffer-string) "吾輩は猫である。名前はまだ無い。 "))
         (run #'undo)
         (should (equal (buffer-string) "WagahaihaNekodearu.Na"))
-        (should (equal (sekken-input-bounds) (cons 1 22)))
+        (should (equal (sekken-word-bounds) (cons 1 22)))
         (should (equal (sekken-live-test--display) "▽わがはいは▽ねこである。▽な"))
         (run #'undo)
         (should (equal (buffer-string) ""))
-        (should (null (sekken-input-bounds)))
+        (should (null (sekken-word-bounds)))
         ;; redo で戻ればポイントを末尾へ動かして語に戻す。
         (run #'undo-redo)
         (should (equal (buffer-string) "WagahaihaNekodearu.Na"))
         (should (= (point) 22))
-        (should (equal (sekken-input-bounds) (cons 1 22)))
+        (should (equal (sekken-word-bounds) (cons 1 22)))
         ;; もう一度 redo すれば置き換えた状態に戻り、語ではない。
         (run #'undo-redo)
         (should (equal (buffer-string) "吾輩は猫である。名前はまだ無い。 "))
-        (should (null (sekken-input-bounds))))
+        (should (null (sekken-word-bounds))))
       (sekken-mode -1))))
 
 (ert-deftest sekken-live/語が置き換わった後に打った文字は新しい語になる ()
@@ -588,17 +588,17 @@
       (sekken-live-test--command #'undo
        (delete-region 1 5)
        (insert "ねこ"))
-      (should (null (sekken-input-bounds)))
+      (should (null (sekken-word-bounds)))
       (sekken-test-type "Ga")
-      (should (equal (sekken-input-bounds) (cons 3 5)))
+      (should (equal (sekken-word-bounds) (cons 3 5)))
       (sekken-live-test--command #'ignore))
     (should (equal (buffer-string) "ねこが"))))
 
 (ert-deftest sekken-live/sekken-mode_は編集の_hook_も付け外しする ()
   (with-temp-buffer
     (sekken-mode 1)
-    (should (memq #'sekken-input-before-change before-change-functions))
-    (should (memq #'sekken-input-after-change after-change-functions))
+    (should (memq #'sekken-word-before-change before-change-functions))
+    (should (memq #'sekken-word-after-change after-change-functions))
     ;; hook が付いているので、自己挿入のコマンドとして入れれば打ち始めになる。
     (let ((this-command #'self-insert-command))
       (insert "kyouha'Emacs"))
@@ -611,11 +611,11 @@
       (sekken-live-test--command #'self-insert-command
         (let ((this-command #'self-insert-command))
           (insert "Ne")))
-      (should (equal (sekken-input-bounds) (cons 9 11)))
+      (should (equal (sekken-word-bounds) (cons 9 11)))
       (should (equal (sekken-live-test--display) "▽ね")))
     (sekken-mode -1)
-    (should-not (memq #'sekken-input-before-change before-change-functions))
-    (should-not (memq #'sekken-input-after-change after-change-functions))))
+    (should-not (memq #'sekken-word-before-change before-change-functions))
+    (should-not (memq #'sekken-word-after-change after-change-functions))))
 
 (ert-deftest sekken-live/sekken-mode_が前後の_hook_を付け外しする ()
   (with-temp-buffer

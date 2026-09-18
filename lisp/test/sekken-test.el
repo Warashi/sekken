@@ -3,7 +3,7 @@
 ;; SPDX-License-Identifier: MIT
 ;;; Code:
 
-(require 'sekken-input)
+(require 'sekken-word)
 
 (defun sekken-test-type (string)
   "STRING を打ったものとしてポイントに入れる。
@@ -11,7 +11,7 @@
   (let ((this-command #'self-insert-command)
         (beg (point)))
     (insert string)
-    (sekken-input-after-change beg (point) 0)))
+    (sekken-word-after-change beg (point) 0)))
 
 (provide 'sekken-test)
 ;;; sekken-test.el ends here

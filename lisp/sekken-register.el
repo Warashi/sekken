@@ -14,6 +14,7 @@
 
 (require 'sekken-convert)
 (require 'sekken-input)
+(require 'sekken-word)
 (require 'sekken-server)
 
 (defun sekken-register-yomi (string)
@@ -32,7 +33,7 @@
                    (let* ((yomi (sekken-register-yomi roman))
                           (trimmed (string-trim-right yomi "[^ぁ-ゖー]+")))
                      (and (not (string-empty-p trimmed)) trimmed)))
-                 (sekken-input-finished-romans)))))
+                 (sekken-word-finished-romans)))))
 
 (defvar sekken-register-yomi-history nil
   "`sekken-register' が読みを聞くときの履歴。呼ぶたびに置き換えた語の読みにする。")
