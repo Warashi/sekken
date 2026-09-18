@@ -184,6 +184,12 @@ impl<'a> Session<'a> {
         self.states[node] = Some(state);
     }
 
+    /// 節 `node` まで読んだ最終層の正規化済み出力。
+    pub fn hidden(&self, node: usize) -> &[f32] {
+        let d = self.infer.config().d_model;
+        &self.hidden[node * d..(node + 1) * d]
+    }
+
     /// 節 `node` まで読んだ次に `id` が来る対数確率。
     pub fn log_prob(&self, node: usize, id: u32) -> f32 {
         let d = self.infer.config().d_model;

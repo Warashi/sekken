@@ -14,15 +14,16 @@
 //! 区間の列は入力が伸びても変わらないので、直前の変換で読んだ候補の節を
 //! 場ごと持ち越し、次の変換は共有しない分だけ読む。
 
-use std::cell::RefCell;
+use std::sync::Mutex;
 
 use sekken_core::rerank::SentenceScorer;
 
 use crate::condition::Condition;
-use crate::infer::Infer;
+use crate::file::SavedModel;
+use crate::infer::{Infer, Plastic};
 use crate::interleave::{build, loss_mask, output_positions};
 use crate::session::{Carried, Session};
-use crate::vocab::{BOS, Vocab};
+use crate::vocab::{BOS, EOS, Vocab};
 
 pub struct LmScorer {
     infer: Infer,
@@ -30,9 +31,9 @@ pub struct LmScorer {
     /// 「入力 \t 出力」で学習したモデルなら、採点する文に前置する入力の種類。
     condition: Condition,
     /// 直前の入力側の読み。
-    prefix: RefCell<Option<PrefixCache>>,
+    prefix: Mutex<Option<PrefixCache>>,
     /// 直前の変換で読んだ候補の節と、その入力側の id 列。
-    carried: RefCell<Option<(Vec<u32>, Carried)>>,
+    carried: Mutex<Option<(Vec<u32>, Carried)>>,
 }
 
 /// 直前の入力側（BOS から `\t` の手前まで）の読み。
@@ -77,9 +78,18 @@ impl LmScorer {
             infer,
             vocab,
             condition,
-            prefix: RefCell::new(None),
-            carried: RefCell::new(None),
+            prefix: Mutex::new(None),
+            carried: Mutex::new(None),
         }
+    }
+
+    /// ファイルから読んだモデルで採点器を組む。
+    pub fn from_saved(saved: &SavedModel) -> anyhow::Result<LmScorer> {
+        Ok(LmScorer::new(
+            saved.infer()?,
+            saved.vocab.clone(),
+            saved.condition,
+        ))
     }
 
     pub(crate) fn vocab(&self) -> &Vocab {
@@ -105,7 +115,7 @@ impl LmScorer {
     /// 直前に読んだ候補の節を持ち越した場から始める。
     pub fn begin(&self, input: &str) -> Scoring<'_> {
         let prefix = self.prefix_ids(input);
-        let session = match self.carried.borrow_mut().take() {
+        let session = match self.carried.lock().unwrap().take() {
             Some((ids, carried)) if ids == prefix => Session::reopen(&self.infer, carried),
             _ => self.open(&prefix),
         };
@@ -126,7 +136,7 @@ impl LmScorer {
             return Session::open(&self.infer, ids);
         }
         let stride = self.infer.config().n_layers * self.infer.proj_width();
-        let mut cache = self.prefix.borrow_mut();
+        let mut cache = self.prefix.lock().unwrap();
         let c = cache.get_or_insert_with(|| PrefixCache {
             ids: Vec::new(),
             proj: Vec::new(),
@@ -176,6 +186,42 @@ impl LmScorer {
             .iter()
             .map(|s| scoring.nll(s))
             .collect()
+    }
+
+    /// 入力 `input` に対して確定した文 `sentence` で出力層を 1 歩動かす。
+    /// 損失に入る位置は採点と同じ（交互形なら出力の字と区間の終わり、それに EOS）。
+    /// 更新前の文の負の対数尤度を返す。
+    pub fn adapt(&self, input: &str, sentence: &str, lr: f32, plastic: Plastic) -> f64 {
+        let d = self.infer.config().d_model;
+        let mut hidden = Vec::new();
+        let mut targets = Vec::new();
+        {
+            let mut scoring = self.begin(input);
+            let scored = scoring.score(std::slice::from_ref(&sentence.to_string()));
+            let scored = &scored[0];
+            let session = &scoring.session;
+            let mut node = 0;
+            for ((&next, &id), &counted) in scored.path.iter().zip(&scored.ids).zip(&scored.counted)
+            {
+                if counted {
+                    hidden.extend_from_slice(session.hidden(node));
+                    targets.push(id);
+                }
+                node = next;
+            }
+            hidden.extend_from_slice(session.hidden(node));
+            targets.push(EOS);
+        }
+        debug_assert_eq!(hidden.len(), targets.len() * d);
+        let nll = self.infer.adapt(&hidden, &targets, lr, plastic);
+        // 持ち越した節の log-sum-exp は古い出力層のものなので捨てる。
+        // 入力側の cache（係数と状態）は出力層に依らないので残す。
+        *self.carried.lock().unwrap() = None;
+        nll
+    }
+
+    pub fn infer(&self) -> &Infer {
+        &self.infer
     }
 }
 
@@ -240,7 +286,7 @@ impl Drop for Scoring<'_> {
             return;
         }
         let carried = self.session.carry();
-        *self.scorer.carried.borrow_mut() = Some((std::mem::take(&mut self.prefix), carried));
+        *self.scorer.carried.lock().unwrap() = Some((std::mem::take(&mut self.prefix), carried));
     }
 }
 
@@ -256,7 +302,6 @@ pub(crate) mod tests {
     use crate::config::ModelConfig;
     use crate::infer::Chain;
     use crate::testing::random_weights;
-    use crate::vocab::EOS;
 
     fn config(vocab: &Vocab) -> ModelConfig {
         ModelConfig {
@@ -525,7 +570,7 @@ pub(crate) mod tests {
 
     /// 持ち越しを使わずに最初から読んだコスト。
     fn fresh_costs(s: &LmScorer, input: &str, sentences: &[String]) -> Vec<f64> {
-        *s.carried.borrow_mut() = None;
+        *s.carried.lock().unwrap() = None;
         s.costs(input, sentences)
     }
 
@@ -551,5 +596,25 @@ pub(crate) mod tests {
         for (a, b) in costs.iter().zip(&alone) {
             assert!((a - b).abs() < 1e-4, "{a} vs {b}");
         }
+    }
+
+    #[test]
+    fn 確定した文で動かすとその文のコストが下がり持ち越した場は使わない() {
+        let vocab = Vocab::build(["猫が鳴く\tネコガナク\u{1e}"], 1);
+        let s = scorer_with(vocab, Condition::Interleaved);
+        let sentences = ["猫が鳴く".to_string()];
+        let before = s.costs("ねこがなく", &sentences)[0];
+        // 直前の変換の節を持ち越した状態で更新する。
+        let reported = s.adapt("ねこがなく", "猫が鳴く", 0.05, Plastic::Head);
+        assert!((reported - before).abs() < 1e-4, "{reported} vs {before}");
+        let after = s.costs("ねこがなく", &sentences)[0];
+        assert!(after < before, "{after} >= {before}");
+        // 持ち越した節を使った値が、最初から読んだ値と一致する（古い lse を使っていない）。
+        let fresh = fresh_costs(&s, "ねこがなく", &sentences)[0];
+        assert!((after - fresh).abs() < 1e-4, "{after} vs {fresh}");
+        // 交互形で数える位置は出力の字・区間の終わり・EOS の分だけ。
+        let line = "\u{1e}ネコガ\t猫が\u{1e}ナク\t鳴く";
+        let (expected, _) = reference_interleaved(&s, line);
+        assert!((after - expected).abs() < 1e-4, "{after} vs {expected}");
     }
 }

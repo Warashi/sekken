@@ -12,6 +12,8 @@
 //! 後から回し直して途中の節の状態を作れる。状態（層ごとに 2 × H × P × N）は
 //! 連鎖の終わりだけ持ち、途中の節は係数から作る。
 
+use std::sync::RwLock;
+
 use anyhow::{Context as _, Result, bail};
 
 use crate::config::{ModelConfig, Weight};
@@ -47,10 +49,28 @@ pub struct Infer {
     embed: Vec<f32>,
     blocks: Vec<Block>,
     norm: Vec<f32>,
-    /// (vocab, d_model)
-    head: Vec<f32>,
+    /// 出力層。確定した文で逐次に動かす（`adapt`）ので、採点中に読み、
+    /// 更新時に書き換えられるよう他の重みと分けて置く。
+    head: RwLock<Head>,
     /// 行列積を分けるスレッド数。
     threads: usize,
+}
+
+/// 出力層の重み。logits = hidden · weightᵀ + bias。
+struct Head {
+    /// (vocab, d_model)
+    weight: Vec<f32>,
+    /// (vocab)。学習側は bias を持たないので、ファイルに無ければ零。
+    bias: Vec<f32>,
+}
+
+/// `adapt` で動かす出力層の部分。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Plastic {
+    /// 重みと bias の両方。
+    Head,
+    /// bias だけ。
+    Bias,
 }
 
 /// 1 本の連鎖。`state` の続きとして `ids` を順に読む。
@@ -100,10 +120,17 @@ impl Infer {
                 down: get(&p("mlp.down.weight"))?,
             });
         }
+        let head = Head {
+            weight: get("head.weight")?,
+            bias: get("head.bias").unwrap_or_else(|_| vec![0.0; cfg.vocab_size]),
+        };
+        if head.weight.len() != cfg.vocab_size * cfg.d_model || head.bias.len() != cfg.vocab_size {
+            bail!("head shape does not match config");
+        }
         let infer = Infer {
             embed: get("embed.weight")?,
             norm: get("norm.weight")?,
-            head: get("head.weight")?,
+            head: RwLock::new(head),
             blocks,
             threads: 1,
             cfg,
@@ -272,7 +299,7 @@ impl Infer {
         }
         rms_norm_rows(&x, &self.norm, &mut xn, d);
         let mut logits = vec![0.0f32; rows * v];
-        self.linear(&xn, rows, &self.head, &mut logits);
+        self.logits(&xn, rows, &mut logits);
         let lse: Vec<f32> = if self.threads > 1 {
             use rayon::prelude::*;
             logits.par_chunks_exact(v).map(simd::log_sum_exp).collect()
@@ -305,11 +332,93 @@ impl Infer {
         }
     }
 
+    /// `hidden`（rows × d_model）の各行の logits（rows × vocab）。
+    fn logits(&self, hidden: &[f32], rows: usize, dst: &mut [f32]) {
+        let head = self.head.read().unwrap();
+        self.linear(hidden, rows, &head.weight, dst);
+        for row in dst.chunks_exact_mut(self.cfg.vocab_size) {
+            for (l, b) in row.iter_mut().zip(&head.bias) {
+                *l += b;
+            }
+        }
+    }
+
     /// `hidden` に対する語 `id` の対数確率。`lse` はその位置の log-sum-exp。
     pub fn log_prob(&self, hidden: &[f32], lse: f32, id: u32) -> f32 {
         let d = self.cfg.d_model;
         let id = id as usize;
-        dot(&self.head[id * d..(id + 1) * d], hidden) - lse
+        let head = self.head.read().unwrap();
+        dot(&head.weight[id * d..(id + 1) * d], hidden) + head.bias[id] - lse
+    }
+
+    /// 出力層を delta 則で 1 歩動かす。`hidden` の各行（rows × d_model）で
+    /// `targets` の語が正解のとき、交差エントロピーの勾配 (p − onehot) hᵀ を
+    /// 全行で足し合わせ、`lr` 倍を引く。他の層は動かさない。
+    /// 更新前の各行の正解の負の対数尤度の和を返す。
+    pub fn adapt(&self, hidden: &[f32], targets: &[u32], lr: f32, plastic: Plastic) -> f64 {
+        let v = self.cfg.vocab_size;
+        let d = self.cfg.d_model;
+        let rows = targets.len();
+        assert_eq!(hidden.len(), rows * d);
+        if rows == 0 {
+            return 0.0;
+        }
+        let mut grad = vec![0.0f32; rows * v];
+        self.logits(hidden, rows, &mut grad);
+        let mut nll = 0.0;
+        for (row, &t) in grad.chunks_exact_mut(v).zip(targets) {
+            let lse = simd::log_sum_exp(row);
+            nll -= f64::from(row[t as usize] - lse);
+            for l in row.iter_mut() {
+                *l = (*l - lse).exp();
+            }
+            row[t as usize] -= 1.0;
+        }
+        let mut head = self.head.write().unwrap();
+        for (b, col) in head.bias.iter_mut().enumerate() {
+            let g: f32 = (0..rows).map(|r| grad[r * v + b]).sum();
+            *col -= lr * g;
+        }
+        if plastic == Plastic::Head {
+            // ΔW (vocab × d) = gradᵀ (vocab × rows) · hidden (rows × d)。matmul_t は
+            // x (m × k) · w (n × k)ᵀ なので、grad と hidden を転置して渡す。
+            let mut grad_t = vec![0.0f32; v * rows];
+            for r in 0..rows {
+                for b in 0..v {
+                    grad_t[b * rows + r] = grad[r * v + b];
+                }
+            }
+            let mut hidden_t = vec![0.0f32; d * rows];
+            for r in 0..rows {
+                for i in 0..d {
+                    hidden_t[i * rows + r] = hidden[r * d + i];
+                }
+            }
+            let mut delta = vec![0.0f32; v * d];
+            matmul_t(&grad_t, v, rows, &hidden_t, d, &mut delta, self.threads);
+            for (w, g) in head.weight.iter_mut().zip(&delta) {
+                *w -= lr * g;
+            }
+        }
+        nll
+    }
+
+    /// 出力層の今の重み。ファイルの重みの `head.weight` と `head.bias` を置き換えて
+    /// `adapt` の結果を保存するのに使う。
+    pub fn head_weights(&self) -> Vec<Weight> {
+        let head = self.head.read().unwrap();
+        vec![
+            (
+                "head.weight".into(),
+                vec![self.cfg.vocab_size, self.cfg.d_model],
+                head.weight.clone(),
+            ),
+            (
+                "head.bias".into(),
+                vec![self.cfg.vocab_size],
+                head.bias.clone(),
+            ),
+        ]
     }
 
     /// 1 つの head の漸化式を 1 位置進める。`state` はその head の分
@@ -765,6 +874,120 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// 1 本を読んで、各位置の hidden と次の id（正解）の組を作る。
+    fn teacher(infer: &Infer, ids: &[u32]) -> (Read, Vec<u32>) {
+        let read = infer.read(&[Chain {
+            state: &infer.init_state(),
+            ids,
+        }]);
+        (read, ids[1..].to_vec())
+    }
+
+    fn target_nll(infer: &Infer, hidden: &[f32], targets: &[u32]) -> f64 {
+        let read_lse = |h: &[f32]| {
+            let mut logits = vec![0.0; infer.cfg.vocab_size];
+            infer.logits(h, 1, &mut logits);
+            simd::log_sum_exp(&logits)
+        };
+        let d = infer.cfg.d_model;
+        targets
+            .iter()
+            .enumerate()
+            .map(|(r, &t)| {
+                let h = &hidden[r * d..(r + 1) * d];
+                -f64::from(infer.log_prob(h, read_lse(h), t))
+            })
+            .sum()
+    }
+
+    #[test]
+    fn 出力層を動かすと正解の負の対数尤度が下がる() {
+        let infer = infer();
+        let ids = [0u32, 3, 4, 5, 6, 1];
+        let (read, targets) = teacher(&infer, &ids);
+        let hidden = &read.hidden[..targets.len() * infer.cfg.d_model];
+        let before = target_nll(&infer, hidden, &targets);
+        let reported = infer.adapt(hidden, &targets, 0.05, Plastic::Head);
+        assert!((reported - before).abs() < 1e-3, "{reported} vs {before}");
+        let after = target_nll(&infer, hidden, &targets);
+        assert!(after < before, "{after} >= {before}");
+        // 同じ hidden の再読みでも正規化は保たれる。
+        let read2 = infer.read(&[Chain {
+            state: &infer.init_state(),
+            ids: &ids,
+        }]);
+        let total: f32 = log_probs(&infer, &read2, 0).iter().map(|p| p.exp()).sum();
+        assert!((total - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn bias_だけ動かすと重みは変わらず正解は上がる() {
+        let infer = infer();
+        let ids = [0u32, 3, 4, 5, 6, 1];
+        let (read, targets) = teacher(&infer, &ids);
+        let hidden = &read.hidden[..targets.len() * infer.cfg.d_model];
+        let weight_before = infer.head.read().unwrap().weight.clone();
+        let before = target_nll(&infer, hidden, &targets);
+        infer.adapt(hidden, &targets, 0.5, Plastic::Bias);
+        assert_eq!(infer.head.read().unwrap().weight, weight_before);
+        assert!(target_nll(&infer, hidden, &targets) < before);
+    }
+
+    #[test]
+    fn 動かした出力層は重みとして取り出して組み直せる() {
+        let infer = infer();
+        let ids = [0u32, 3, 4, 5, 6, 1];
+        let (read, targets) = teacher(&infer, &ids);
+        let hidden = &read.hidden[..targets.len() * infer.cfg.d_model];
+        infer.adapt(hidden, &targets, 0.1, Plastic::Head);
+        let mut weights = random_weights(&config(), 1);
+        weights.retain(|(n, _, _)| n != "head.weight");
+        weights.extend(infer.head_weights());
+        let rebuilt = Infer::new(config(), &weights).unwrap();
+        let (r1, r2) = (
+            infer.read(&[Chain {
+                state: &infer.init_state(),
+                ids: &ids,
+            }]),
+            rebuilt.read(&[Chain {
+                state: &rebuilt.init_state(),
+                ids: &ids,
+            }]),
+        );
+        for pos in 0..ids.len() {
+            assert_close(
+                &log_probs(&infer, &r1, pos),
+                &log_probs(&rebuilt, &r2, pos),
+                1e-6,
+            );
+        }
+    }
+
+    #[test]
+    fn head_bias_が無いファイルは零として読む() {
+        let infer = infer();
+        assert!(infer.head.read().unwrap().bias.iter().all(|b| *b == 0.0));
+        let mut weights = random_weights(&config(), 1);
+        weights.push(("head.bias".into(), vec![10], vec![1.0; 10]));
+        let biased = Infer::new(config(), &weights).unwrap();
+        // 全語に同じ bias を足しても確率は変わらない。
+        let ids = [0u32, 3, 4];
+        let r1 = infer.read(&[Chain {
+            state: &infer.init_state(),
+            ids: &ids,
+        }]);
+        let r2 = biased.read(&[Chain {
+            state: &biased.init_state(),
+            ids: &ids,
+        }]);
+        assert_close(
+            &log_probs(&infer, &r1, 2),
+            &log_probs(&biased, &r2, 2),
+            1e-5,
+        );
+        assert!((r2.lse[2] - r1.lse[2] - 1.0).abs() < 1e-5);
     }
 
     #[test]
