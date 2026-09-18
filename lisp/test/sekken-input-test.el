@@ -42,6 +42,9 @@
   (should (equal (sekken-input-pieces "Neko/") [(:kind "convert" :text "ねこ")]))
   ;; 接頭辞の印は残し、`お>' の見出しで引けるようにする。
   (should (equal (sekken-input-pieces "O>") [(:kind "convert" :text "お" :prefix t)]))
+  ;; 閉じた区間の末尾の子音は、もう母音を待たないので変換する。
+  (should (equal (sekken-input-pieces "Nek;") [(:kind "convert" :text "ねっ")]))
+  (should (equal (sekken-input-pieces "nek'") [(:kind "kana" :text "ねっ")]))
   ;; 境界だけなら何も残らない。
   (should (equal (sekken-input-pieces ";") []))
   (should (equal (sekken-input-pieces ">") []))
@@ -162,6 +165,44 @@
   (should (equal (sekken-input-display "O>Kai") "▽お>▽かい"))
   (should (sekken-input-has-boundary-p "o>kai"))
   (should-not (sekken-input-ready-p "O>")))
+
+(defun sekken-input-test--piece (field)
+  "共有 fixture の `KIND:TEXT' 形の FIELD を、期待する区間の plist にする。
+TEXT は空白や `:' を含みうるので、最初の `:' だけで切る。"
+  (let* ((colon (string-search ":" field))
+         (kind (substring field 0 colon))
+         (text (substring field (1+ colon))))
+    (append (list :kind (car (split-string kind "\\+" t))
+                  :text text)
+            (and (string-search "+prefix" kind) '(:prefix t))
+            (and (string-search "+suffix" kind) '(:suffix t)))))
+
+(defun sekken-input-test--cases ()
+  "共有 fixture の (ROMAN 表示 区間...) の並び。"
+  (with-temp-buffer
+    (insert-file-contents
+     (expand-file-name "../share/input-cases.tsv"
+                       (file-name-directory
+                        (symbol-file 'sekken-input-segment 'defun))))
+    (let (cases)
+      (dolist (line (split-string (buffer-string) "\n" t))
+        (unless (string-prefix-p "#" line)
+          (push (split-string line "\t") cases)))
+      (nreverse cases))))
+
+(ert-deftest sekken-input/Rust_と共通の_fixture_と一致する ()
+  "同じローマ字を Rust と Emacs が同じ区間に分けないと、先読みと確定がずれる。
+表示は Emacs にしかないので、この表の 2 列目は Emacs だけが読む。"
+  (let ((cases (sekken-input-test--cases)))
+    (should (> (length cases) 30))
+    (dolist (case cases)
+      (let ((roman (nth 0 case)))
+        (should (equal (cons roman (sekken-input-display roman))
+                       (cons roman (nth 1 case))))
+        (should (equal (cons roman (sekken-input-pieces roman))
+                       (cons roman
+                             (vconcat (mapcar #'sekken-input-test--piece
+                                              (nthcdr 2 case))))))))))
 
 (provide 'sekken-input-test)
 ;;; sekken-input-test.el ends here

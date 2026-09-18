@@ -107,16 +107,21 @@ abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字
         (push current segments)))
     (cons head (nreverse segments))))
 
-(defun sekken-input--settle (roman)
-  "ROMAN を `sekken-input-segment' で分け、末尾の空の区間を落として返す。
+(defun sekken-input--settle (segmented)
+  "SEGMENTED から末尾の空の区間を落として返す。
 語の終わりの `;' `/' `'' `>' は前の区間を閉じる意図しか持たないので、
 打たなかったものとして扱う。前の区間の接頭辞の印は残す。"
-  (let* ((segmented (sekken-input-segment roman))
-         (segments (cdr segmented)))
+  (let ((segments (cdr segmented)))
     (if (and segments
              (string-empty-p (plist-get (car (last segments)) :text)))
         (cons (car segmented) (butlast segments))
       segmented)))
+
+(defun sekken-input--typing (segmented)
+  "SEGMENTED の、まだ打っている途中の区間。先頭の小文字だけなら nil。
+末尾の子音を母音待ちとして残すのはこの区間だけで、境界で閉じた区間は
+もう待たない（`Nek;' は「ねっ」）。"
+  (car (last (cdr segmented))))
 
 (defun sekken-input-has-boundary-p (roman)
   "ROMAN が変換境界（大文字・単独のセミコロン・`/'・`''・`>'）を含むか。"
@@ -126,7 +131,7 @@ abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字
   "ROMAN に辞書を引く区間（convert か abbrev）があるか。
 無ければエンジンに送っても文字列をつなぐだけなので、エディタで置き換えられる。"
   (and (cl-some (lambda (segment) (not (plist-get segment :literal)))
-                (cdr (sekken-input--settle roman)))
+                (cdr (sekken-input--settle (sekken-input-segment roman))))
        t))
 
 (defun sekken-input-ready-p (roman)
@@ -139,19 +144,19 @@ abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字
 (defun sekken-input-literal (roman)
   "辞書を引く区間の無い ROMAN を、エンジンに送らずに出す文字列にする。
 先頭の小文字はかなに、literal 区間は綴りのままつなぐ。"
-  (let ((segmented (sekken-input--settle roman)))
+  (let ((segmented (sekken-input--settle (sekken-input-segment roman))))
     (concat (sekken-kana-roman-to-kana (car segmented))
             (mapconcat (lambda (segment) (plist-get segment :text))
                        (cdr segmented) ""))))
 
-(defun sekken-input--segment-kana (segment lastp)
+(defun sekken-input--segment-kana (segment typingp)
   "SEGMENT の :text をかなにする。
-LASTP なら表示と同じく末尾の子音を変換せずに残す（`sekken-kana-display'）。
+TYPINGP なら末尾の子音を変換せずに残す（`sekken-kana-display'）。
 abbrev と literal の区間は綴りのまま返す。"
   (let ((text (plist-get segment :text)))
     (cond
      ((or (plist-get segment :abbrev) (plist-get segment :literal)) text)
-     (lastp (sekken-kana-display text))
+     (typingp (sekken-kana-display text))
      (t (sekken-kana-roman-to-kana text)))))
 
 (defun sekken-input-pieces (roman)
@@ -159,52 +164,50 @@ abbrev と literal の区間は綴りのまま返す。"
 先頭の小文字は kana、変換境界で始まる各部分は convert、`/' で開いた部分は
 abbrev、`'' で開いた部分は literal の区間になり、`>' の印は :prefix と
 :suffix で付ける。
-末尾の空の区間は送らない（`sekken-input--settle'）。
+末尾の空の区間は送らない（`sekken-input--settle'）。落とした後の最後の区間は
+打ち終えているので、末尾の子音も変換する（`sekken-input--typing'）。
 jsonrpc.el が JSON の配列にするようベクタで返す。"
-  (let* ((segmented (sekken-input--settle roman))
-         (head (car segmented))
-         (segments (cdr segmented))
+  (let* ((segmented (sekken-input-segment roman))
+         (typing (sekken-input--typing segmented))
+         (settled (sekken-input--settle segmented))
+         (head (car settled))
          (pieces nil))
     (unless (string-empty-p head)
       (push (list :kind "kana"
-                  :text (if segments
+                  :text (if typing
                             (sekken-kana-roman-to-kana head)
                           (sekken-kana-display head)))
             pieces))
-    (while segments
-      (let ((segment (car segments)))
-        (push (append
-               (list :kind (cond ((plist-get segment :abbrev) "abbrev")
-                                 ((plist-get segment :literal) "literal")
-                                 (t "convert"))
-                     :text (sekken-input--segment-kana segment (null (cdr segments))))
-               (and (plist-get segment :prefix) '(:prefix t))
-               (and (plist-get segment :suffix) '(:suffix t)))
-              pieces))
-      (setq segments (cdr segments)))
+    (dolist (segment (cdr settled))
+      (push (append
+             (list :kind (cond ((plist-get segment :abbrev) "abbrev")
+                               ((plist-get segment :literal) "literal")
+                               (t "convert"))
+                   :text (sekken-input--segment-kana segment (eq segment typing)))
+             (and (plist-get segment :prefix) '(:prefix t))
+             (and (plist-get segment :suffix) '(:suffix t)))
+            pieces))
     (vconcat (nreverse pieces))))
 
 (defun sekken-input-display (roman)
   "入力中の ROMAN をかなにし、変換境界を ▽ で示す。
 abbrev 区間は `/'、literal 区間は `'' を付けて綴りのまま、`>' は区間の後ろに示す。"
   (let* ((segmented (sekken-input-segment roman))
-         (head (car segmented))
-         (segments (cdr segmented))
-         (display
-          (if segments
-              (sekken-kana-roman-to-kana head)
-            (sekken-kana-display head))))
+         (typing (sekken-input--typing segmented))
+         (head (car segmented)))
     (concat
-     display
+     (if typing
+         (sekken-kana-roman-to-kana head)
+       (sekken-kana-display head))
      (mapconcat
       (lambda (segment)
         (concat
          "▽"
          (and (plist-get segment :abbrev) "/")
          (and (plist-get segment :literal) "'")
-         (sekken-input--segment-kana segment (eq segment (car (last segments))))
+         (sekken-input--segment-kana segment (eq segment typing))
          (and (plist-get segment :prefix) ">")))
-      segments ""))))
+      (cdr segmented) ""))))
 
 (provide 'sekken-input)
 ;;; sekken-input.el ends here

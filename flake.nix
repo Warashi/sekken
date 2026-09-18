@@ -83,6 +83,7 @@
             mkdir share
             cp ${./sekken-rs/core/kana-table.tsv} share/kana-table.tsv
             cp ${./sekken-rs/core/kana-cases.tsv} share/kana-cases.tsv
+            cp ${./sekken-rs/core/input-cases.tsv} share/input-cases.tsv
             chmod -R u+w lisp
             cd lisp
             bash test/run.sh

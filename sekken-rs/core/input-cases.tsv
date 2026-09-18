@@ -1,0 +1,63 @@
+# ローマ字から、エディタが見せる表示とエンジンに送る区間への期待値。
+# Rust（core/src/input.rs）と Emacs（lisp/sekken-input.el）が同じ解析を持つので、
+# 両方がこの表を読んで一致を確かめる。
+#
+# 列: ローマ字 <TAB> 表示 <TAB> 区間... （区間が無い行は 2 列）
+# 区間は KIND:TEXT。KIND は kana convert literal abbrev で、`>` の印は
+# convert+prefix convert+suffix convert+prefix+suffix と書く。
+# TEXT は空白や `:` を含みうるので、最初の `:` だけで切る。
+# `#` で始まる行と空行は読み飛ばす。
+#
+# 表示にだけある末尾の ▽ は、閉じただけで読みの無い区間。送る区間には残さない。
+# Rust は表示を持たないので 2 列目を読まない。
+
+# 大文字と `;` の境界
+WagahaiHaNekoDearu.	▽わがはい▽は▽ねこ▽である。	convert:わがはい	convert:は	convert:ねこ	convert:である。
+soreHaNekoDa	それ▽は▽ねこ▽だ	kana:それ	convert:は	convert:ねこ	convert:だ
+kyouHa	きょう▽は	kana:きょう	convert:は
+neko	ねこ	kana:ねこ
+;shokai;kougi	▽しょかい▽こうぎ	convert:しょかい	convert:こうぎ
+semi;;koron	せみ;ころん	kana:せみ;ころん
+Neko;;;kai	▽ねこ;▽かい	convert:ねこ;	convert:かい
+;Kai	▽かい	convert:かい
+;o>;kai	▽お>▽かい	convert+prefix:お	convert+suffix:かい
+
+# `'` で開いた literal 区間
+'emacs	▽'emacs	literal:emacs
+Kyouha'Emacs;wo	▽きょうは▽'Emacs▽を	convert:きょうは	literal:Emacs	convert:を
+'git branch;wo	▽'git branch▽を	literal:git branch	convert:を
+'don''t	▽'don't	literal:don't
+ka''na	か'な	kana:か'な
+'emacs'Ha	▽'emacs▽は	literal:emacs	convert:は
+
+# `/` で開いた abbrev 区間
+/emacs	▽/emacs	abbrev:emacs
+Kyou/GPL;ha	▽きょう▽/GPL▽は	convert:きょう	abbrev:GPL	convert:は
+/emacs/Ha	▽/emacs▽は	abbrev:emacs	convert:は
+/emacs'Ha	▽/emacs▽は	abbrev:emacs	convert:は
+;/emacs	▽/emacs	abbrev:emacs
+O>/emacs	▽お>▽/emacs	convert+prefix:お	abbrev:emacs
+
+# `>` の印
+O>Kai	▽お>▽かい	convert+prefix:お	convert+suffix:かい
+O>Kai>Sha	▽お>▽かい>▽しゃ	convert+prefix:お	convert+prefix+suffix:かい	convert+suffix:しゃ
+o>kai	お▽かい	kana:お	convert+suffix:かい
+Toukyou>kaiha	▽とうきょう>▽かいは	convert+prefix:とうきょう	convert+suffix:かいは
+
+# 打っている途中の区間の末尾の子音は、次の母音を待つので変換しない
+KaK	▽か▽k	convert:か	convert:k
+Kak	▽かk	convert:かk
+nek	ねk	kana:ねk
+Kan	▽かん	convert:かん
+Neko.	▽ねこ。	convert:ねこ。
+
+# 閉じただけの末尾の区間は送らない。閉じた区間の末尾の子音はもう待たない
+Neko;	▽ねこ▽	convert:ねこ
+Nek;	▽ねっ▽	convert:ねっ
+Neko/	▽ねこ▽/	convert:ねこ
+neko'	ねこ▽'	kana:ねこ
+nek'	ねっ▽'	kana:ねっ
+'emacs'	▽'emacs▽	literal:emacs
+O>	▽お>▽	convert+prefix:お
+;	▽
+>	▽
