@@ -11,20 +11,8 @@
         (sekken-server-dic "/d/system.dic.zst")
         (sekken-server-model "/d/model.zst")
         (sekken-server-jisyo "/d/SKK-JISYO.L")
+        (sekken-server-lm "/d/lm.zst")
         (sekken-server-user-jisyo nil))
-    (should (equal (sekken-server--command)
-                   '("/opt/sekken" "server"
-                     "--dic" "/d/system.dic.zst"
-                     "--model" "/d/model.zst"
-                     "--jisyo" "/d/SKK-JISYO.L")))))
-
-(ert-deftest sekken-server/言語モデルを設定すれば--lmを付ける ()
-  (let ((sekken-server-program "/opt/sekken")
-        (sekken-server-dic "/d/system.dic.zst")
-        (sekken-server-model "/d/model.zst")
-        (sekken-server-jisyo "/d/SKK-JISYO.L")
-        (sekken-server-user-jisyo nil)
-        (sekken-server-lm "/d/lm.zst"))
     (should (equal (sekken-server--command)
                    '("/opt/sekken" "server"
                      "--dic" "/d/system.dic.zst"
@@ -32,11 +20,20 @@
                      "--jisyo" "/d/SKK-JISYO.L"
                      "--lm" "/d/lm.zst")))))
 
+(ert-deftest sekken-server/言語モデルが無ければ起動前にエラーにする ()
+  (let ((sekken-server-program "/opt/sekken")
+        (sekken-server-dic "/d/system.dic.zst")
+        (sekken-server-model "/d/model.zst")
+        (sekken-server-jisyo "/d/SKK-JISYO.L")
+        (sekken-server-lm nil))
+    (should-error (sekken-server--command) :type 'user-error)))
+
 (ert-deftest sekken-server/ユーザー辞書は既定で付き_nilなら付けない ()
   (let ((sekken-server-program "/opt/sekken")
         (sekken-server-dic "/d/system.dic.zst")
         (sekken-server-model "/d/model.zst")
         (sekken-server-jisyo "/d/SKK-JISYO.L")
+        (sekken-server-lm "/d/lm.zst")
         (sekken-server-user-jisyo "~/.config/sekken/user-jisyo"))
     (should (equal (last (sekken-server--command) 2)
                    (list "--user-jisyo"
@@ -74,6 +71,7 @@
         (sekken-server-dic "/d/system.dic.zst")
         (sekken-server-model "/d/model.zst")
         (sekken-server-jisyo "/d/SKK-JISYO.L")
+        (sekken-server-lm "/d/lm.zst")
         process-args)
     (cl-letf (((symbol-function 'make-process)
                (lambda (&rest args) (setq process-args args) 'process)))

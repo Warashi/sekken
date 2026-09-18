@@ -33,7 +33,8 @@
   :type '(choice (const nil) file))
 
 (defcustom sekken-server-lm nil
-  "N-best を並べ替える文字言語モデルファイル（train-lm の出力）。nil なら並べ替えない。"
+  "投機的変換で候補を採点する文字言語モデルファイル（train-lm の出力）。
+エンジンはこれが無いと起動しないので、設定しないと変換できない。"
   :type '(choice (const nil) file))
 
 (defcustom sekken-server-user-jisyo (locate-user-emacs-file "sekken-jisyo")
@@ -75,16 +76,16 @@ nil の間はモデルの読み込み中とみなし、`sekken-server-startup-ti
   "エンジンを起動するコマンドライン。設定が欠けていればエラーにする。"
   (dolist (pair `((sekken-server-dic . ,sekken-server-dic)
                   (sekken-server-model . ,sekken-server-model)
-                  (sekken-server-jisyo . ,sekken-server-jisyo)))
+                  (sekken-server-jisyo . ,sekken-server-jisyo)
+                  (sekken-server-lm . ,sekken-server-lm)))
     (unless (cdr pair)
       (user-error "sekken: %s が設定されていません" (car pair))))
   (append
    (list sekken-server-program "server"
          "--dic" (expand-file-name sekken-server-dic)
          "--model" (expand-file-name sekken-server-model)
-         "--jisyo" (expand-file-name sekken-server-jisyo))
-   (when sekken-server-lm
-     (list "--lm" (expand-file-name sekken-server-lm)))
+         "--jisyo" (expand-file-name sekken-server-jisyo)
+         "--lm" (expand-file-name sekken-server-lm))
    (when sekken-server-user-jisyo
      (list "--user-jisyo" (expand-file-name sekken-server-user-jisyo)))))
 
