@@ -29,6 +29,14 @@ pub trait VerifySession {
     fn verify(&mut self, sentences: &[String], queries: &[Vec<(usize, char)>]) -> Vec<Verdict>;
 }
 
+/// 共有した採点器をそのまま検証器として使う。変換の外（確定した文で
+/// 動かすなど）でも同じ採点器を持ち続けたい呼び手のため。
+impl<T: Verifier> Verifier for std::sync::Arc<T> {
+    fn begin<'a>(&'a self, input: &str) -> Box<dyn VerifySession + 'a> {
+        (**self).begin(input)
+    }
+}
+
 /// 状態を持たない検証器をそのまま `VerifySession` にする。
 pub struct Stateless<F>(pub F);
 
@@ -38,5 +46,42 @@ where
 {
     fn verify(&mut self, sentences: &[String], queries: &[Vec<(usize, char)>]) -> Vec<Verdict> {
         (self.0)(sentences, queries)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    struct Counting(std::sync::atomic::AtomicUsize);
+
+    impl Verifier for Counting {
+        fn begin<'a>(&'a self, _input: &str) -> Box<dyn VerifySession + 'a> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::new(Stateless(
+                |sentences: &[String], _: &[Vec<(usize, char)>]| {
+                    sentences
+                        .iter()
+                        .map(|_| Verdict {
+                            cost: 0.0,
+                            char_costs: Vec::new(),
+                        })
+                        .collect()
+                },
+            ))
+        }
+    }
+
+    #[test]
+    fn 共有した採点器は_arc_越しに検証器として使える() {
+        let shared = Arc::new(Counting(std::sync::atomic::AtomicUsize::new(0)));
+        let verifier: Box<dyn Verifier + Send> = Box::new(shared.clone());
+        let verdicts = verifier
+            .begin("ねこ")
+            .verify(&["猫".to_string()], &[Vec::new()]);
+        assert_eq!(verdicts.len(), 1);
+        assert_eq!(shared.0.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }
