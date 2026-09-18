@@ -42,6 +42,12 @@
 最初の登録まで無くてよい。nil なら登録できない。"
   :type '(choice (const nil) file))
 
+(defcustom sekken-server-adapted-lm (locate-user-emacs-file "sekken-lm.zst")
+  "確定した文で動かした言語モデルの保存先。
+エンジンは起動時にこのファイルがあれば `sekken-server-lm' より先に読み、
+終了時に動かした分を書く。nil なら個人化しない。"
+  :type '(choice (const nil) file))
+
 (defcustom sekken-server-timeout 5
   "変換要求の応答を待つ秒数。"
   :type 'number)
@@ -87,7 +93,9 @@ nil の間はモデルの読み込み中とみなし、`sekken-server-startup-ti
          "--jisyo" (expand-file-name sekken-server-jisyo)
          "--lm" (expand-file-name sekken-server-lm))
    (when sekken-server-user-jisyo
-     (list "--user-jisyo" (expand-file-name sekken-server-user-jisyo)))))
+     (list "--user-jisyo" (expand-file-name sekken-server-user-jisyo)))
+   (when sekken-server-adapted-lm
+     (list "--adapted-lm" (expand-file-name sekken-server-adapted-lm)))))
 
 (defun sekken-server--make-process ()
   "エンジンのプロセスを作る。"
@@ -203,6 +211,33 @@ ON-FAILURE があれば引数なしで呼ぶ。接続の起動に失敗すれば
    :timeout-fn (lambda ()
                  (sekken-server--count-crash nil)
                  (when on-failure (funcall on-failure)))))
+
+(defvar sekken-server--adapt-error nil
+  "直近の学習要求が失敗していればその理由の文字列。成功すれば nil に戻す。")
+
+(defun sekken-server--adapt-failed (code message)
+  "学習要求の失敗を記録して知らせる。CODE と MESSAGE はエンジンの応答。"
+  (setq sekken-server--adapt-error (or message "timeout"))
+  (sekken-server--count-crash code)
+  (message "sekken: 確定した文を学習できませんでした: %s"
+           sekken-server--adapt-error))
+
+(defun sekken-server-adapt (pieces sentence)
+  "PIECES を変換して確定した文 SENTENCE をエンジンに学習させる。
+非同期に送り、応答は待たない。学習のためだけにエンジンを起動はしないので、
+動いている接続が無ければ何もしない。失敗は `sekken-server--adapt-error' に
+残して知らせ、変換と同じく異常終了として数える。"
+  (when (and sekken-server--connection
+             (jsonrpc-running-p sekken-server--connection))
+    (jsonrpc-async-request
+     sekken-server--connection :adapt
+     (list :pieces pieces :sentence sentence)
+     :timeout (sekken-server--henkan-timeout)
+     :success-fn (lambda (_result) (setq sekken-server--adapt-error nil))
+     :error-fn (lambda (err)
+                 (sekken-server--adapt-failed (plist-get err :code)
+                                              (plist-get err :message)))
+     :timeout-fn (lambda () (sekken-server--adapt-failed nil nil)))))
 
 (defun sekken-server-register (yomi surface)
   "送りなしの読み YOMI の語 SURFACE をユーザー辞書に登録する。
