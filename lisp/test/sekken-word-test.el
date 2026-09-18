@@ -109,5 +109,15 @@
     (sekken-test-type "Kyou/emacs;O>Kai")
     (should (equal (sekken-word-bounds) (cons 1 (point-max))))))
 
+(ert-deftest sekken-word/後始末の後は覚えていた語で確定しない ()
+  ;; `sekken-mode' をコマンドの途中で切ると、覚えた語を見る後処理は走らない。
+  (with-temp-buffer
+    (sekken-test-type "Neko")
+    (sekken-word-hold)
+    (sekken-word-reset)
+    (goto-char (point-min))
+    (should (null (sekken-word-settle)))
+    (should (null (sekken-word-bounds)))))
+
 (provide 'sekken-word-test)
 ;;; sekken-word-test.el ends here

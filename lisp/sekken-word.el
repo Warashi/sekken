@@ -242,5 +242,13 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
     (sekken-word--forget-pending)
     word))
 
+(defun sekken-word-reset ()
+  "入力中の語の状態を捨てる。`sekken-mode' を切るときに呼ぶ。
+覚えた語も捨てるので、切っている間に語が置き換わっても、次に入れたときの
+後処理が古い語を確定しない。置き換えた語のローマ字の履歴は登録で使うので残す。"
+  (sekken-word-forget-origin)
+  (sekken-word-forget-finished)
+  (sekken-word--forget-pending))
+
 (provide 'sekken-word)
 ;;; sekken-word.el ends here
