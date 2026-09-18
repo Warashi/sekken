@@ -58,11 +58,20 @@
 (defvar sekken-convert--wanted nil
   "飛ばしている間に頼まれた (入力 . 知らせる関数)。返事が来たら最後の 1 つだけ送る。")
 
+(defvar sekken-convert-last-error nil
+  "最後に先読みが失敗した (入力 . 理由)。
+先読みは打鍵のたびに走るので、失敗を出すと打っている最中に邪魔になる。
+自動確定は候補を待たずにかなで確定するので、失敗しても入力は壊れない。
+その代わり、なぜ候補が来なかったかをここから読めるようにする。")
+
+(defun sekken-convert--failed (roman reason)
+  "ROMAN の先読みが REASON で失敗したことを残す。"
+  (setq sekken-convert-last-error (cons roman reason)))
+
 (defun sekken-convert-prefetch (roman notify)
   "ROMAN の候補を非同期に引いて覚え、届いたら NOTIFY を引数なしで呼ぶ。
 既に覚えていれば何もしない。別の入力を引いている最中なら覚えておき、
-その返事の後に送る。エンジンの起動に失敗しても知らせない。
-明示的な変換が同じ入力を待てば、そちらがエラーを見せる。"
+その返事の後に送る。失敗は打鍵を止めず、`sekken-convert-last-error' に残す。"
   (cond
    ((sekken-convert-cached roman) nil)
    ((equal sekken-convert--in-flight roman) nil)
@@ -70,7 +79,7 @@
     (setq sekken-convert--wanted (cons roman notify)))
    (t
     (setq sekken-convert--in-flight roman)
-    (condition-case nil
+    (condition-case err
         (sekken-server-henkan-async
          (sekken-input-pieces roman) sekken-convert-max-candidates
          (lambda (candidates)
@@ -85,10 +94,12 @@
          ;; 失敗しても溜めた入力は送り直さない。次の打鍵が送る。
          (lambda ()
            (setq sekken-convert--in-flight nil
-                 sekken-convert--wanted nil)))
+                 sekken-convert--wanted nil)
+           (sekken-convert--failed roman "エンジンが変換を返しませんでした")))
       (error
        (setq sekken-convert--in-flight nil
-             sekken-convert--wanted nil))))))
+             sekken-convert--wanted nil)
+       (sekken-convert--failed roman (error-message-string err)))))))
 
 (defun sekken-convert-table (string _pred action)
   "変換候補を素通しする completion table。

@@ -229,6 +229,32 @@ REQUESTS の各要素は (PIECES . ON-SUCCESS)。返事は呼び出し側が ON-
       (should (equal sekken-convert--in-flight "Neko"))
       (should-not sekken-convert--wanted))))
 
+(ert-deftest sekken-convert/先読みの失敗は入力を壊さずに残る ()
+  ;; 自動確定はもう候補を待たないので、失敗を消すとかなのまま確定した
+  ;; 理由が追えなくなる。
+  (let (failures)
+    (cl-letf (((symbol-function 'sekken-server-henkan-async)
+               (lambda (_pieces _top _on-success on-failure)
+                 (push on-failure failures))))
+      (setq sekken-convert--cache nil
+            sekken-convert--in-flight nil
+            sekken-convert--wanted nil
+            sekken-convert-last-error nil)
+      (sekken-convert-prefetch "Neko" #'ignore)
+      (funcall (car failures))
+      (should (equal (car sekken-convert-last-error) "Neko"))
+      (should (stringp (cdr sekken-convert-last-error)))
+      (should-not (sekken-convert-cached "Neko"))))
+  (cl-letf (((symbol-function 'sekken-server-henkan-async)
+             (lambda (&rest _) (user-error "設定がありません"))))
+    (setq sekken-convert--cache nil
+          sekken-convert--in-flight nil
+          sekken-convert--wanted nil
+          sekken-convert-last-error nil)
+    (sekken-convert-prefetch "Neko" #'ignore)
+    (should (equal (car sekken-convert-last-error) "Neko"))
+    (should (string-match-p "設定がありません" (cdr sekken-convert-last-error)))))
+
 (ert-deftest sekken-convert/先読みが失敗すれば次の入力を送れる ()
   (let (requests failures)
     (cl-letf (((symbol-function 'sekken-server-henkan-async)
@@ -246,7 +272,7 @@ REQUESTS の各要素は (PIECES . ON-SUCCESS)。返事は呼び出し側が ON-
       (sekken-convert-prefetch "Neko" #'ignore)
       (should (= (length requests) 2)))))
 
-(ert-deftest sekken-convert/先読みの起動失敗は握りつぶす ()
+(ert-deftest sekken-convert/先読みの起動失敗は打鍵を止めない ()
   (cl-letf (((symbol-function 'sekken-server-henkan-async)
              (lambda (&rest _) (user-error "設定がありません"))))
     (setq sekken-convert--cache nil
