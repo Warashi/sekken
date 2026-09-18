@@ -143,11 +143,12 @@ exact で呼ぶ。"
       (cl-return-from sekken-convert nil))
     (let* ((start (car bounds))
            (end (cdr bounds))
-           (roman (buffer-substring-no-properties start end)))
+           (roman (buffer-substring-no-properties start end))
+           (analysis (sekken-input-analyze roman)))
       (cond
-       ((seq-empty-p (sekken-input-pieces roman))
+       ((seq-empty-p (plist-get analysis :pieces))
         (user-error "sekken: 変換境界の後に読みがありません"))
-       ((sekken-input-converts-p roman)
+       ((plist-get analysis :converts)
         ;; corfu は開始時点の `completion-extra-properties' を保存して
         ;; 選択時に使うので、動的束縛で足りる。
         (let ((completion-extra-properties
@@ -156,7 +157,7 @@ exact で呼ぶ。"
        (t
         (delete-region start end)
         (goto-char start)
-        (insert (sekken-input-literal roman))
+        (insert (plist-get analysis :text))
         (sekken-word-finish start roman))))))
 
 (provide 'sekken-convert)

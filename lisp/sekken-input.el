@@ -4,7 +4,8 @@
 
 ;;; Commentary:
 ;; 入力中の語のローマ字を変換境界で分け、そこから表示・確定・送信の
-;; 文字列を導く。バッファは見ず、文字列だけを相手にする。
+;; 文字列を導く。`sekken-input-analyze' が 1 度の分割からその全部を返すので、
+;; 表示と確定が別々の解析でずれない。バッファは見ず、文字列だけを相手にする。
 ;; どこからどこまでが語かは `sekken-word' が決める。
 ;; 表示用には大文字境界を ▽ で示し、かなにして返す。エンジンには
 ;; 同じ分割をかなにし、区間の種類を付けた列として送る。
@@ -127,28 +128,6 @@ abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字
   "ROMAN が変換境界（大文字・単独のセミコロン・`/'・`''・`>'）を含むか。"
   (and (cdr (sekken-input-segment roman)) t))
 
-(defun sekken-input-converts-p (roman)
-  "ROMAN に辞書を引く区間（convert か abbrev）があるか。
-無ければエンジンに送っても文字列をつなぐだけなので、エディタで置き換えられる。"
-  (and (cl-some (lambda (segment) (not (plist-get segment :literal)))
-                (cdr (sekken-input--settle (sekken-input-segment roman))))
-       t))
-
-(defun sekken-input-ready-p (roman)
-  "ROMAN の最後の変換境界より後に入力があれば non-nil を返す。
-境界で終わる語は確定も変換もできるが、先読みは待って表示に境界を残す。"
-  (let ((segments (cdr (sekken-input-segment roman))))
-    (and segments
-         (not (string-empty-p (plist-get (car (last segments)) :text))))))
-
-(defun sekken-input-literal (roman)
-  "辞書を引く区間の無い ROMAN を、エンジンに送らずに出す文字列にする。
-先頭の小文字はかなに、literal 区間は綴りのままつなぐ。"
-  (let ((segmented (sekken-input--settle (sekken-input-segment roman))))
-    (concat (sekken-kana-roman-to-kana (car segmented))
-            (mapconcat (lambda (segment) (plist-get segment :text))
-                       (cdr segmented) ""))))
-
 (defun sekken-input--segment-kana (segment typingp)
   "SEGMENT の :text をかなにする。
 TYPINGP なら末尾の子音を変換せずに残す（`sekken-kana-display'）。
@@ -159,19 +138,35 @@ abbrev と literal の区間は綴りのまま返す。"
      (typingp (sekken-kana-display text))
      (t (sekken-kana-roman-to-kana text)))))
 
-(defun sekken-input-pieces (roman)
-  "入力中の ROMAN をエンジンに送る区間の列にする。
+(defun sekken-input--display (segmented typing)
+  "SEGMENTED をかなにし、変換境界を ▽ で示す。TYPING は打っている途中の区間。
+abbrev 区間は `/'、literal 区間は `'' を付けて綴りのまま、`>' は区間の後ろに示す。
+閉じただけの末尾の区間も ▽ として残し、境界が開いていることを見せる。"
+  (let ((head (car segmented)))
+    (concat
+     (if typing
+         (sekken-kana-roman-to-kana head)
+       (sekken-kana-display head))
+     (mapconcat
+      (lambda (segment)
+        (concat
+         "▽"
+         (and (plist-get segment :abbrev) "/")
+         (and (plist-get segment :literal) "'")
+         (sekken-input--segment-kana segment (eq segment typing))
+         (and (plist-get segment :prefix) ">")))
+      (cdr segmented) ""))))
+
+(defun sekken-input--pieces (settled typing)
+  "SETTLED をエンジンに送る区間の列にする。TYPING は打っている途中の区間。
 先頭の小文字は kana、変換境界で始まる各部分は convert、`/' で開いた部分は
 abbrev、`'' で開いた部分は literal の区間になり、`>' の印は :prefix と
 :suffix で付ける。
-末尾の空の区間は送らない（`sekken-input--settle'）。落とした後の最後の区間は
-打ち終えているので、末尾の子音も変換する（`sekken-input--typing'）。
+TYPING が SETTLED から落ちていれば、最後の区間は打ち終えているので
+末尾の子音も変換する。
 jsonrpc.el が JSON の配列にするようベクタで返す。"
-  (let* ((segmented (sekken-input-segment roman))
-         (typing (sekken-input--typing segmented))
-         (settled (sekken-input--settle segmented))
-         (head (car settled))
-         (pieces nil))
+  (let ((head (car settled))
+        (pieces nil))
     (unless (string-empty-p head)
       (push (list :kind "kana"
                   :text (if typing
@@ -189,25 +184,58 @@ jsonrpc.el が JSON の配列にするようベクタで返す。"
             pieces))
     (vconcat (nreverse pieces))))
 
-(defun sekken-input-display (roman)
-  "入力中の ROMAN をかなにし、変換境界を ▽ で示す。
-abbrev 区間は `/'、literal 区間は `'' を付けて綴りのまま、`>' は区間の後ろに示す。"
+(defun sekken-input--text (settled)
+  "辞書を引く区間の無い SETTLED を、エンジンに送らずに出す文字列にする。
+先頭の小文字はかなに、literal 区間は綴りのままつなぐ。"
+  (concat (sekken-kana-roman-to-kana (car settled))
+          (mapconcat (lambda (segment) (plist-get segment :text))
+                     (cdr settled) "")))
+
+(defun sekken-input-analyze (roman)
+  "入力中の ROMAN を 1 度だけ解析し、表示と確定の両方に使う plist を返す。
+:display  overlay に見せる文字列。
+:ready    最後の変換境界より後に入力があるか。先読みしてよいかの判断。
+:converts 辞書を引く区間（convert か abbrev）があるか。無ければエンジンに
+          送っても文字列をつなぐだけなので、エディタで置き換えられる。
+:pieces   エンジンに送る区間のベクタ。
+:text     :converts が nil のとき、語を置き換える文字列。
+
+分けた結果の使い分けはここだけにある。表示は閉じただけの末尾の区間を
+▽ として残し、送信はそれを落とす（`sekken-input--settle'）。"
   (let* ((segmented (sekken-input-segment roman))
          (typing (sekken-input--typing segmented))
-         (head (car segmented)))
-    (concat
-     (if typing
-         (sekken-kana-roman-to-kana head)
-       (sekken-kana-display head))
-     (mapconcat
-      (lambda (segment)
-        (concat
-         "▽"
-         (and (plist-get segment :abbrev) "/")
-         (and (plist-get segment :literal) "'")
-         (sekken-input--segment-kana segment (eq segment typing))
-         (and (plist-get segment :prefix) ">")))
-      (cdr segmented) ""))))
+         (settled (sekken-input--settle segmented)))
+    (list :display (sekken-input--display segmented typing)
+          :ready (and typing (not (string-empty-p (plist-get typing :text))) t)
+          :converts (and (cl-some (lambda (segment)
+                                    (not (plist-get segment :literal)))
+                                  (cdr settled))
+                         t)
+          :pieces (sekken-input--pieces settled typing)
+          :text (sekken-input--text settled))))
+
+;; 以下は解析結果を 1 つしか使わない呼び出し元のための入口。
+;; 同じ ROMAN から 2 つ以上を使うなら `sekken-input-analyze' を 1 度呼ぶ。
+
+(defun sekken-input-display (roman)
+  "入力中の ROMAN をかなにし、変換境界を ▽ で示した文字列。"
+  (plist-get (sekken-input-analyze roman) :display))
+
+(defun sekken-input-ready-p (roman)
+  "ROMAN の最後の変換境界より後に入力があれば non-nil を返す。"
+  (plist-get (sekken-input-analyze roman) :ready))
+
+(defun sekken-input-converts-p (roman)
+  "ROMAN に辞書を引く区間（convert か abbrev）があるか。"
+  (plist-get (sekken-input-analyze roman) :converts))
+
+(defun sekken-input-pieces (roman)
+  "入力中の ROMAN をエンジンに送る区間のベクタにする。"
+  (plist-get (sekken-input-analyze roman) :pieces))
+
+(defun sekken-input-literal (roman)
+  "辞書を引く区間の無い ROMAN を、エンジンに送らずに出す文字列にする。"
+  (plist-get (sekken-input-analyze roman) :text))
 
 (provide 'sekken-input)
 ;;; sekken-input.el ends here

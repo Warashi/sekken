@@ -7,6 +7,18 @@
 (require 'sekken-input)
 (require 'sekken-test)
 
+(ert-deftest sekken-input/1_度の解析から表示と先読みと送信を導く ()
+  ;; 境界で終わる語は、表示に ▽ を残したまま、閉じた区間だけを送る。
+  (let ((analysis (sekken-input-analyze "Neko;")))
+    (should (equal (plist-get analysis :display) "▽ねこ▽"))
+    (should (equal (plist-get analysis :pieces) [(:kind "convert" :text "ねこ")]))
+    (should (plist-get analysis :converts))
+    (should-not (plist-get analysis :ready)))
+  (let ((analysis (sekken-input-analyze "kyouha'Emacs")))
+    (should (plist-get analysis :ready))
+    (should-not (plist-get analysis :converts))
+    (should (equal (plist-get analysis :text) "きょうはEmacs"))))
+
 (ert-deftest sekken-input/大文字境界を▽で示してかなにする ()
   (should (equal (sekken-input-display "WagahaihaNek") "▽わがはいは▽ねk"))
   (should (equal (sekken-input-display "kyouHa") "きょう▽は"))

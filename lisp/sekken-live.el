@@ -38,21 +38,23 @@
       (setq length (1- length)))
     base))
 
-(defun sekken-live-display (roman)
-  "入力中の ROMAN を overlay で見せる文字列。
+(defun sekken-live-display (roman analysis)
+  "入力中の ROMAN を overlay で見せる文字列。ANALYSIS は ROMAN の解析結果。
 候補を覚えていれば 1 位候補。無ければ、覚えている先頭部分の 1 位候補に
-残りのかな表示を繋ぐ。それも無ければ境界を ▽ で示したかな表示。"
+残りのかな表示を繋ぐ。それも無ければ境界を ▽ で示したかな表示。
+先頭部分の残りは別の入力なので、そこだけ解析し直す。"
   (or (car (sekken-convert-cached roman))
       (let ((base (sekken-live--base roman)))
         (and base
              (concat (cdr base)
                      (sekken-input-display (substring roman (length (car base)))))))
-      (sekken-input-display roman)))
+      (plist-get analysis :display)))
 
-(defun sekken-live--prefetch (roman)
-  "辞書を引く ROMAN の候補を先読みし、届いたらこのバッファの overlay を張り直す。"
-  (when (and (sekken-input-converts-p roman)
-             (sekken-input-ready-p roman))
+(defun sekken-live--prefetch (roman analysis)
+  "辞書を引く ROMAN の候補を先読みし、届いたらこのバッファの overlay を張り直す。
+ANALYSIS は ROMAN の解析結果。"
+  (when (and (plist-get analysis :converts)
+             (plist-get analysis :ready))
     (let ((buffer (current-buffer)))
       (sekken-convert-prefetch
        roman
@@ -62,15 +64,17 @@
              (sekken-live-update))))))))
 
 (defun sekken-live-update ()
-  "ポイント直前の語に合わせて overlay を張り直し、候補が無ければ先読みする。"
+  "ポイント直前の語に合わせて overlay を張り直し、候補が無ければ先読みする。
+見せるものと先読みの可否は同じ解析から導く。"
   (let ((bounds (sekken-word-bounds)))
     (if (null bounds)
         (sekken-overlay-clear)
       (let* ((start (car bounds))
              (end (cdr bounds))
-             (roman (buffer-substring-no-properties start end)))
-        (sekken-overlay-show start end (sekken-live-display roman))
-        (sekken-live--prefetch roman)))))
+             (roman (buffer-substring-no-properties start end))
+             (analysis (sekken-input-analyze roman)))
+        (sekken-overlay-show start end (sekken-live-display roman analysis))
+        (sekken-live--prefetch roman analysis)))))
 
 (defcustom sekken-live-continue-commands
   '(sekken-im-self-insert self-insert-command
@@ -100,14 +104,15 @@ completion-in-region の候補一覧が出ている間はどのコマンドも�
   "確定で ROMAN を置き換える文字列。置き換えないなら nil。
 辞書を引く区間があれば 1 位候補（届いていなければ待って引く）、
 無ければかなと綴り。境界だけの語と、エンジンの失敗は nil。"
-  (cond
-   ((seq-empty-p (sekken-input-pieces roman)) nil)
-   ((sekken-input-converts-p roman)
-    (car (or (sekken-convert-cached roman)
-             (condition-case nil
-                 (sekken-convert--candidates roman)
-               (error nil)))))
-   (t (sekken-input-literal roman))))
+  (let ((analysis (sekken-input-analyze roman)))
+    (cond
+     ((seq-empty-p (plist-get analysis :pieces)) nil)
+     ((plist-get analysis :converts)
+      (car (or (sekken-convert-cached roman)
+               (condition-case nil
+                   (sekken-convert--candidates roman)
+                 (error nil)))))
+     (t (plist-get analysis :text)))))
 
 (defun sekken-live--commit (start end roman)
   "START から END の語 ROMAN を確定の文字列に置き換える。
