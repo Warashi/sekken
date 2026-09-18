@@ -96,58 +96,6 @@ completion-in-region の候補一覧が出ている間はどのコマンドも�
       (eq command (key-binding [?\d]))
       (eq command (key-binding [backspace]))))
 
-(defvar-local sekken-live--pending nil
-  "語を続けるコマンドの前にポイント直前にあった入力中の語 (START END ROMAN)。
-START と END は marker で、auto-fill や electric-indent がコマンドの中で
-語の前を書き換えても語を追える。START は直前への挿入で進み、END は進まない
-ので、語を伸ばした打鍵は範囲の外に出る。")
-
-(defun sekken-live--forget ()
-  "覚えた語を忘れ、marker を外す。"
-  (when sekken-live--pending
-    (set-marker (nth 0 sekken-live--pending) nil)
-    (set-marker (nth 1 sekken-live--pending) nil)
-    (setq sekken-live--pending nil)))
-
-(defun sekken-live-before-command ()
-  "語を続けるコマンドなら入力中の語を覚え、それ以外なら確定する。`pre-command-hook' 用。"
-  (sekken-live--forget)
-  (let ((bounds (sekken-word-bounds)))
-    (if (sekken-live-continue-p this-command)
-        (when bounds
-          (setq sekken-live--pending
-                (list (copy-marker (car bounds) t)
-                      (copy-marker (cdr bounds))
-                      (buffer-substring-no-properties (car bounds) (cdr bounds)))))
-      (when (and bounds (not buffer-read-only))
-        (sekken-live--commit (car bounds) (cdr bounds)
-                             (buffer-substring-no-properties (car bounds) (cdr bounds)))
-        (sekken-overlay-clear))
-      ;; 語が無くても、語を続けないコマンドの後に打つ文字は新しい語。
-      (sekken-word-forget-origin))))
-
-(defun sekken-live--intact-p (start end roman)
-  "START から END の語 ROMAN がそのまま残っているか。
-候補の選択や undo で置き換わっていれば nil。"
-  (and (>= start (point-min))
-       (<= end (point-max))
-       (equal (buffer-substring-no-properties start end) roman)))
-
-(defun sekken-live--shrunk-p (start roman)
-  "START から始まる語 ROMAN が、ポイントまでの先頭部分だけ残って縮んだか。
-まとめて打った末尾を undo で消したときで、置き換わったのとは違い語は続く。"
-  (and (>= start (point-min))
-       (>= (point) start)
-       (string-prefix-p (buffer-substring-no-properties start (point)) roman)))
-
-(defun sekken-live--continuing-p (start end)
-  "ポイントが START から END の語を続ける位置にあるか。
-語の途中に戻ったのは離れたと見る。"
-  (let ((bounds (sekken-word-bounds)))
-    (and bounds
-         (= (car bounds) start)
-         (>= (point) end))))
-
 (defun sekken-live--result (roman)
   "確定で ROMAN を置き換える文字列。置き換えないなら nil。
 辞書を引く区間があれば 1 位候補（届いていなければ待って引く）、
@@ -180,29 +128,23 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
                 (goto-char (+ start (length text)))))
           (text-read-only nil))))))
 
+(defun sekken-live-before-command ()
+  "語を続けるコマンドなら入力中の語を覚え、それ以外なら確定する。`pre-command-hook' 用。"
+  (if (sekken-live-continue-p this-command)
+      (sekken-word-hold)
+    (let ((word (sekken-word-end)))
+      (when (and word (not buffer-read-only))
+        (apply #'sekken-live--commit word)
+        (sekken-overlay-clear)))))
+
 (defun sekken-live-after-command ()
-  "覚えた語から離れていれば確定し、overlay を張り直す。`post-command-hook' 用。
-語が置き換わっていれば確定はしないが、その語は終わったので打ち始めを忘れる。
-その後ろで新しい語が始まっていれば、その打ち始めは残す。縮んだだけなら語は続く。undo が確定を取り消していれば語に戻す。"
-  (when sekken-live--pending
-    (let ((start (marker-position (nth 0 sekken-live--pending)))
-          (end (marker-position (nth 1 sekken-live--pending)))
-          (roman (nth 2 sekken-live--pending)))
-      (cond
-       ((not (sekken-live--intact-p start end roman))
-        ;; 候補の選択が語を終えてから同じコマンドで文字を打つと、
-        ;; 打ち始めは新しい語のもの。置き換わった語のものだけ忘れる。
-        (unless (or (sekken-live--shrunk-p start roman)
-                    (and sekken-word--origin
-                         (> sekken-word--origin start)))
-          (sekken-word-forget-origin)))
-       ((sekken-live--continuing-p start end) nil)
-       (t
-        (unless buffer-read-only
-          (sekken-live--commit start end roman))
-        ;; 境界だけの語のように置き換えなくても、離れた語は終わり。
-        (sekken-word-forget-origin)))))
-  (sekken-live--forget)
+  "終わった語を確定し、overlay を張り直す。`post-command-hook' 用。
+語が終わったかどうかは `sekken-word-settle' が決め、ここは返された語を
+置き換えるだけにする。undo が確定を取り消していれば
+`sekken-word-revive' が語に戻す。"
+  (let ((word (sekken-word-settle)))
+    (when (and word (not buffer-read-only))
+      (apply #'sekken-live--commit word)))
   (sekken-word-revive)
   (sekken-live-update))
 

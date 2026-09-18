@@ -154,5 +154,93 @@ END が BEG の削除は打ち始めにしない。打つコマンド以外が�
       (when (< start end)
         (cons start end)))))
 
+(defvar-local sekken-word--pending nil
+  "コマンドが走る前にポイント直前にあった入力中の語 (START END ROMAN)。
+START と END は marker で、auto-fill や electric-indent がコマンドの中で
+語の前を書き換えても語を追える。START は直前への挿入で進み、END は進まない
+ので、語を伸ばした打鍵は範囲の外に出る。")
+
+(defun sekken-word--forget-pending ()
+  "覚えた語を忘れ、marker を外す。"
+  (when sekken-word--pending
+    (set-marker (nth 0 sekken-word--pending) nil)
+    (set-marker (nth 1 sekken-word--pending) nil)
+    (setq sekken-word--pending nil)))
+
+(defun sekken-word--current ()
+  "ポイント直前の入力中の語 (START END ROMAN)。無ければ nil。"
+  (let ((bounds (sekken-word-bounds)))
+    (when bounds
+      (list (car bounds) (cdr bounds)
+            (buffer-substring-no-properties (car bounds) (cdr bounds))))))
+
+(defun sekken-word-hold ()
+  "入力中の語を、コマンドが走る間も追えるように覚える。
+語を続けるコマンドが走る前に呼ぶ。その後は `sekken-word-settle' が見る。"
+  (sekken-word--forget-pending)
+  (let ((word (sekken-word--current)))
+    (when word
+      (setq sekken-word--pending
+            (list (copy-marker (nth 0 word) t)
+                  (copy-marker (nth 1 word))
+                  (nth 2 word))))))
+
+(defun sekken-word-end ()
+  "入力中の語を終え、置き換えるべき語 (START END ROMAN) を返す。無ければ nil。
+語を続けないコマンドが走る前に呼ぶ。語が無くても打ち始めを忘れ、
+そのコマンドの後に打つ文字を新しい語にする。"
+  (sekken-word--forget-pending)
+  (prog1 (sekken-word--current)
+    (sekken-word-forget-origin)))
+
+(defun sekken-word--intact-p (start end roman)
+  "START から END の語 ROMAN がそのまま残っているか。
+候補の選択や undo で置き換わっていれば nil。"
+  (and (>= start (point-min))
+       (<= end (point-max))
+       (equal (buffer-substring-no-properties start end) roman)))
+
+(defun sekken-word--shrunk-p (start roman)
+  "START から始まる語 ROMAN が、ポイントまでの先頭部分だけ残って縮んだか。
+まとめて打った末尾を undo で消したときで、置き換わったのとは違い語は続く。"
+  (and (>= start (point-min))
+       (>= (point) start)
+       (string-prefix-p (buffer-substring-no-properties start (point)) roman)))
+
+(defun sekken-word--continuing-p (start end)
+  "ポイントが START から END の語を続ける位置にあるか。
+語の途中に戻ったのは離れたと見る。"
+  (let ((bounds (sekken-word-bounds)))
+    (and bounds
+         (= (car bounds) start)
+         (>= (point) end))))
+
+(defun sekken-word-settle ()
+  "覚えた語がコマンドの後どうなったかを見て、置き換えるべき語 (START END ROMAN) を返す。
+置き換えないなら nil。語が置き換わっていれば重ねて確定はしないが、その語は
+終わったので打ち始めを忘れる。その後ろで新しい語が始まっていれば、その打ち始めは
+残す。縮んだだけなら語は続く。ポイントが語の末尾から離れていれば、その語を返して
+終える。"
+  (let (word)
+    (when sekken-word--pending
+      (let ((start (marker-position (nth 0 sekken-word--pending)))
+            (end (marker-position (nth 1 sekken-word--pending)))
+            (roman (nth 2 sekken-word--pending)))
+        (cond
+         ((not (sekken-word--intact-p start end roman))
+          ;; 候補の選択が語を終えてから同じコマンドで文字を打つと、
+          ;; 打ち始めは新しい語のもの。置き換わった語のものだけ忘れる。
+          (unless (or (sekken-word--shrunk-p start roman)
+                      (and sekken-word--origin
+                           (> sekken-word--origin start)))
+            (sekken-word-forget-origin)))
+         ((sekken-word--continuing-p start end) nil)
+         (t
+          (setq word (list start end roman))
+          ;; 境界だけの語のように置き換えられなくても、離れた語は終わり。
+          (sekken-word-forget-origin)))))
+    (sekken-word--forget-pending)
+    word))
+
 (provide 'sekken-word)
 ;;; sekken-word.el ends here
