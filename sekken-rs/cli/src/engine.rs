@@ -62,6 +62,18 @@ pub fn henkan_roman(engine: &Engine, roman: &str, top_n: usize) -> Vec<String> {
     engine.henkan(&Input::from_roman(&TABLE, roman), top_n)
 }
 
+/// 文字言語モデルのファイルを読む。
+pub fn load_lm(path: &std::path::Path) -> Result<SavedModel> {
+    let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let saved = SavedModel::load(std::io::BufReader::new(file)).context("load lm")?;
+    eprintln!(
+        "lm: vocab={} condition={:?}",
+        saved.vocab.len(),
+        saved.condition
+    );
+    Ok(saved)
+}
+
 /// エンジンに渡せる文字言語モデル。投機的な変換の検証器として使う。
 /// `Send` は、サーバーが別スレッドで組み立てたエンジンを受け取るため。
 pub trait Lm: Verifier + Send {}
@@ -75,15 +87,7 @@ impl EngineArgs {
 
     /// `--lm` のファイルを読む。
     pub fn load_lm(&self) -> Result<SavedModel> {
-        let path = &self.lm;
-        let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
-        let saved = SavedModel::load(std::io::BufReader::new(file)).context("load lm")?;
-        eprintln!(
-            "lm: vocab={} condition={:?}",
-            saved.vocab.len(),
-            saved.condition
-        );
-        Ok(saved)
+        load_lm(&self.lm)
     }
 
     /// 辞書とモデルを読み、`lm` を `--lm` の代わりの検証器として組み立てる。
