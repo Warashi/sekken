@@ -8,9 +8,10 @@ use clap::Args;
 use sekken_core::dictionary::Dictionary;
 use sekken_core::input::Input;
 use sekken_core::kana::KanaTable;
-use sekken_core::rerank::Reranker;
+use sekken_core::rerank::{Reranker, SentenceScorer};
 use sekken_core::sekken::Sekken;
 use sekken_core::speculate::Speculator;
+use sekken_core::verify::Verifier;
 use sekken_lm::file::SavedModel;
 use sekken_lm::scorer::LmScorer;
 use sekken_model::ngram::NgramModel;
@@ -65,8 +66,38 @@ pub fn henkan_roman(engine: &Engine, roman: &str, top_n: usize) -> Vec<String> {
     engine.henkan(&Input::from_roman(&TABLE, roman), top_n)
 }
 
+/// エンジンに渡せる文字言語モデル。並べ替え（`SentenceScorer`）と投機（`Verifier`）の
+/// 両方の口を持つ。`Send` は、サーバーが別スレッドで組み立てたエンジンを受け取るため。
+pub trait Lm: SentenceScorer + Verifier + Send {}
+impl<T: SentenceScorer + Verifier + Send> Lm for T {}
+
 impl EngineArgs {
     pub fn build(&self) -> Result<Engine> {
+        let lm = match self.load_lm()? {
+            Some(saved) => Some(Box::new(LmScorer::from_saved(&saved)?) as Box<dyn Lm>),
+            None => None,
+        };
+        self.build_with(lm)
+    }
+
+    /// `--lm` のファイルを読む。無ければ `None`。
+    pub fn load_lm(&self) -> Result<Option<SavedModel>> {
+        let Some(path) = &self.lm else {
+            return Ok(None);
+        };
+        let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+        let saved = SavedModel::load(std::io::BufReader::new(file)).context("load lm")?;
+        eprintln!(
+            "lm: vocab={} condition={:?}",
+            saved.vocab.len(),
+            saved.condition
+        );
+        Ok(Some(saved))
+    }
+
+    /// 辞書とモデルを読み、`lm` を `--lm` の代わりの採点器として組み立てる。
+    /// 呼ぶ側が採点器を持ち続けたいとき（確定した文で動かすなど）に使う。
+    pub fn build_with(&self, lm: Option<Box<dyn Lm>>) -> Result<Engine> {
         let tokenizer = Tokenizer::load(&self.dic).context("load vibrato dictionary")?;
         let file = std::fs::File::open(&self.model)
             .with_context(|| format!("open {}", self.model.display()))?;
@@ -78,20 +109,10 @@ impl EngineArgs {
         };
         let mut reranker = None;
         let mut speculator = None;
-        if let Some(path) = &self.lm {
-            let file =
-                std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
-            let saved = SavedModel::load(std::io::BufReader::new(file)).context("load lm")?;
-            let infer = saved.infer()?;
-            eprintln!(
-                "lm: vocab={} condition={:?}",
-                saved.vocab.len(),
-                saved.condition
-            );
-            let scorer = LmScorer::new(infer, saved.vocab, saved.condition);
+        if let Some(lm) = lm {
             if self.spec_rounds > 0 {
                 speculator = Some(Speculator {
-                    verifier: Box::new(scorer),
+                    verifier: lm,
                     weight: self.lm_weight,
                     rounds: self.spec_rounds,
                     width: self.spec_width,
@@ -99,7 +120,7 @@ impl EngineArgs {
                 })
             } else {
                 reranker = Some(Reranker {
-                    scorer: Box::new(scorer),
+                    scorer: lm,
                     weight: self.lm_weight,
                     width: self.rerank_width,
                 })
