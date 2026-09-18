@@ -68,17 +68,7 @@ impl Adapter {
     /// 届くまでに来た文は溜めておき、届いてから順に学習する。
     pub fn spawn(ready: mpsc::Receiver<Ready>, args: AdaptArgs) -> Adapter {
         let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || match ready.recv() {
-            Ok(ready) => work(ready, rx, &args),
-            // 読み込みに失敗した。溜まった文は捨てるが、待っている側は放さない。
-            Err(_) => {
-                for job in rx {
-                    if let Job::Flush(ack) = job {
-                        let _ = ack.send(());
-                    }
-                }
-            }
-        });
+        std::thread::spawn(move || work(ready, rx, &args));
         Adapter { tx }
     }
 
@@ -96,19 +86,35 @@ impl Adapter {
     }
 }
 
-fn work(ready: Ready, rx: mpsc::Receiver<Job>, args: &AdaptArgs) {
-    let Ready { scorer, mut saved } = ready;
+/// 学習する文が来るまでモデルの読み込みを待たない。読み込み中の終了で
+/// 保存を待たせないため。読み込みに失敗したら文は捨てる。
+fn work(ready: mpsc::Receiver<Ready>, rx: mpsc::Receiver<Job>, args: &AdaptArgs) {
+    let mut model: Option<Ready> = None;
+    let mut broken = false;
     let mut moved = false;
     for job in rx {
         match job {
             Job::Adapt { input, sentence } => {
-                scorer.adapt(&input, &sentence, args.adapt_lr, Plastic::Head);
-                moved = true;
+                if model.is_none() && !broken {
+                    match ready.recv() {
+                        Ok(r) => model = Some(r),
+                        Err(_) => broken = true,
+                    }
+                }
+                if let Some(model) = &model {
+                    model
+                        .scorer
+                        .adapt(&input, &sentence, args.adapt_lr, Plastic::Head);
+                    moved = true;
+                }
             }
             Job::Flush(ack) => {
-                if let (true, Some(path)) = (moved, args.adapted_lm.as_deref()) {
+                if let (true, Some(model), Some(path)) =
+                    (moved, model.as_mut(), args.adapted_lm.as_deref())
+                {
+                    let Ready { scorer, saved } = model;
                     saved.replace_weights(scorer.infer().head_weights());
-                    match write(&saved, path) {
+                    match write(saved, path) {
                         Ok(()) => moved = false,
                         Err(err) => {
                             let _ = writeln!(
@@ -234,16 +240,27 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    #[test]
-    fn 読み込みに失敗しても送った文と_flush_は返る() {
-        let (ready_tx, ready_rx) = mpsc::channel();
-        let adapter = Adapter::spawn(
-            ready_rx,
+    fn adapter(ready: mpsc::Receiver<Ready>) -> Adapter {
+        Adapter::spawn(
+            ready,
             AdaptArgs {
                 adapt_lr: 3e-3,
                 adapted_lm: None,
             },
-        );
+        )
+    }
+
+    #[test]
+    fn 学習する文が無ければ読み込みを待たずに保存を終える() {
+        // 読み込みが終わらないまま終了する場合。`flush` は返らなければならない。
+        let (_ready_tx, ready_rx) = mpsc::channel();
+        adapter(ready_rx).flush();
+    }
+
+    #[test]
+    fn 読み込みに失敗しても送った文と_flush_は返る() {
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let adapter = adapter(ready_rx);
         drop(ready_tx);
         adapter.adapt("ねこ".to_string(), "猫".to_string());
         adapter.flush();

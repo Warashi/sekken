@@ -1,7 +1,8 @@
 //! Emacs から常駐プロセスとして使われる JSON-RPC サーバー。
 //!
 //! モデルの読み込みには数秒かかるので別スレッドで進め、読み込み中でも
-//! `version` と `shutdown` には即応答する。`henkan` は読み込みの完了を待つ。
+//! `version` と `shutdown` には即応答する（`shutdown` が待つのは、学習した
+//! 文があるときの保存だけ）。`henkan` は読み込みの完了を待つ。
 //!
 //! `henkan` の params は `{"pieces": [{"kind": "kana" | "convert" | "literal" | "abbrev",
 //! "text": "...", "prefix": bool, "suffix": bool}, ...], "top": n}`。エディタがローマ字を
@@ -551,6 +552,32 @@ mod tests {
             &request("adapt", json!({ "sentence": "猫" })),
         );
         assert_eq!(reply.response.error.unwrap().code, -32602);
+    }
+
+    #[test]
+    fn 読み込み中の_shutdown_は学習を待たない() {
+        let (_ready_tx, ready_rx) = mpsc::channel::<Ready>();
+        let adapter = Adapter::spawn(
+            ready_rx,
+            AdaptArgs {
+                adapt_lr: 3e-3,
+                adapted_lm: None,
+            },
+        );
+        let (_tx, rx) = mpsc::channel::<()>();
+        let mut loader = EngineLoader::spawn(move || {
+            let _ = rx.recv();
+            Err(anyhow!("never loaded"))
+        });
+        let reply = handle(
+            &mut loader,
+            &adapter,
+            None,
+            json!(1),
+            &request("shutdown", Value::Null),
+        );
+        assert_eq!(reply.response.result, Some(Value::Null));
+        assert!(!reply.exit);
     }
 
     #[test]
