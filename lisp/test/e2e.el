@@ -5,10 +5,10 @@
 ;;; Commentary:
 ;; ERT の単体テストはエンジン呼び出しを差し替えている。ここでは本物の
 ;; `sekken server' を起動し、JSON-RPC の枠組み・overlay・終了処理まで通す。
-;; 環境変数 SEKKEN_BIN / SEKKEN_DIC / SEKKEN_MODEL / SEKKEN_JISYO が
+;; 環境変数 SEKKEN_BIN / SEKKEN_DIC / SEKKEN_MODEL / SEKKEN_JISYO / SEKKEN_LM が
 ;; 揃っていなければ何もせず終わる。ユーザー辞書は一時ファイルに書く。
 ;;
-;;   SEKKEN_BIN=... SEKKEN_DIC=... SEKKEN_MODEL=... SEKKEN_JISYO=... \
+;;   SEKKEN_BIN=... SEKKEN_DIC=... SEKKEN_MODEL=... SEKKEN_JISYO=... SEKKEN_LM=... \
 ;;     emacs -Q --batch -L lisp -l lisp/test/e2e.el
 
 ;;; Code:
@@ -30,13 +30,15 @@
 (let ((bin (getenv "SEKKEN_BIN"))
       (dic (getenv "SEKKEN_DIC"))
       (model (getenv "SEKKEN_MODEL"))
-      (jisyo (getenv "SEKKEN_JISYO")))
-  (if (not (and bin dic model jisyo))
-      (message "e2e: SEKKEN_BIN / SEKKEN_DIC / SEKKEN_MODEL / SEKKEN_JISYO が無いので skip")
+      (jisyo (getenv "SEKKEN_JISYO"))
+      (lm (getenv "SEKKEN_LM")))
+  (if (not (and bin dic model jisyo lm))
+      (message "e2e: SEKKEN_BIN / SEKKEN_DIC / SEKKEN_MODEL / SEKKEN_JISYO / SEKKEN_LM が無いので skip")
     (setq sekken-server-program bin
           sekken-server-dic dic
           sekken-server-model model
           sekken-server-jisyo jisyo
+          sekken-server-lm lm
           sekken-server-user-jisyo (make-temp-file "sekken-e2e-jisyo-" nil nil))
     (delete-file sekken-server-user-jisyo)
     (let ((henkan (sekken-server-henkan
