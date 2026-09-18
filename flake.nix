@@ -29,6 +29,7 @@
             (craneLib.fileset.commonCargoSources ./sekken-rs)
             ./sekken-rs/core/kana-table.tsv
             ./sekken-rs/core/kana-cases.tsv
+            ./sekken-rs/core/input-cases.tsv
           ];
         };
         commonArgs = {
