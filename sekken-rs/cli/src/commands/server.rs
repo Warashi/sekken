@@ -7,6 +7,10 @@
 //! "text": "...", "prefix": bool, "suffix": bool}, ...], "top": n}`。エディタがローマ字を
 //! かなにし、区間の種類を決めて送る。`prefix` `suffix` は `>` の印で、省略すれば偽。
 //!
+//! `adapt` の params は `{"pieces": [...], "sentence": "..."}`。確定した文を
+//! 言語モデルの出力層に学習させる。学習は別のスレッドでやり、応答は文を
+//! 渡した時点で返す（`henkan` を待たせないため）。誤変換かどうかは見ない。
+//!
 //! `register` の params は `{"yomi": "...", "surface": "..."}`。送りなしの語として
 //! ユーザー辞書に足し、`--user-jisyo` のファイルに書く。
 //!
@@ -16,20 +20,25 @@
 
 use std::io::Write as _;
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 
+use sekken_cli::adapt::{AdaptArgs, Adapter, Ready};
 use sekken_cli::engine::{Engine, EngineArgs};
 use sekken_cli::jsonrpc::{Request, Response, read_message, write_message};
 use sekken_core::input::{Input, Kind, Piece};
+use sekken_lm::scorer::LmScorer;
 
 #[derive(clap::Args)]
 pub struct Args {
     #[command(flatten)]
     engine: EngineArgs,
+    #[command(flatten)]
+    adapt: AdaptArgs,
 }
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -117,7 +126,18 @@ impl Reply {
 
 pub fn run(args: Args) -> Result<()> {
     let user_jisyo = args.engine.user_jisyo.clone();
-    let mut loader = EngineLoader::spawn(move || args.engine.build());
+    let adapted_lm = args.adapt.adapted_lm.clone();
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let adapter = Adapter::spawn(ready_rx, args.adapt);
+    let engine_args = args.engine;
+    let mut loader = EngineLoader::spawn(move || {
+        let saved = sekken_cli::adapt::load_model(&engine_args.lm, adapted_lm.as_deref())?;
+        let scorer = Arc::new(LmScorer::from_saved(&saved)?);
+        let engine = engine_args.build_with(Box::new(scorer.clone()))?;
+        // 学習は組み立てに成功してからでよい。失敗すればサーバーごと終わる。
+        let _ = ready_tx.send(Ready { scorer, saved });
+        Ok(engine)
+    });
     let mut stdout = std::io::stdout().lock();
     // 変換の間も要求を読み進め、溜まった分をまとめて見られるように読みを分ける。
     let (tx, rx) = mpsc::channel::<Result<Request>>();
@@ -157,7 +177,7 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 continue;
             };
-            let reply = handle(&mut loader, user_jisyo.as_deref(), id, &req);
+            let reply = handle(&mut loader, &adapter, user_jisyo.as_deref(), id, &req);
             write_message(&mut stdout, &reply.response)?;
             if reply.exit {
                 std::process::exit(1);
@@ -192,6 +212,7 @@ pub fn drop_stale(batch: Vec<Request>) -> (Vec<Request>, Vec<Response>) {
 
 pub fn handle(
     loader: &mut EngineLoader,
+    adapter: &Adapter,
     user_jisyo: Option<&Path>,
     id: Value,
     req: &Request,
@@ -216,6 +237,20 @@ pub fn handle(
                 },
             }
         }
+        "adapt" => {
+            let input = match parse_pieces(&req.params["pieces"]) {
+                Ok(input) => input,
+                Err(message) => return Reply::err(id, -32602, message),
+            };
+            let Some(sentence) = req.params["sentence"].as_str() else {
+                return Reply::err(id, -32602, "params.sentence must be a string");
+            };
+            let reading = input.reading();
+            if !reading.is_empty() && !sentence.is_empty() {
+                adapter.adapt(reading, sentence.to_string());
+            }
+            Reply::ok(id, Value::Null)
+        }
         "register" => {
             let (yomi, surface) = match parse_word(&req.params) {
                 Ok(word) => word,
@@ -239,7 +274,11 @@ pub fn handle(
                 },
             }
         }
-        "shutdown" => Reply::ok(id, Value::Null),
+        // 動かした出力層はここで書く。この後の `exit` は即座に終了する。
+        "shutdown" => {
+            adapter.flush();
+            Reply::ok(id, Value::Null)
+        }
         other => Reply::err(id, -32601, format!("unknown method: {other}")),
     }
 }
@@ -302,6 +341,20 @@ mod tests {
     use anyhow::Context as _;
 
     use super::*;
+
+    /// 読み込みが終わらない採点器の窓口。送った文は捨てられるが、
+    /// `handle` の応答はそれを待たない。
+    fn idle_adapter() -> Adapter {
+        let (tx, rx) = mpsc::channel();
+        drop(tx);
+        Adapter::spawn(
+            rx,
+            AdaptArgs {
+                adapt_lr: 3e-3,
+                adapted_lm: None,
+            },
+        )
+    }
 
     fn request(method: &str, params: Value) -> Request {
         Request {
@@ -413,6 +466,7 @@ mod tests {
         });
         let reply = handle(
             &mut loader,
+            &idle_adapter(),
             None,
             json!(1),
             &request("henkan", json!({ "input": "Neko" })),
@@ -430,6 +484,7 @@ mod tests {
         });
         let reply = handle(
             &mut loader,
+            &idle_adapter(),
             Some(Path::new("/tmp/user-jisyo")),
             json!(1),
             &request("register", json!({ "yomi": "ねこ" })),
@@ -440,6 +495,7 @@ mod tests {
         assert!(!reply.exit);
         let reply = handle(
             &mut loader,
+            &idle_adapter(),
             None,
             json!(1),
             &request("register", json!({ "yomi": "ねこ", "surface": "根子" })),
@@ -455,6 +511,49 @@ mod tests {
     }
 
     #[test]
+    fn adapt_は読み込みを待たずに応答し_params_の誤りを返す() {
+        let (_tx, rx) = mpsc::channel::<()>();
+        let mut loader = EngineLoader::spawn(move || {
+            let _ = rx.recv();
+            Err(anyhow!("never loaded"))
+        });
+        let reply = handle(
+            &mut loader,
+            &idle_adapter(),
+            None,
+            json!(1),
+            &request(
+                "adapt",
+                json!({ "pieces": [{ "kind": "convert", "text": "ねこ" }],
+                        "sentence": "猫" }),
+            ),
+        );
+        assert_eq!(reply.response.result, Some(Value::Null));
+        assert!(!reply.exit);
+        let reply = handle(
+            &mut loader,
+            &idle_adapter(),
+            None,
+            json!(1),
+            &request(
+                "adapt",
+                json!({ "pieces": [{ "kind": "convert", "text": "ねこ" }] }),
+            ),
+        );
+        let error = reply.response.error.unwrap();
+        assert_eq!(error.code, -32602);
+        assert!(error.message.contains("sentence"), "{}", error.message);
+        let reply = handle(
+            &mut loader,
+            &idle_adapter(),
+            None,
+            json!(1),
+            &request("adapt", json!({ "sentence": "猫" })),
+        );
+        assert_eq!(reply.response.error.unwrap().code, -32602);
+    }
+
+    #[test]
     fn 読み込み中でも_version_には即応答する() {
         let (_tx, rx) = mpsc::channel::<()>();
         let mut loader = EngineLoader::spawn(move || {
@@ -463,6 +562,7 @@ mod tests {
         });
         let reply = handle(
             &mut loader,
+            &idle_adapter(),
             None,
             json!(1),
             &request("version", Value::Null),
@@ -471,6 +571,7 @@ mod tests {
         assert!(!reply.exit);
         let reply = handle(
             &mut loader,
+            &idle_adapter(),
             None,
             json!(1),
             &request("shutdown", Value::Null),
@@ -485,6 +586,7 @@ mod tests {
             EngineLoader::spawn(|| Err(anyhow!("No such file")).context("load SKK dictionary"));
         let reply = handle(
             &mut loader,
+            &idle_adapter(),
             None,
             json!(1),
             &request(
@@ -508,6 +610,7 @@ mod tests {
         let mut loader = EngineLoader::spawn(|| panic!("boom"));
         let reply = handle(
             &mut loader,
+            &idle_adapter(),
             None,
             json!(1),
             &request(
