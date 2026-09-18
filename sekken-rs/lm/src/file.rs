@@ -87,6 +87,16 @@ impl SavedModel {
         Ok(saved)
     }
 
+    /// 同じ名前の重みを置き換え、無ければ足す。動かした出力層を書き戻すのに使う。
+    pub fn replace_weights(&mut self, weights: impl IntoIterator<Item = Weight>) {
+        for w in weights {
+            match self.weights.iter_mut().find(|(n, _, _)| *n == w.0) {
+                Some(slot) => *slot = w,
+                None => self.weights.push(w),
+            }
+        }
+    }
+
     /// 採点専用の推論経路を組み立てる。行列積は使える CPU の数だけ並列にする。
     pub fn infer(&self) -> Result<Infer> {
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
@@ -139,6 +149,64 @@ mod tests {
         assert_eq!(loaded.weights, saved.weights);
         assert_eq!(before, log_prob(&loaded.infer().unwrap()));
         assert_eq!(loaded.vocab.id('犬'), vocab.id('犬'));
+    }
+
+    #[test]
+    fn 動かした出力層を書き戻して読み直すと同じ確率になる() {
+        let vocab = Vocab::build(["猫犬"], 1);
+        let config = ModelConfig {
+            vocab_size: vocab.len(),
+            d_model: 8,
+            n_layers: 1,
+            n_heads: 1,
+            head_dim: 8,
+            d_state: 4,
+            mlp_dim: 16,
+        };
+        let mut saved = SavedModel {
+            config: config.clone(),
+            vocab,
+            weights: random_weights(&config, 1),
+            condition: Condition::None,
+        };
+        let infer = saved.infer().unwrap();
+        let ids = [0u32, 3, 4];
+        let read = infer.read(&[Chain {
+            state: &infer.init_state(),
+            ids: &ids,
+        }]);
+        let d = config.d_model;
+        infer.adapt(
+            &read.hidden[..2 * d],
+            &ids[1..],
+            0.1,
+            crate::infer::Plastic::Head,
+        );
+        // 更新後の log-sum-exp で引く。
+        let read1 = infer.read(&[Chain {
+            state: &infer.init_state(),
+            ids: &ids,
+        }]);
+        let want = infer.log_prob(&read1.hidden[2 * d..3 * d], read1.lse[2], 3);
+        saved.replace_weights(infer.head_weights());
+        assert!(saved.weights.iter().any(|(n, _, _)| n == "head.bias"));
+        assert_eq!(
+            saved
+                .weights
+                .iter()
+                .filter(|(n, _, _)| n == "head.weight")
+                .count(),
+            1
+        );
+        let mut buf = Vec::new();
+        saved.save(&mut buf).unwrap();
+        let loaded = SavedModel::load(buf.as_slice()).unwrap().infer().unwrap();
+        let read2 = loaded.read(&[Chain {
+            state: &loaded.init_state(),
+            ids: &ids,
+        }]);
+        let got = loaded.log_prob(&read2.hidden[2 * d..3 * d], read2.lse[2], 3);
+        assert!((got - want).abs() < 1e-6, "{got} vs {want}");
     }
 
     #[test]
