@@ -341,29 +341,30 @@
       (sekken-live-test--command #'ignore))
     (should (equal (buffer-string) "Neko"))))
 
-(ert-deftest sekken-live/候補が届いていなければ待って引く ()
-  (with-temp-buffer
-    (sekken-test-type "Neko")
-    (let (called)
-      (cl-letf (((symbol-function 'sekken-convert-prefetch) #'ignore)
-                ((symbol-function 'sekken-server-henkan)
-                 (lambda (pieces _top)
-                   (setq called pieces)
-                   '("猫"))))
-        (setq sekken-convert--cache nil)
+(ert-deftest sekken-live/候補が届いていなければ見えていたかなのまま確定する ()
+  ;; `sekken-live-test--with-cache' はエンジンを呼べば失敗するので、
+  ;; 確定が新しい変換を待たないことがそのまま確かめられる。
+  (pcase-dolist (`(,roman ,cache ,display ,result)
+                 '(("Neko" nil "▽ねこ" "ねこ ")
+                   ("NekoGa" (("Neko" "猫")) "猫▽が" "猫が ")
+                   ;; 母音を待つ子音も、見えているとおり綴りのまま入る。
+                   ("Nek" nil "▽ねk" "ねk ")))
+    (with-temp-buffer
+      (sekken-test-type roman)
+      (sekken-live-test--with-cache cache
+        (sekken-live-update)
+        (should (equal (sekken-live-test--display) display))
         (sekken-live-test--command #'self-insert-command (insert " ")))
-      (should (equal called [(:kind "convert" :text "ねこ")])))
-    (should (equal (buffer-string) "猫 "))))
+      (should (equal (buffer-string) result)))))
 
-(ert-deftest sekken-live/エンジンが失敗すればローマ字を残しキーの動作は妨げない ()
+(ert-deftest sekken-live/確定した文字列に境界の印は入らない ()
   (with-temp-buffer
-    (sekken-test-type "Neko")
-    (cl-letf (((symbol-function 'sekken-convert-prefetch) #'ignore)
-              ((symbol-function 'sekken-server-henkan)
-               (lambda (&rest _) (signal 'jsonrpc-error '("dead")))))
-      (setq sekken-convert--cache nil)
-      (sekken-live-test--command #'self-insert-command (insert " ")))
-    (should (equal (buffer-string) "Neko "))))
+    (sekken-test-type "Kyou/GPL;ha")
+    (sekken-live-test--with-cache nil
+      (sekken-live-update)
+      (should (equal (sekken-live-test--display) "▽きょう▽/GPL▽は"))
+      (sekken-live-test--command #'newline (insert "\n")))
+    (should (equal (buffer-string) "きょうGPLは\n"))))
 
 (ert-deftest sekken-live/辞書を引く区間の無い語はかなと綴りに置き換わる ()
   ;; literal で終わる語は空白では終わらないので、改行で終える。
@@ -386,20 +387,16 @@
 
 (ert-deftest sekken-live/境界で終わる語は手前までを確定する ()
   ;; 末尾の `;' `'' `>' は前の区間を閉じただけなので、その手前の語として引く。
-  (dolist (case '(("Neko;" [(:kind "convert" :text "ねこ")] "猫")
-                  ("O>" [(:kind "convert" :text "お" :prefix t)] "御")))
+  ;; 境界で終わる語は先読みしないので、候補は境界の手前の語のものになる。
+  (dolist (case '(("Neko;" (("Neko" "猫")) "猫 ")
+                  ("O>" (("O" "御")) "御 ")
+                  ;; 候補が届いていなければ、末尾の境界を落としたかなで確定する。
+                  ("Neko;" nil "ねこ ")))
     (with-temp-buffer
       (sekken-test-type (nth 0 case))
-      (let (called)
-        (cl-letf (((symbol-function 'sekken-convert-prefetch) #'ignore)
-                  ((symbol-function 'sekken-server-henkan)
-                   (lambda (pieces &rest _)
-                     (setq called pieces)
-                     (list (nth 2 case)))))
-          (setq sekken-convert--cache nil)
-          (sekken-live-test--command #'self-insert-command (insert " ")))
-        (should (equal called (nth 1 case))))
-      (should (equal (buffer-string) (concat (nth 2 case) " ")))))
+      (sekken-live-test--with-cache (nth 1 case)
+        (sekken-live-test--command #'self-insert-command (insert " ")))
+      (should (equal (buffer-string) (nth 2 case)))))
   ;; 辞書を引く区間が無ければエンジンを呼ばずに置き換える。
   ;; `neko'' のように literal が開いたままなら空白でも語は続くので、ここには入らない。
   (dolist (case '(("'git branch;" . "git branch ")

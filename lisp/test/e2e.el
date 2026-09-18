@@ -16,6 +16,12 @@
 (require 'cl-lib)
 (require 'sekken)
 
+(defun e2e-wait-candidates (roman)
+  "ROMAN の先読みの返事が届くまで待つ。"
+  (with-timeout (10 (error "e2e: 先読みの返事が来ない: %s" roman))
+    (while (not (sekken-convert-cached roman))
+      (accept-process-output nil 0.1))))
+
 (defun e2e-type (string)
   "STRING を自己挿入のコマンドとして打つ。`sekken-mode' の hook が打ち始めを覚える。"
   (let ((this-command #'self-insert-command))
@@ -53,9 +59,7 @@
         (unless (equal display "▽いい▽てんきですね。")
           (error "e2e: 候補が届く前の overlay が %S" display)))
       ;; 先読みの返事を待つと overlay が 1 位候補になる。
-      (with-timeout (10 (error "e2e: 先読みの返事が来ない"))
-        (while (not (sekken-convert-cached "IiTenkidesune."))
-          (accept-process-output nil 0.1)))
+      (e2e-wait-candidates "IiTenkidesune.")
       (let ((display (overlay-get sekken-overlay--overlay 'display)))
         (unless (equal display (car (sekken-convert-cached "IiTenkidesune.")))
           (error "e2e: 候補が届いた後の overlay が %S" display)))
@@ -79,9 +83,25 @@
       (unless (member (buffer-string)
                       '("我輩は猫である。" "吾輩は猫である。"))
         (error "e2e: sticky 変換結果が %S" (buffer-string)))
-      ;; 語の後に空白を打つと、確定の打鍵なしで 1 位候補に置き換わる。
+      ;; 語の後に空白を打つと、確定の打鍵なしで見えていたものに置き換わる。
+      ;; 候補がまだ届いていなければ、見えていたかなのまま入り、変換は待たない。
+      (erase-buffer)
+      (sekken-convert-forget-all)
+      (e2e-type "WagahaihaNekodearu.")
+      (sekken-live-update)
+      (let ((display (overlay-get sekken-overlay--overlay 'display)))
+        (unless (equal display "▽わがはいは▽ねこである。")
+          (error "e2e: 候補が届く前の overlay が %S" display)))
+      (sekken-live-before-command)
+      (insert " ")
+      (sekken-live-after-command)
+      (unless (equal (buffer-string) "わがはいはねこである。 ")
+        (error "e2e: 候補が届く前の確定結果が %S" (buffer-string)))
+      ;; 候補が届いていれば、見えていた 1 位候補が入る。
       (erase-buffer)
       (e2e-type "WagahaihaNekodearu.")
+      (sekken-live-update)
+      (e2e-wait-candidates "WagahaihaNekodearu.")
       (sekken-live-before-command)
       (insert " ")
       (sekken-live-after-command)
@@ -91,6 +111,8 @@
       ;; 置き換わった語を直して region で選び、登録すると次の変換から 1 位になる。
       (erase-buffer)
       (e2e-type "Warashi")
+      (sekken-live-update)
+      (e2e-wait-candidates "Warashi")
       (sekken-live-before-command)
       (insert " ")
       (sekken-live-after-command)
