@@ -157,7 +157,7 @@ exact で呼ぶ。"
        (t
         (delete-region start end)
         (goto-char start)
-        (insert (plist-get analysis :text))
+        (insert (plist-get analysis :commit))
         (sekken-word-finish start roman))))))
 
 (provide 'sekken-convert)

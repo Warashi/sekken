@@ -184,12 +184,17 @@ jsonrpc.el が JSON の配列にするようベクタで返す。"
             pieces))
     (vconcat (nreverse pieces))))
 
-(defun sekken-input--text (settled)
-  "辞書を引く区間の無い SETTLED を、エンジンに送らずに出す文字列にする。
-先頭の小文字はかなに、literal 区間は綴りのままつなぐ。"
-  (concat (sekken-kana-roman-to-kana (car settled))
-          (mapconcat (lambda (segment) (plist-get segment :text))
-                     (cdr settled) "")))
+(defun sekken-input--commit (settled typing)
+  "SETTLED を、候補を使わずにバッファへ入れる文字列にする。TYPING は打っている途中の区間。
+`sekken-input--display' と同じかなを、境界の印（▽ `/' `'' `>'）だけ落として
+つなぐ。印は見せるためのもので、バッファには入れない。"
+  (concat
+   (if typing
+       (sekken-kana-roman-to-kana (car settled))
+     (sekken-kana-display (car settled)))
+   (mapconcat (lambda (segment)
+                (sekken-input--segment-kana segment (eq segment typing)))
+              (cdr settled) "")))
 
 (defun sekken-input-analyze (roman)
   "入力中の ROMAN を 1 度だけ解析し、表示と確定の両方に使う plist を返す。
@@ -198,7 +203,7 @@ jsonrpc.el が JSON の配列にするようベクタで返す。"
 :converts 辞書を引く区間（convert か abbrev）があるか。無ければエンジンに
           送っても文字列をつなぐだけなので、エディタで置き換えられる。
 :pieces   エンジンに送る区間のベクタ。
-:text     :converts が nil のとき、語を置き換える文字列。
+:commit   候補を使わずに語を置き換える文字列。表示から境界の印を落としたもの。
 
 分けた結果の使い分けはここだけにある。表示は閉じただけの末尾の区間を
 ▽ として残し、送信はそれを落とす（`sekken-input--settle'）。"
@@ -212,7 +217,7 @@ jsonrpc.el が JSON の配列にするようベクタで返す。"
                                   (cdr settled))
                          t)
           :pieces (sekken-input--pieces settled typing)
-          :text (sekken-input--text settled))))
+          :commit (sekken-input--commit settled typing))))
 
 ;; 以下は解析結果を 1 つしか使わない呼び出し元のための入口。
 ;; 同じ ROMAN から 2 つ以上を使うなら `sekken-input-analyze' を 1 度呼ぶ。
@@ -233,9 +238,9 @@ jsonrpc.el が JSON の配列にするようベクタで返す。"
   "入力中の ROMAN をエンジンに送る区間のベクタにする。"
   (plist-get (sekken-input-analyze roman) :pieces))
 
-(defun sekken-input-literal (roman)
-  "辞書を引く区間の無い ROMAN を、エンジンに送らずに出す文字列にする。"
-  (plist-get (sekken-input-analyze roman) :text))
+(defun sekken-input-commit (roman)
+  "ROMAN を、候補を使わずにバッファへ入れる文字列にする。"
+  (plist-get (sekken-input-analyze roman) :commit))
 
 (provide 'sekken-input)
 ;;; sekken-input.el ends here

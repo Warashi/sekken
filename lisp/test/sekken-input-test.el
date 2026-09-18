@@ -17,7 +17,24 @@
   (let ((analysis (sekken-input-analyze "kyouha'Emacs")))
     (should (plist-get analysis :ready))
     (should-not (plist-get analysis :converts))
-    (should (equal (plist-get analysis :text) "きょうはEmacs"))))
+    (should (equal (plist-get analysis :commit) "きょうはEmacs"))))
+
+(ert-deftest sekken-input/確定の文字列は表示から境界の印だけを落とす ()
+  (pcase-dolist (`(,roman ,display ,commit)
+                 '(("Neko" "▽ねこ" "ねこ")
+                   ("NekoGa" "▽ねこ▽が" "ねこが")
+                   ("kyouHa" "きょう▽は" "きょうは")
+                   ("Neko;" "▽ねこ▽" "ねこ")
+                   ("/emacs" "▽/emacs" "emacs")
+                   ("'Emacs" "▽'Emacs" "Emacs")
+                   ("O>" "▽お>▽" "お")
+                   ;; 母音を待つ子音は、見えているとおり綴りのまま確定する。
+                   ("Nek" "▽ねk" "ねk")
+                   ;; 境界で閉じた区間は母音を待たないので、表示も確定も「ねっ」。
+                   ("Nek;" "▽ねっ▽" "ねっ")))
+    (let ((analysis (sekken-input-analyze roman)))
+      (should (equal (plist-get analysis :display) display))
+      (should (equal (plist-get analysis :commit) commit)))))
 
 (ert-deftest sekken-input/大文字境界を▽で示してかなにする ()
   (should (equal (sekken-input-display "WagahaihaNek") "▽わがはいは▽ねk"))
@@ -60,8 +77,8 @@
   ;; 境界だけなら何も残らない。
   (should (equal (sekken-input-pieces ";") []))
   (should (equal (sekken-input-pieces ">") []))
-  (should (equal (sekken-input-literal "'git branch;") "git branch"))
-  (should (equal (sekken-input-literal "neko'") "ねこ"))
+  (should (equal (sekken-input-commit "'git branch;") "git branch"))
+  (should (equal (sekken-input-commit "neko'") "ねこ"))
   (should-not (sekken-input-converts-p "'emacs'"))
   ;; 表示は境界が開いていることを示したまま。
   (should (equal (sekken-input-display "Neko;") "▽ねこ▽")))
@@ -87,7 +104,7 @@
                   (:kind "literal" :text "git branch")
                   (:kind "convert" :text "を")]))
   (should (equal (sekken-input-display "'git branch") "▽'git branch"))
-  (should (equal (sekken-input-literal "'git branch") "git branch")))
+  (should (equal (sekken-input-commit "'git branch") "git branch")))
 
 (ert-deftest sekken-input/境界の直後の大文字やセミコロンは新しい区間を作らない ()
   (should (equal (sekken-input-pieces ";Kai") [(:kind "convert" :text "かい")]))
@@ -148,9 +165,9 @@
   (should (equal (sekken-input-pieces ";'emacs") [(:kind "literal" :text "emacs")])))
 
 (ert-deftest sekken-input/辞書を引く区間が無ければエンジンに送らずに文字列にする ()
-  (should (equal (sekken-input-literal "kyouha'Emacs") "きょうはEmacs"))
-  (should (equal (sekken-input-literal "'don''t") "don't"))
-  (should (equal (sekken-input-literal "neko") "ねこ")))
+  (should (equal (sekken-input-commit "kyouha'Emacs") "きょうはEmacs"))
+  (should (equal (sekken-input-commit "'don''t") "don't"))
+  (should (equal (sekken-input-commit "neko") "ねこ")))
 
 (ert-deftest sekken-input/変換する区間の有無を判定する ()
   (should (sekken-input-converts-p "Neko"))

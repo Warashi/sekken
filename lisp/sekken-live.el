@@ -112,7 +112,7 @@ completion-in-region の候補一覧が出ている間はどのコマンドも�
                (condition-case nil
                    (sekken-convert--candidates roman)
                  (error nil)))))
-     (t (plist-get analysis :text)))))
+     (t (plist-get analysis :commit)))))
 
 (defun sekken-live--commit (start end roman)
   "START から END の語 ROMAN を確定の文字列に置き換える。
