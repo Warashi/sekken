@@ -206,7 +206,7 @@ jsonrpc.el が JSON の配列にするようベクタで返す。"
 :commit   候補を使わずに語を置き換える文字列。表示から境界の印を落としたもの。
 
 分けた結果の使い分けはここだけにある。表示は閉じただけの末尾の区間を
-▽ として残し、送信はそれを落とす（`sekken-input--settle'）。"
+▽ として残し、確定と送信はそれを落とす（`sekken-input--settle'）。"
   (let* ((segmented (sekken-input-segment roman))
          (typing (sekken-input--typing segmented))
          (settled (sekken-input--settle segmented)))

@@ -24,6 +24,14 @@
     (should (equal (buffer-string) "きょうは"))
     (should (= (point) (point-max)))))
 
+(ert-deftest sekken-convert/母音を待つ子音は見えているとおり綴りのまま置き換える ()
+  ;; overlay は「ねk」を見せているので、`C-j' もそれを入れる。
+  (with-temp-buffer
+    (sekken-test-type "nek")
+    (sekken-convert-test--with-engine nil
+      (sekken-convert))
+    (should (equal (buffer-string) "ねk"))))
+
 (ert-deftest sekken-convert/辞書を引く区間が無ければエンジンを呼ばずに置き換える ()
   (with-temp-buffer
     (sekken-test-type "kyouha'Emacs")
