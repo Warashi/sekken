@@ -49,10 +49,10 @@
     (delete-region 8 9)
     (should (equal (sekken-word-bounds) (cons 7 8)))))
 
-(ert-deftest sekken-word/忘れた後の打鍵は新しい打ち始めになる ()
+(ert-deftest sekken-word/語を終えた後の打鍵は新しい打ち始めになる ()
   (with-temp-buffer
     (sekken-test-type "neko")
-    (sekken-word-forget-origin)
+    (sekken-word-end)
     (should (null (sekken-word-bounds)))
     (sekken-test-type "ga")
     (should (equal (sekken-word-bounds) (cons 5 7)))))

@@ -36,7 +36,7 @@
   "入力中の語の打ち始めの marker。無ければ語は無い。
 marker は直前への挿入で進まないので、打ち始めの位置に打った文字は語に入る。")
 
-(defun sekken-word-forget-origin ()
+(defun sekken-word--forget-origin ()
   "打ち始めを忘れる。次に打った文字が新しい語の打ち始めになる。"
   (when sekken-word--origin
     (set-marker sekken-word--origin nil)
@@ -56,7 +56,7 @@ undo が置き換えを取り消してローマ字が同じ位置に戻ったと
 (defun sekken-word-finish (start roman)
   "START から始まっていた語 ROMAN を置き換え終えたことにする。
 打ち始めを忘れ、次に打った文字は新しい語になる。"
-  (sekken-word-forget-origin)
+  (sekken-word--forget-origin)
   (when sekken-word--finished
     (set-marker (car sekken-word--finished) nil))
   (setq sekken-word--finished (cons (copy-marker start) roman)
@@ -68,7 +68,7 @@ undo が置き換えを取り消してローマ字が同じ位置に戻ったと
   "このバッファで置き換えた語のローマ字。新しい順。無ければ nil。"
   sekken-word--finished-romans)
 
-(defun sekken-word-forget-finished ()
+(defun sekken-word--forget-finished ()
   "最後に置き換えた語を忘れる。"
   (when sekken-word--finished
     (set-marker (car sekken-word--finished) nil)
@@ -129,7 +129,7 @@ END が BEG の削除は打ち始めにしない。打つコマンド以外が�
 語の中の編集なので忘れない。削除は marker を動かすので、動く前に見る。"
   (when (and sekken-word--origin
              (< beg sekken-word--origin))
-    (sekken-word-forget-origin)))
+    (sekken-word--forget-origin)))
 
 (defun sekken-word--literal-open-p (roman)
   "ROMAN が `'' で開いた literal 区間の中で終わっているか。"
@@ -191,7 +191,7 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
 そのコマンドの後に打つ文字を新しい語にする。"
   (sekken-word--forget-pending)
   (prog1 (sekken-word--current)
-    (sekken-word-forget-origin)))
+    (sekken-word--forget-origin)))
 
 (defun sekken-word--intact-p (start end roman)
   "START から END の語 ROMAN がそのまま残っているか。
@@ -233,12 +233,12 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
           (unless (or (sekken-word--shrunk-p start roman)
                       (and sekken-word--origin
                            (> sekken-word--origin start)))
-            (sekken-word-forget-origin)))
+            (sekken-word--forget-origin)))
          ((sekken-word--continuing-p start end) nil)
          (t
           (setq word (list start end roman))
           ;; 境界だけの語のように置き換えられなくても、離れた語は終わり。
-          (sekken-word-forget-origin)))))
+          (sekken-word--forget-origin)))))
     (sekken-word--forget-pending)
     word))
 
@@ -246,8 +246,8 @@ START と END は marker で、auto-fill や electric-indent がコマンドの�
   "入力中の語の状態を捨てる。`sekken-mode' を切るときに呼ぶ。
 覚えた語も捨てるので、切っている間に語が置き換わっても、次に入れたときの
 後処理が古い語を確定しない。置き換えた語のローマ字の履歴は登録で使うので残す。"
-  (sekken-word-forget-origin)
-  (sekken-word-forget-finished)
+  (sekken-word--forget-origin)
+  (sekken-word--forget-finished)
   (sekken-word--forget-pending))
 
 (provide 'sekken-word)
