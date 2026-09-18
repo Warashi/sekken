@@ -77,24 +77,26 @@ SKK 風の一括変換による Emacs 用日本語入力。
 nix build
 ```
 
-エンジンは 3 つのファイルを必要とする。
+エンジンは 4 つのファイルを必要とする。
 
 | もの | 入手 |
 |---|---|
 | vibrato 辞書 `system.dic.zst` | https://github.com/daac-tools/vibrato/releases/download/v0.5.0/ipadic-mecab-2_7_0.tar.xz を展開する |
 | SKK 辞書 `SKK-JISYO.L` | https://raw.githubusercontent.com/skk-dev/dict/master/SKK-JISYO.L |
 | n-gram モデル `model.zst` | https://github.com/Warashi/sekken/releases |
+| 文字言語モデル `lm.zst` | https://github.com/Warashi/sekken/releases |
 
 `model.zst` は Wikipedia 日本語版と FineWeb-2 日本語の文から数えた語の bigram で、
-同じ Release にある文字言語モデル `lm.zst` は任意。`lm.zst` を渡すと、その提案で格子を
-再探索して精度を上げる代わりに変換が遅くなる（使い方は「Emacs での設定」）。
-`model.zst` と `lm.zst` はバイナリと同じ Release のものを使う。形式が変わると古い組み合わせは読めない。
+格子を作るのに使う。`lm.zst` は文字言語モデルで、その提案で格子を再探索して
+候補を決める。どちらも必須で、バイナリと同じ Release のものを使う。
+形式が変わると古い組み合わせは読めない。
 学習済みモデルは CC BY-SA 4.0 で、出典と条件は Release に添付した `THIRD-PARTY.md` にある。
 
 ### 手元で変換を試す
 
 ```sh
-./result/bin/sekken henkan --dic system.dic.zst --model model.zst --jisyo SKK-JISYO.L WagahaihaNekodearu.
+./result/bin/sekken henkan --dic system.dic.zst --model model.zst --jisyo SKK-JISYO.L \
+  --lm lm.zst WagahaihaNekodearu.
 ```
 
 ユーザー辞書があれば `--user-jisyo user-jisyo` も渡す。形式は UTF-8 の SKK-JISYO と同じで、
@@ -108,9 +110,8 @@ nix build
         sekken-server-dic "~/.config/sekken/system.dic.zst"
         sekken-server-model "~/.config/sekken/model.zst"
         sekken-server-jisyo "~/.config/sekken/SKK-JISYO.L"
+        sekken-server-lm "~/.config/sekken/lm.zst"
         default-input-method "japanese-sekken")
-;; 言語モデルで再探索するなら（1 打鍵あたり 10 ms ほど、文全体の変換で 40〜110 ms ほど遅くなる）
-;; (setopt sekken-server-lm "~/.config/sekken/lm.zst")
 ```
 
 設定はエンジンの起動時に読むので、`require` との順序は問わない。
@@ -193,10 +194,10 @@ cd lisp && ./test/run.sh
 nix flake check
 ```
 
-実際のエンジンを起動して Emacs から通しで確かめるには、4 つのパスを環境変数で渡す。
+実際のエンジンを起動して Emacs から通しで確かめるには、5 つのパスを環境変数で渡す。
 
 ```sh
-SEKKEN_BIN=./result/bin/sekken SEKKEN_DIC=... SEKKEN_MODEL=... SEKKEN_JISYO=... \
+SEKKEN_BIN=./result/bin/sekken SEKKEN_DIC=... SEKKEN_MODEL=... SEKKEN_JISYO=... SEKKEN_LM=... \
   emacs -Q --batch -L lisp -l lisp/test/e2e.el
 ```
 
