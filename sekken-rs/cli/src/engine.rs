@@ -106,14 +106,13 @@ impl EngineArgs {
                 rank: self.rank_weight,
                 kana_penalty: self.kana_penalty,
             },
-            reranker: None,
-            speculator: Some(Speculator {
+            speculator: Speculator {
                 verifier: lm,
                 weight: self.lm_weight,
                 rounds: self.spec_rounds,
                 width: self.spec_width,
                 stats: Default::default(),
-            }),
+            },
         })
     }
 }

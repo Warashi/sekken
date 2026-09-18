@@ -1,4 +1,4 @@
-//! 言語モデルを core の `SentenceScorer` に繋ぐ。
+//! 言語モデルで文をまとめて採点する。
 //!
 //! 採点は入力側（BOS、条件付きなら前置する入力と `\t`）を 1 本だけ読んで状態を取り、
 //! 候補側は trie にまとめて、共有する接頭辞を一度だけ読む。上位 20 本の候補は
@@ -15,8 +15,6 @@
 //! 場ごと持ち越し、次の変換は共有しない分だけ読む。
 
 use std::sync::Mutex;
-
-use sekken_core::rerank::SentenceScorer;
 
 use crate::condition::Condition;
 use crate::file::SavedModel;
@@ -290,12 +288,6 @@ impl Drop for Scoring<'_> {
     }
 }
 
-impl SentenceScorer for LmScorer {
-    fn costs(&self, input: &str, sentences: &[String]) -> Vec<f64> {
-        self.nll(input, sentences)
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -354,7 +346,7 @@ pub(crate) mod tests {
     #[test]
     fn 文ごとに_1_つのコストを返す() {
         let s = scorer();
-        let costs = s.costs("", &["猫が鳴く".to_string(), "猫".to_string()]);
+        let costs = s.nll("", &["猫が鳴く".to_string(), "猫".to_string()]);
         assert_eq!(costs.len(), 2);
         assert!(costs.iter().all(|c| *c > 0.0));
     }
@@ -363,7 +355,7 @@ pub(crate) mod tests {
     fn 無条件のコストは_bos_から一本で読んだ値と一致する() {
         let vocab = Vocab::build(["猫が鳴く"], 1);
         let s = scorer_with(vocab.clone(), Condition::None);
-        let cost = s.costs("", &["猫が鳴く".to_string()])[0];
+        let cost = s.nll("", &["猫が鳴く".to_string()])[0];
         let expected = reference(&s, &[BOS], &ids(&vocab, "猫が鳴く"));
         assert!((cost - expected).abs() < 1e-4, "{cost} vs {expected}");
     }
@@ -371,8 +363,8 @@ pub(crate) mod tests {
     #[test]
     fn 長さの違う文を一緒に採点しても単独と同じ() {
         let s = scorer();
-        let together = s.costs("", &["猫が鳴く".to_string(), "猫".to_string()]);
-        let alone = s.costs("", &["猫".to_string()]);
+        let together = s.nll("", &["猫が鳴く".to_string(), "猫".to_string()]);
+        let alone = s.nll("", &["猫".to_string()]);
         assert!((together[1] - alone[0]).abs() < 1e-4);
     }
 
@@ -384,9 +376,9 @@ pub(crate) mod tests {
         let mut prefix = vec![BOS];
         prefix.extend(ids(&vocab, "ネコ\t"));
         let expected = reference(&s, &prefix, &ids(&vocab, "猫"));
-        let cost = s.costs("ねこ", &["猫".to_string()])[0];
+        let cost = s.nll("ねこ", &["猫".to_string()])[0];
         assert!((cost - expected).abs() < 1e-4);
-        assert_ne!(cost, s.costs("", &["猫".to_string()])[0]);
+        assert_ne!(cost, s.nll("", &["猫".to_string()])[0]);
     }
 
     #[test]
@@ -396,7 +388,7 @@ pub(crate) mod tests {
         let mut prefix = vec![BOS];
         prefix.extend(ids(&vocab, "ネコガナク\t"));
         let expected = reference(&s, &prefix, &ids(&vocab, "猫が鳴く"));
-        let cost = s.costs("ねこがなく", &["猫が鳴く".to_string()])[0];
+        let cost = s.nll("ねこがなく", &["猫が鳴く".to_string()])[0];
         assert!((cost - expected).abs() < 1e-4);
     }
 
@@ -432,12 +424,12 @@ pub(crate) mod tests {
     fn 交互形のコストは読みを区間に挟んだ列の出力側だけの値と一致する() {
         let vocab = Vocab::build(["猫が鳴く\tネコガナク\u{1e}"], 1);
         let s = scorer_with(vocab, Condition::Interleaved);
-        let cost = s.costs("ねこがなく", &["猫が鳴く".to_string()])[0];
+        let cost = s.nll("ねこがなく", &["猫が鳴く".to_string()])[0];
         let line = "\u{1e}ネコガ\t猫が\u{1e}ナク\t鳴く";
         let (expected, _) = reference_interleaved(&s, line);
         assert!((cost - expected).abs() < 1e-4, "{cost} vs {expected}");
         // 読みが違えばコストも変わる。
-        assert_ne!(cost, s.costs("いぬがなく", &["猫が鳴く".to_string()])[0]);
+        assert_ne!(cost, s.nll("いぬがなく", &["猫が鳴く".to_string()])[0]);
     }
 
     #[test]
@@ -445,7 +437,7 @@ pub(crate) mod tests {
         let vocab = Vocab::build(["Emacsで猫が鳴く\tデネコガナク\u{1e}"], 1);
         let s = scorer_with(vocab, Condition::Interleaved);
         // 英字はまずそのまま現れるものとして読みに当たる。
-        let cost = s.costs("Emacsでねこがなく", &["Emacsで猫が鳴く".to_string()])[0];
+        let cost = s.nll("Emacsでねこがなく", &["Emacsで猫が鳴く".to_string()])[0];
         let line = "\u{1e}Emacsデ\tEmacsで\u{1e}ネコガ\t猫が\u{1e}ナク\t鳴く";
         let (expected, _) = reference_interleaved(&s, line);
         assert!(cost.is_finite());
@@ -482,9 +474,9 @@ pub(crate) mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let together = s.costs("", &sentences);
+        let together = s.nll("", &sentences);
         for (sentence, cost) in sentences.iter().zip(&together) {
-            let alone = s.costs("", std::slice::from_ref(sentence))[0];
+            let alone = s.nll("", std::slice::from_ref(sentence))[0];
             assert!((cost - alone).abs() < 1e-4, "{sentence}: {cost} vs {alone}");
         }
         assert_eq!(together[0], together[4]);
@@ -508,9 +500,9 @@ pub(crate) mod tests {
                 (0..len).map(|_| alphabet[next() % 4]).collect()
             })
             .collect();
-        let together = s.costs("neko", &sentences);
+        let together = s.nll("neko", &sentences);
         for (sentence, cost) in sentences.iter().zip(&together) {
-            let alone = s.costs("neko", std::slice::from_ref(sentence))[0];
+            let alone = s.nll("neko", std::slice::from_ref(sentence))[0];
             assert!(
                 (cost - alone).abs() < 1e-3,
                 "{sentence:?}: {cost} vs {alone}"
@@ -527,16 +519,16 @@ pub(crate) mod tests {
         // 1 字ずつ伸ばす。2 回目以降は直前の延長になる。
         for input in ["ね", "ねこ", "ねこが", "ねこがな", "ねこがなく"] {
             assert_eq!(
-                s.costs(input, &sentence),
-                fresh.costs(input, &sentence),
+                s.nll(input, &sentence),
+                fresh.nll(input, &sentence),
                 "{input}"
             );
         }
         // 延長でない入力も、短くなる入力も、最初から読む。
         for input in ["いぬ", "ね", "ねこがなく"] {
             assert_eq!(
-                s.costs(input, &sentence),
-                fresh.costs(input, &sentence),
+                s.nll(input, &sentence),
+                fresh.nll(input, &sentence),
                 "{input}"
             );
         }
@@ -560,7 +552,7 @@ pub(crate) mod tests {
         ];
         for (input, sentences) in steps {
             let sentences: Vec<String> = sentences.iter().map(|s| s.to_string()).collect();
-            let got = s.costs(input, &sentences);
+            let got = s.nll(input, &sentences);
             let want = fresh_costs(&fresh, input, &sentences);
             for (g, w) in got.iter().zip(&want) {
                 assert!((g - w).abs() < 1e-4, "{input}: {g} vs {w}");
@@ -571,7 +563,7 @@ pub(crate) mod tests {
     /// 持ち越しを使わずに最初から読んだコスト。
     fn fresh_costs(s: &LmScorer, input: &str, sentences: &[String]) -> Vec<f64> {
         *s.carried.lock().unwrap() = None;
-        s.costs(input, sentences)
+        s.nll(input, sentences)
     }
 
     #[test]
@@ -585,7 +577,7 @@ pub(crate) mod tests {
             .chain(&second)
             .map(|x| scoring.nll(x))
             .collect();
-        let alone = s.costs(
+        let alone = s.nll(
             "",
             &[
                 "猫が鳴く".to_string(),
@@ -603,11 +595,11 @@ pub(crate) mod tests {
         let vocab = Vocab::build(["猫が鳴く\tネコガナク\u{1e}"], 1);
         let s = scorer_with(vocab, Condition::Interleaved);
         let sentences = ["猫が鳴く".to_string()];
-        let before = s.costs("ねこがなく", &sentences)[0];
+        let before = s.nll("ねこがなく", &sentences)[0];
         // 直前の変換の節を持ち越した状態で更新する。
         let reported = s.adapt("ねこがなく", "猫が鳴く", 0.05, Plastic::Head);
         assert!((reported - before).abs() < 1e-4, "{reported} vs {before}");
-        let after = s.costs("ねこがなく", &sentences)[0];
+        let after = s.nll("ねこがなく", &sentences)[0];
         assert!(after < before, "{after} >= {before}");
         // 持ち越した節を使った値が、最初から読んだ値と一致する（古い lse を使っていない）。
         let fresh = fresh_costs(&s, "ねこがなく", &sentences)[0];

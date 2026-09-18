@@ -3,7 +3,6 @@ pub mod dictionary;
 pub mod input;
 pub mod kana;
 pub mod lattice;
-pub mod rerank;
 pub mod scorer;
 pub mod segment;
 pub mod sekken;

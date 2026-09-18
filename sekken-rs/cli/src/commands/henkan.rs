@@ -22,8 +22,6 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
     // 打鍵を模した多数の入力で投機の反復数と段ごとの時間を見るため。
-    if let Some(speculator) = &engine.speculator {
-        eprintln!("{}", speculator.stats.borrow());
-    }
+    eprintln!("{}", engine.speculator.stats.borrow());
     Ok(())
 }

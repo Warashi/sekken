@@ -5,7 +5,6 @@ use crate::dictionary::Dictionary;
 use crate::input::Input;
 use crate::kana::hira2kata;
 use crate::lattice::{Lattice, Weights};
-use crate::rerank::Reranker;
 use crate::scorer::Scorer;
 use crate::speculate::Speculator;
 
@@ -16,10 +15,8 @@ pub struct Sekken<S: Scorer> {
     pub scorer: S,
     /// 格子の候補に付ける順位とかなのコストの重み。
     pub weights: Weights,
-    /// 文全体の採点で N-best を並べ替える。`None` なら格子の順位のまま。
-    pub reranker: Option<Reranker>,
-    /// 検証器の提案で格子を再探索する。`Some` なら `reranker` より優先する。
-    pub speculator: Option<Speculator>,
+    /// 検証器の提案で格子を再探索する。変換の方式はこれだけ。
+    pub speculator: Speculator,
 }
 
 impl<S: Scorer> Sekken<S> {
@@ -51,36 +48,21 @@ impl<S: Scorer> Sekken<S> {
                 .map(|i| candidates_at(&self.dict, &self.user, pieces, i))
                 .collect(),
         };
-        if let Some(speculator) = &self.speculator {
-            let decoded = speculator.decode(&lattice, &self.scorer, &reading, &head, top_n);
-            let mut result: Vec<String> = decoded
-                .scored
-                .into_iter()
-                .map(|path| head.clone() + &path.surfaces.concat())
-                .collect();
-            // 反復で得た経路だけでは足りないので、残りは格子の順位で埋める。
-            for path in decoded.lattice {
-                let s = head.clone() + &path.surfaces.concat();
-                if !result.contains(&s) {
-                    result.push(s);
-                }
-            }
-            result.truncate(top_n);
-            return result;
-        }
-        let Some(reranker) = &self.reranker else {
-            return lattice
-                .nbest(&self.scorer, top_n)
-                .into_iter()
-                .map(|path| head.clone() + &path.surfaces.concat())
-                .collect();
-        };
-        let paths = lattice.nbest(&self.scorer, top_n.max(reranker.width));
-        let candidates = paths
+        let decoded = self
+            .speculator
+            .decode(&lattice, &self.scorer, &reading, &head, top_n);
+        let mut result: Vec<String> = decoded
+            .scored
             .into_iter()
-            .map(|path| (head.clone() + &path.surfaces.concat(), path.cost))
+            .map(|path| head.clone() + &path.surfaces.concat())
             .collect();
-        let mut result = reranker.rerank(&reading, candidates);
+        // 反復で得た経路だけでは足りないので、残りは格子の順位で埋める。
+        for path in decoded.lattice {
+            let s = head.clone() + &path.surfaces.concat();
+            if !result.contains(&s) {
+                result.push(s);
+            }
+        }
         result.truncate(top_n);
         result
     }
@@ -118,14 +100,42 @@ mod tests {
 ねこ /猫/
 ";
 
+    /// どの文も同じに採点する検証器。格子の順位だけで決まる変換を確かめる。
+    struct Indifferent;
+    impl crate::verify::Verifier for Indifferent {
+        fn begin<'a>(&'a self, _: &str) -> Box<dyn crate::verify::VerifySession + 'a> {
+            Box::new(crate::verify::Stateless(
+                |sentences: &[String], queries: &[Vec<(usize, char)>]| {
+                    sentences
+                        .iter()
+                        .zip(queries)
+                        .map(|(_, queries)| crate::verify::Verdict {
+                            cost: 0.0,
+                            char_costs: vec![0.0; queries.len()],
+                        })
+                        .collect()
+                },
+            ))
+        }
+    }
+
+    fn speculator(verifier: Box<dyn crate::verify::Verifier + Send>) -> Speculator {
+        Speculator {
+            verifier,
+            weight: 100.0,
+            rounds: 3,
+            width: 2,
+            stats: Default::default(),
+        }
+    }
+
     fn sekken() -> Sekken<PreferKanji> {
         Sekken {
             dict: Dictionary::parse(FIXTURE),
             user: Dictionary::default(),
             scorer: PreferKanji,
             weights: Weights::default(),
-            reranker: None,
-            speculator: None,
+            speculator: speculator(Box::new(Indifferent)),
         }
     }
 
@@ -161,42 +171,13 @@ mod tests {
     #[test]
     fn 投機的な変換で検証器が好む経路が先頭になる() {
         let mut s = sekken();
-        s.speculator = Some(crate::speculate::Speculator {
-            verifier: Box::new(PrefersWa),
-            weight: 100.0,
-            rounds: 3,
-            width: 1,
-            stats: Default::default(),
-        });
+        s.speculator = speculator(Box::new(PrefersWa));
+        s.speculator.width = 1;
         let r = s.henkan(&roman("WagahaiHaNekoDa"), 3);
         assert_eq!(r[0], "わがはいは猫だ");
         // 反復で得た経路の後ろは格子の順位で埋める。
         assert_eq!(r.len(), 3);
         assert!(r.contains(&"我輩は猫だ".to_string()));
-    }
-
-    /// 「我輩」を含む文を嫌う採点器。
-    struct DislikesWagahai;
-    impl crate::rerank::SentenceScorer for DislikesWagahai {
-        fn costs(&self, _: &str, sentences: &[String]) -> Vec<f64> {
-            sentences
-                .iter()
-                .map(|s| if s.contains("我輩") { 100.0 } else { 0.0 })
-                .collect()
-        }
-    }
-
-    #[test]
-    fn 文全体の採点で先頭候補が入れ替わる() {
-        let mut s = sekken();
-        s.reranker = Some(Reranker {
-            scorer: Box::new(DislikesWagahai),
-            weight: 1.0,
-            width: 10,
-        });
-        let r = s.henkan(&roman("WagahaiHaNekoDa"), 2);
-        assert_eq!(r.len(), 2);
-        assert_eq!(r[0], "わがはいは猫だ");
     }
 
     #[test]
@@ -244,13 +225,7 @@ mod tests {
     #[test]
     fn そのまま出す区間は投機の位置合わせを経ても崩れない() {
         let mut s = sekken();
-        s.speculator = Some(crate::speculate::Speculator {
-            verifier: Box::new(PrefersWa),
-            weight: 100.0,
-            rounds: 3,
-            width: 2,
-            stats: Default::default(),
-        });
+        s.speculator = speculator(Box::new(PrefersWa));
         let input = Input::new(vec![
             Piece::literal("Emacs"),
             Piece::convert("で"),

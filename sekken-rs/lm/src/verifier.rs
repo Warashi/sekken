@@ -30,7 +30,6 @@ impl VerifySession for Scoring<'_> {
 
 #[cfg(test)]
 mod tests {
-    use sekken_core::rerank::SentenceScorer;
     use sekken_core::verify::{Verdict, Verifier};
 
     use crate::condition::Condition;
@@ -57,7 +56,7 @@ mod tests {
     fn 文全体のコストは並べ替え用の採点と一致する() {
         let s = scorer();
         let verdict = verify_one(&s, "猫が鳴く", &[]);
-        let cost = s.costs("", &["猫が鳴く".to_string()])[0];
+        let cost = s.nll("", &["猫が鳴く".to_string()])[0];
         assert!((verdict.cost - cost).abs() < 1e-4);
         assert!(verdict.char_costs.is_empty());
     }
