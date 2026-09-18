@@ -39,8 +39,10 @@
           sekken-server-model model
           sekken-server-jisyo jisyo
           sekken-server-lm lm
-          sekken-server-user-jisyo (make-temp-file "sekken-e2e-jisyo-" nil nil))
+          sekken-server-user-jisyo (make-temp-file "sekken-e2e-jisyo-" nil nil)
+          sekken-server-adapted-lm (make-temp-file "sekken-e2e-lm-" nil ".zst"))
     (delete-file sekken-server-user-jisyo)
+    (delete-file sekken-server-adapted-lm)
     (let ((henkan (sekken-server-henkan
                    (sekken-input-pieces "WagahaihaNekodearu.") 3)))
       (message "henkan: %S" henkan)
@@ -140,10 +142,21 @@
                (sekken-server-henkan (sekken-input-pieces "Warashi") 3)))
       (deactivate-input-method))
     (delete-file sekken-server-user-jisyo)
+    ;; 確定した文を学習させると、動いた出力層が shutdown で保存先に書かれる。
+    (sekken-server-adapt (sekken-input-pieces "WagahaihaNekodearu.")
+                         "吾輩は猫である。")
     (let ((proc (jsonrpc--process (sekken-server-connection))))
       (sekken-server-shutdown)
       (when (process-live-p proc)
         (error "e2e: shutdown 後もエンジンが生きている")))
+    (when sekken-server--adapt-error
+      (error "e2e: 学習が失敗した: %s" sekken-server--adapt-error))
+    (unless (> (or (file-attribute-size
+                    (file-attributes sekken-server-adapted-lm))
+                   0)
+               0)
+      (error "e2e: 動かした言語モデルが保存されていない"))
+    (delete-file sekken-server-adapted-lm)
     (message "e2e: ok")))
 
 ;;; e2e.el ends here
