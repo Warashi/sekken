@@ -115,22 +115,31 @@ completion-in-region の候補一覧が出ている間はどのコマンドも�
       (eq command (key-binding [?\d]))
       (eq command (key-binding [backspace]))))
 
-(defun sekken-live--result (roman)
+(defun sekken-live--result (roman &optional analysis)
   "確定で ROMAN を置き換える文字列。置き換えないなら nil。
+ANALYSIS は ROMAN の解析結果で、無ければここで解析する。
 走る前に見えていたものをそのまま入れる。候補がまだ届いていなくても新しい
 変換は待たず、見えていたかなのまま確定する。確定は保存・送信の直前にも
 通るので、そこでエンジンの応答を待たない方を選ぶ。
 境界だけの語（読みが無い語）は nil。"
-  (let ((analysis (sekken-input-analyze roman)))
+  (let ((analysis (or analysis (sekken-input-analyze roman))))
     (unless (seq-empty-p (plist-get analysis :pieces))
       (cdr (sekken-live--render roman analysis)))))
+
+(defun sekken-live--learn (roman analysis text)
+  "ROMAN を TEXT に確定したことをエンジンに学習させる。ANALYSIS は ROMAN の解析結果。
+学習させるのはエンジンが返した候補で確定したときだけ。候補が届く前のかなや、
+先頭部分の候補に残りを繋いだものは、エンジンの変換ではないので送らない。"
+  (when (member text (sekken-convert-cached roman))
+    (sekken-server-adapt (plist-get analysis :pieces) text)))
 
 (defun sekken-live--commit (start end roman)
   "START から END の語 ROMAN を確定の文字列に置き換える。
 ポイントが語の中にあれば置き換えた後ろに、外にあれば同じ位置に置く。
 読み取り専用の文字に当たれば置き換えず、`pre-command-hook' から呼ばれても
-コマンドを止めない。"
-  (let ((text (sekken-live--result roman)))
+コマンドを止めない。置き換えた文はエンジンに学習させる。"
+  (let* ((analysis (sekken-input-analyze roman))
+         (text (sekken-live--result roman analysis)))
     (when text
       (let ((inside (and (>= (point) start) (<= (point) end))))
         (condition-case nil
@@ -141,7 +150,8 @@ completion-in-region の候補一覧が出ている間はどのコマンドも�
                 (insert text))
               (sekken-word-finish start roman)
               (when inside
-                (goto-char (+ start (length text)))))
+                (goto-char (+ start (length text))))
+              (sekken-live--learn roman analysis text))
           (text-read-only nil))))))
 
 (defun sekken-live-before-command ()

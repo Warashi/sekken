@@ -118,6 +118,23 @@
     (should (null (sekken-word-bounds)))
     (should (equal (sekken-word-finished-romans) '("Neko")))))
 
+(ert-deftest sekken-convert/選んだ候補はエンジンに学習させる ()
+  (with-temp-buffer
+    (sekken-test-type "Neko")
+    (let (calls)
+      (cl-letf (((symbol-function 'sekken-server-adapt)
+                 (lambda (pieces sentence) (push (list pieces sentence) calls))))
+        (sekken-convert-test--with-engine '("猫" "根子")
+          (cl-letf (((symbol-function 'completion-in-region)
+                     (lambda (start end _table &optional _pred)
+                       (delete-region start end)
+                       (goto-char start)
+                       (insert "根子")
+                       (funcall (plist-get completion-extra-properties :exit-function)
+                                "根子" 'finished))))
+            (sekken-convert))))
+      (should (equal calls '(([(:kind "convert" :text "ねこ")] "根子")))))))
+
 (ert-deftest sekken-convert/かなと綴りに置き換えた末尾を確定として覚える ()
   (with-temp-buffer
     (sekken-test-type "kyouha'Emacs")

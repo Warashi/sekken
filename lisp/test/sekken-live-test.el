@@ -385,6 +385,22 @@
         (sekken-live-test--command #'self-insert-command (insert " ")))
       (should (equal (buffer-string) result)))))
 
+(ert-deftest sekken-live/候補で確定した文はエンジンに学習させる ()
+  ;; 学習させるのはエンジンの候補で確定したときだけ。候補が届く前のかなや、
+  ;; 手前の語の候補に残りを繋いだものは、エンジンの変換ではない。
+  (pcase-dolist (`(,cache ,learned)
+                 '(((("Neko" "猫" "ねこ")) (([(:kind "convert" :text "ねこ")] "猫")))
+                   (nil nil)
+                   ((("Ne" "根")) nil)))
+    (with-temp-buffer
+      (sekken-test-type "Neko")
+      (let (calls)
+        (cl-letf (((symbol-function 'sekken-server-adapt)
+                   (lambda (pieces sentence) (push (list pieces sentence) calls))))
+          (sekken-live-test--with-cache cache
+            (sekken-live-test--command #'self-insert-command (insert " "))))
+        (should (equal calls learned))))))
+
 (ert-deftest sekken-live/確定した文字列に境界の印は入らない ()
   (with-temp-buffer
     (sekken-test-type "Kyou/GPL;ha")

@@ -134,9 +134,10 @@ table を使い回すため、候補を閉じ込めると追従しない。"
   "候補が入ったら START からの語 ROMAN を終える exit-function を返す。
 exit-function が呼ばれた時点で候補はバッファに入っているので、status は
 見ない。corfu は選んだ候補を入れて一覧を抜けるとき finished ではなく
-exact で呼ぶ。"
-  (lambda (_string _status)
-    (sekken-word-finish start roman)))
+exact で呼ぶ。選んだ候補はエンジンに学習させる。"
+  (lambda (string _status)
+    (sekken-word-finish start roman)
+    (sekken-server-adapt (sekken-input-pieces roman) string)))
 
 (cl-defun sekken-convert ()
   "ポイント直前の語を変換する。
