@@ -15,6 +15,7 @@
 //! 場ごと持ち越し、次の変換は共有しない分だけ読む。
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::condition::Condition;
 use crate::file::SavedModel;
@@ -32,6 +33,9 @@ pub struct LmScorer {
     prefix: Mutex<Option<PrefixCache>>,
     /// 直前の変換で読んだ候補の節と、その入力側の id 列。
     carried: Mutex<Option<(Vec<u32>, Carried)>>,
+    /// 出力層を動かした回数。動かす前に始めた採点の節は古い出力層の
+    /// log-sum-exp を持つので、閉じるときに持ち越さないための印。
+    generation: AtomicU64,
 }
 
 /// 直前の入力側（BOS から `\t` の手前まで）の読み。
@@ -54,6 +58,8 @@ pub struct Scoring<'a> {
     session: Session<'a>,
     /// 入力側の id 列。閉じるときに読んだ節と一緒に残す。
     prefix: Vec<u32>,
+    /// 始めたときの出力層の世代。
+    generation: u64,
     /// 交互形なら、文ごとに区間に分けて挟むカタカナ読み。
     reading: Option<String>,
 }
@@ -78,6 +84,7 @@ impl LmScorer {
             condition,
             prefix: Mutex::new(None),
             carried: Mutex::new(None),
+            generation: AtomicU64::new(0),
         }
     }
 
@@ -121,6 +128,7 @@ impl LmScorer {
             scorer: self,
             session,
             prefix,
+            generation: self.generation.load(Ordering::Acquire),
             reading: self.condition.interleaved_reading(input),
         }
     }
@@ -213,8 +221,13 @@ impl LmScorer {
         debug_assert_eq!(hidden.len(), targets.len() * d);
         let nll = self.infer.adapt(&hidden, &targets, lr, plastic);
         // 持ち越した節の log-sum-exp は古い出力層のものなので捨てる。
+        // 同時に走っている採点が閉じるときに書き戻さないよう世代も進める。
         // 入力側の cache（係数と状態）は出力層に依らないので残す。
-        *self.carried.lock().unwrap() = None;
+        {
+            let mut carried = self.carried.lock().unwrap();
+            self.generation.fetch_add(1, Ordering::AcqRel);
+            *carried = None;
+        }
         nll
     }
 
@@ -283,8 +296,13 @@ impl Drop for Scoring<'_> {
         if std::thread::panicking() {
             return;
         }
+        let mut slot = self.scorer.carried.lock().unwrap();
+        // 始めてから出力層が動いていれば、節の log-sum-exp は古いので残さない。
+        if self.scorer.generation.load(Ordering::Acquire) != self.generation {
+            return;
+        }
         let carried = self.session.carry();
-        *self.scorer.carried.lock().unwrap() = Some((std::mem::take(&mut self.prefix), carried));
+        *slot = Some((std::mem::take(&mut self.prefix), carried));
     }
 }
 
@@ -558,6 +576,26 @@ pub(crate) mod tests {
                 assert!((g - w).abs() < 1e-4, "{input}: {g} vs {w}");
             }
         }
+    }
+
+    #[test]
+    fn 出力層を動かす前に始めた採点は節を持ち越さない() {
+        let s = scorer();
+        let sentences = ["猫が鳴く".to_string()];
+        let want = {
+            let mut scoring = s.begin("");
+            let scored = scoring.score(&sentences);
+            scoring.nll(&scored[0])
+        };
+        // 採点の途中で別のスレッドが出力層を動かしたのと同じ順序。
+        let scoring = s.begin("");
+        s.adapt("", "猫が鳴く", 0.1, crate::infer::Plastic::Head);
+        drop(scoring);
+        assert!(s.carried.lock().unwrap().is_none(), "古い節は残らない");
+        let got = s.nll("", &sentences)[0];
+        assert!(got != want, "動かした後の出力層で読み直す: {got} vs {want}");
+        let fresh = fresh_costs(&s, "", &sentences)[0];
+        assert!((got - fresh).abs() < 1e-4, "{got} vs {fresh}");
     }
 
     /// 持ち越しを使わずに最初から読んだコスト。
