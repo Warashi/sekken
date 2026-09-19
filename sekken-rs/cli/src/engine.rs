@@ -74,11 +74,6 @@ pub fn load_lm(path: &std::path::Path) -> Result<SavedModel> {
     Ok(saved)
 }
 
-/// エンジンに渡せる文字言語モデル。投機的な変換の検証器として使う。
-/// `Send` は、サーバーが別スレッドで組み立てたエンジンを受け取るため。
-pub trait Lm: Verifier + Send {}
-impl<T: Verifier + Send> Lm for T {}
-
 impl EngineArgs {
     pub fn build(&self) -> Result<Engine> {
         let saved = self.load_lm()?;
@@ -92,7 +87,8 @@ impl EngineArgs {
 
     /// 辞書とモデルを読み、`lm` を `--lm` の代わりの検証器として組み立てる。
     /// 呼ぶ側が採点器を持ち続けたいとき（確定した文で動かすなど）に使う。
-    pub fn build_with(&self, lm: Box<dyn Lm>) -> Result<Engine> {
+    /// `Send` は、サーバーが別スレッドで組み立てたエンジンを受け取るため。
+    pub fn build_with(&self, lm: Box<dyn Verifier + Send>) -> Result<Engine> {
         let tokenizer = Tokenizer::load(&self.dic).context("load vibrato dictionary")?;
         let file = std::fs::File::open(&self.model)
             .with_context(|| format!("open {}", self.model.display()))?;
