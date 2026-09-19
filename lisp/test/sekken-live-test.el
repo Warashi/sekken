@@ -89,6 +89,23 @@
           (sekken-live-update)
           (should (equal (sekken-live-test--display) display)))))))
 
+(ert-deftest sekken-live/綴りのままの区間の途中で切れる先頭部分には繋がない ()
+  ;; 繋いだ残りは独立に解析されるので、literal や abbrev の続きがかなに化ける。
+  ;; 見えているものがそのまま確定に入るので、表示だけの崩れでは済まない。
+  (pcase-dolist (`(,cache ,roman ,display ,commit)
+                 '(((("Kyouha'git bra" "今日はgit bra") ("Kyouha" "今日は"))
+                    "Kyouha'git branch" "今日は▽'git branch" "今日はgit branch")
+                   ((("Kyouha/ema" "今日はema") ("Kyouha" "今日は"))
+                    "Kyouha/emacs;wo" "今日は▽/emacs▽を" "今日はemacsを")))
+    (with-temp-buffer
+      (sekken-test-type roman)
+      (let (requests)
+        (sekken-live-test--with-prefetch requests
+          (setq sekken-convert--cache cache)
+          (sekken-live-update)
+          (should (equal (sekken-live-test--display) display))
+          (should (equal (sekken-live--result roman) commit)))))))
+
 (ert-deftest sekken-live/縮めた語を覚えていればその候補を見せる ()
   (with-temp-buffer
     (sekken-test-type "Neko")

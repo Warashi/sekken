@@ -25,15 +25,22 @@
 (require 'sekken-word)
 (require 'sekken-overlay)
 
+(defun sekken-live--spelled-open-p (roman)
+  "ROMAN が `/' か `'' で開いた綴りのままの区間の中で終わっているか。"
+  (let ((last (car (last (cdr (sekken-input-segment roman))))))
+    (and last (or (plist-get last :abbrev) (plist-get last :literal)) t)))
+
 (defun sekken-live--base (roman)
   "ROMAN の候補が届くまで代わりに見せる (先頭部分 . 1 位候補)。無ければ nil。
-候補を覚えている最も長い先頭部分を選ぶ。母音を待つ子音で終わる先頭部分は、
-残りをかなにできないので選ばない。"
+候補を覚えている最も長い先頭部分を選ぶ。母音を待つ子音で終わる先頭部分と、
+綴りのままの区間の途中で終わる先頭部分は、残りを独立に解析すると綴りが
+かなに化けるので選ばない。"
   (let ((length (1- (length roman)))
         base)
     (while (and (> length 0) (not base))
       (let ((prefix (substring roman 0 length)))
-        (unless (string-match-p "[bcdfghjklmnpqrstvwxyz]\\'" (downcase prefix))
+        (unless (or (string-match-p "[bcdfghjklmnpqrstvwxyz]\\'" (downcase prefix))
+                    (sekken-live--spelled-open-p prefix))
           (let ((candidate (car (sekken-convert-cached prefix))))
             (when candidate
               (setq base (cons prefix candidate))))))
