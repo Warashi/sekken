@@ -43,7 +43,8 @@ impl Segment {
 /// その区間を続ける（`O>Kai` や `;o>;kai` の `かい` が `>` の印を受け取るため）。
 /// 開いた直後の `/` はその区間を abbrev に、`'` は literal にする。
 /// abbrev と literal の区間は次の `;` `/` `'` まで続き、中の大文字は境界にしない。
-/// `''` はどこでもリテラルの `'` になる（`'don''t`）。
+/// 二重の `;` `/` `'` は、かなの区間でも綴りのままの区間でも、その文字 1 つの
+/// リテラルになる（`'don''t`）。
 pub fn segment(roman: &str) -> Segmented {
     let mut head = String::new();
     let mut segments: Vec<Segment> = Vec::new();
@@ -53,12 +54,12 @@ pub fn segment(roman: &str) -> Segmented {
     // `/` か `'` で開いた、綴りのまま送る区間の中か。
     let mut in_spelled = false;
     while let Some(c) = chars.next() {
-        if c == '\'' && chars.peek() == Some(&'\'') {
+        if matches!(c, ';' | '/' | '\'') && chars.peek() == Some(&c) {
             chars.next();
             if let Some(last) = segments.last_mut() {
-                last.text.push('\'');
+                last.text.push(c);
             } else {
-                head.push('\'');
+                head.push(c);
             }
             fresh = false;
             continue;
@@ -82,14 +83,6 @@ pub fn segment(roman: &str) -> Segmented {
                 .unwrap()
                 .text
                 .push(c.to_ascii_lowercase());
-            fresh = false;
-        } else if c == ';' && chars.peek() == Some(&';') {
-            chars.next();
-            if let Some(last) = segments.last_mut() {
-                last.text.push(';');
-            } else {
-                head.push(';');
-            }
             fresh = false;
         } else if c == ';' {
             if !fresh {
@@ -280,16 +273,25 @@ mod tests {
     }
 
     #[test]
-    fn 二重アポストロフィはリテラルのアポストロフィになる() {
+    fn 二重の記号はどの区間でもその文字_1_つになる() {
+        let literal = |text: &str| Segment {
+            text: text.to_string(),
+            literal: true,
+            ..Segment::default()
+        };
+        assert_eq!(segment("'don''t").segments, [literal("don't")]);
+        assert_eq!(segment("ka''na"), seg("ka'na", &[]));
+        assert_eq!(segment("a//b"), seg("a/b", &[]));
+        assert_eq!(segment("'a//b").segments, [literal("a/b")]);
+        assert_eq!(segment("'a;;b").segments, [literal("a;b")]);
         assert_eq!(
-            segment("'don''t").segments,
+            segment("/a//b").segments,
             [Segment {
-                text: "don't".to_string(),
-                literal: true,
+                text: "a/b".to_string(),
+                abbrev: true,
                 ..Segment::default()
             }]
         );
-        assert_eq!(segment("ka''na"), seg("ka'na", &[]));
     }
 
     #[test]

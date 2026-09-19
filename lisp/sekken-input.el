@@ -27,8 +27,8 @@ HEAD は先頭の境界より前の文字列。SEGMENTS の各要素は plist �
 小文字化したローマ字（abbrev と literal なら綴りそのまま）、`/' で開いた
 区間なら :abbrev t、`'' で開いた区間なら :literal t、直後に `>' があれば
 :prefix t、直前に `>' があれば :suffix t を持つ。
-大文字と単独のセミコロンが境界で、二重セミコロンはリテラルになる。
-二重アポストロフィもどこでもリテラルの `'' になる（`'don''t'）。
+大文字と単独のセミコロンが境界。二重の `;' `/' `'' は、かなの区間でも
+綴りのままの区間でも、その文字 1 つのリテラルになる（`'don''t'）。
 境界で開いた直後の大文字や `;' は新しい区間を作らず、その区間を続ける。
 開いた直後の `/' はその区間を abbrev に、`'' は literal にする。
 abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字は境界にしない。"
@@ -45,16 +45,16 @@ abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字
                   (push current segments))
                 (setq current (append (list :text "") props)))
               (append-text (string)
-                (plist-put current :text (concat (plist-get current :text) string))))
+                (if current
+                    (plist-put current :text (concat (plist-get current :text) string))
+                  (setq head (concat head string)))))
       (while (< index (length roman))
         (let ((char (aref roman index)))
           (cond
-           ((and (eq char ?')
+           ((and (memq char '(?\; ?/ ?'))
                  (< (1+ index) (length roman))
-                 (eq (aref roman (1+ index)) ?'))
-            (if current
-                (append-text "'")
-              (setq head (concat head "'")))
+                 (eq (aref roman (1+ index)) char))
+            (append-text (char-to-string char))
             (setq fresh nil
                   index (+ index 2)))
            (in-spelled
@@ -71,14 +71,6 @@ abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字
             (append-text (char-to-string (+ char (- ?a ?A))))
             (setq fresh nil
                   index (1+ index)))
-           ((and (eq char ?\;)
-                 (< (1+ index) (length roman))
-                 (eq (aref roman (1+ index)) ?\;))
-            (if current
-                (append-text ";")
-              (setq head (concat head ";")))
-            (setq fresh nil
-                  index (+ index 2)))
            ((eq char ?\;)
             (unless fresh
               (open))
@@ -99,9 +91,7 @@ abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字
             (setq fresh t
                   index (1+ index)))
            (t
-            (if current
-                (append-text (char-to-string char))
-              (setq head (concat head (char-to-string char))))
+            (append-text (char-to-string char))
             (setq fresh nil
                   index (1+ index))))))
       (when current

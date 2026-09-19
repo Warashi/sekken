@@ -176,11 +176,19 @@
   (should (sekken-input-ready-p "'emacs"))
   (should-not (sekken-input-ready-p "'")))
 
-(ert-deftest sekken-input/二重アポストロフィはリテラルのアポストロフィになる ()
+(ert-deftest sekken-input/二重の記号はどの区間でもその文字_1_つになる ()
   (should (equal (sekken-input-pieces "'don''t") [(:kind "literal" :text "don't")]))
   (should (equal (sekken-input-pieces "ka''na") [(:kind "kana" :text "か'な")]))
   (should (equal (sekken-input-display "'don''t") "▽'don't"))
-  (should-not (sekken-input-has-boundary-p "ka''na")))
+  (should-not (sekken-input-has-boundary-p "ka''na"))
+  ;; `/' は abbrev の入口なので、和文の中の `/' は `//' で打つ。
+  (should (equal (sekken-input-pieces "a//b") [(:kind "kana" :text "あ/b")]))
+  (should (equal (sekken-input-commit "Neko//Ha") "ねこ/は"))
+  (should-not (sekken-input-has-boundary-p "a//b"))
+  ;; 綴りのままの区間の中でも閉じずにその文字になる。
+  (should (equal (sekken-input-pieces "'a//b") [(:kind "literal" :text "a/b")]))
+  (should (equal (sekken-input-pieces "'a;;b") [(:kind "literal" :text "a;b")]))
+  (should (equal (sekken-input-pieces "/a//b") [(:kind "abbrev" :text "a/b")])))
 
 (ert-deftest sekken-input/境界の直後のアポストロフィはその区間を_literal_にする ()
   (should (equal (sekken-input-pieces "O>'emacs")

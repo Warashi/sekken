@@ -38,6 +38,14 @@ Kyou/GPL;ha	▽きょう▽/GPL▽は	convert:きょう	abbrev:GPL	convert:は
 ;/emacs	▽/emacs	abbrev:emacs
 O>/emacs	▽お>▽/emacs	convert+prefix:お	abbrev:emacs
 
+# 二重の `;` `/` `'` は、かなの区間でも綴りのままの区間でも、その文字 1 つになる
+a//b	あ/b	kana:あ/b
+Neko//Ha	▽ねこ/▽は	convert:ねこ/	convert:は
+'a//b	▽'a/b	literal:a/b
+/a//b	▽/a/b	abbrev:a/b
+'a;;b	▽'a;b	literal:a;b
+Neko;;;Kai	▽ねこ;▽かい	convert:ねこ;	convert:かい
+
 # `>` の印
 O>Kai	▽お>▽かい	convert+prefix:お	convert+suffix:かい
 O>Kai>Sha	▽お>▽かい>▽しゃ	convert+prefix:お	convert+prefix+suffix:かい	convert+suffix:しゃ
