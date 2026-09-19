@@ -284,6 +284,75 @@ mod tests {
         adapter.flush();
     }
 
+    /// 形だけ合った重みの、読み書きと学習ができる小さなモデル。
+    fn small_model() -> SavedModel {
+        let vocab = Vocab::build(["猫が鳴く"], 1);
+        let config = ModelConfig {
+            vocab_size: vocab.len(),
+            d_model: 8,
+            n_layers: 1,
+            n_heads: 1,
+            head_dim: 8,
+            d_state: 4,
+            mlp_dim: 16,
+        };
+        SavedModel {
+            weights: sekken_lm::testing::random_weights(&config, 1),
+            config,
+            vocab,
+            condition: Condition::None,
+        }
+    }
+
+    fn head_weight(saved: &SavedModel) -> &[f32] {
+        &saved
+            .weights
+            .iter()
+            .find(|(n, _, _)| n == "head.weight")
+            .unwrap()
+            .2
+    }
+
+    #[test]
+    fn 学習した出力層を保存し_次の起動で読み直せる() {
+        let dir = dir();
+        let base = dir.join("base.zst");
+        let adapted = dir.join("adapted.zst");
+        let saved = small_model();
+        write(&saved, &base).unwrap();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let adapter = Adapter::spawn(
+            ready_rx,
+            AdaptArgs {
+                adapt_lr: 0.1,
+                adapted_lm: Some(adapted.clone()),
+            },
+        );
+        // 読み込みが終わる前に来た文も、終わってから学習される。
+        adapter.adapt("ねこ".to_string(), "猫".to_string());
+        let scorer = Arc::new(LmScorer::from_saved(&saved).unwrap());
+        // 重みは種が同じなので、もう一度作れば保存前の値になる。
+        ready_tx
+            .send(Ready {
+                scorer,
+                saved: small_model(),
+            })
+            .unwrap();
+        adapter.adapt("ねこ".to_string(), "猫が鳴く".to_string());
+        adapter.flush();
+        let reloaded = load_model(&base, Some(&adapted)).unwrap();
+        assert_ne!(
+            head_weight(&reloaded),
+            head_weight(&saved),
+            "保存した出力層は学習で動いている"
+        );
+        assert!(
+            reloaded.weights.iter().any(|(n, _, _)| n == "head.bias"),
+            "bias も一緒に保存する"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn 読み込みに失敗しても送った文と_flush_は返る() {
         let (ready_tx, ready_rx) = mpsc::channel();

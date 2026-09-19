@@ -13,3 +13,7 @@ postcard = { version = "1", features = ["use-std"] }
 sekken-core = { path = "../core" }
 serde = { version = "1", features = ["derive"] }
 zstd = "0.14"
+
+[features]
+# 依存側のテストが形だけ合った重みを作るための入口。
+testing = []
