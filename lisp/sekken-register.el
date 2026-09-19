@@ -44,7 +44,9 @@
 対話的には、region があればその文字列を語にし、無ければ語を聞く。
 読みは最後に置き換えた語のかなを既定値にして聞き、それより前に置き換えた
 語の読みは履歴で辿れる。ローマ字で打ってもよい。
-登録した後は覚えている候補を捨て、次の変換から登録した語が出る。"
+登録した後は覚えている候補を捨て、次の変換から登録した語が出る。
+登録は読みをその語に確定した 1 回分としてエンジンに学習させる。辞書に
+足すだけでは、外れた語の確定を学習した後に登録した語が 1 位に戻らない。"
   (interactive
    (let* ((surface (if (use-region-p)
                        (buffer-substring-no-properties (region-beginning)
@@ -58,6 +60,7 @@
            surface)))
   (let ((yomi (sekken-register-yomi yomi)))
     (sekken-server-register yomi surface)
+    (sekken-server-adapt (vector (list :kind "convert" :text yomi)) surface)
     (sekken-convert-forget-all)
     (message "sekken: %s /%s/ を登録しました" yomi surface)))
 

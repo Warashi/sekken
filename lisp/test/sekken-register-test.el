@@ -63,6 +63,16 @@
     (should (equal registered '("わらし" . "藁市")))
     (should-not sekken-convert--cache)))
 
+(ert-deftest sekken-register/登録した語を確定と同じく学習に送る ()
+  ;; 外れた語の確定を学習した後は、辞書に足しただけでは登録した語が
+  ;; 1 位に戻らない。登録を「読みをその語に確定した」1 回分として学習させる。
+  (let (adapted)
+    (cl-letf (((symbol-function 'sekken-server-register) #'ignore)
+              ((symbol-function 'sekken-server-adapt)
+               (lambda (pieces sentence) (setq adapted (cons pieces sentence)))))
+      (sekken-register "Warashi" "藁市"))
+    (should (equal adapted '([(:kind "convert" :text "わらし")] . "藁市")))))
+
 (ert-deftest sekken-register/regionがあればその文字列を語にする ()
   (with-temp-buffer
     (insert "藁市")
