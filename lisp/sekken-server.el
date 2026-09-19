@@ -57,7 +57,7 @@
 エンジンはモデルの読み込みを終えるまで変換に応答しない。"
   :type 'number)
 
-(defconst sekken-server-version "0.4.0"
+(defconst sekken-server-version "0.5.0"
   "この Lisp が想定するエンジンのバージョン。")
 
 (defconst sekken-server--max-crashes 3
