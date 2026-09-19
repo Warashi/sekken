@@ -131,14 +131,24 @@ END が BEG の削除は打ち始めにしない。打つコマンド以外が�
              (< beg sekken-word--origin))
     (sekken-word--forget-origin)))
 
-(defun sekken-word--literal-open-p (roman)
-  "ROMAN が `'' で開いた literal 区間の中で終わっているか。"
-  (and (plist-get (car (last (cdr (sekken-input-segment roman)))) :literal) t))
+(defun sekken-word--continues-p (roman char)
+  "ROMAN の後に打った空白などの CHAR が語を終えずに続くか。
+literal 区間の中の空白と、直前までと合わせて変換表のキーになる文字
+（`z' の後の空白は全角空白のキー）は語に含める。"
+  (let* ((segmented (sekken-input-segment roman))
+         (last (car (last (cdr segmented)))))
+    (cond
+     ((plist-get last :literal) t)
+     ((plist-get last :abbrev) nil)
+     (t (sekken-kana-completes-key-p
+         (if last (plist-get last :text) (car segmented))
+         char)))))
 
 (defun sekken-word-bounds ()
   "ポイント直前の入力中の語の (START . END)。無ければ nil。
-打ち始めより前には伸びない。空白は語を終えるが、literal 区間の中の空白は
-語に含める。日本語の文に英語を数語挟んでも文を 1 語のまま保つため。"
+打ち始めより前には伸びない。空白は語を終えるが、literal 区間の中の空白と
+変換表のキーを完成させる空白は語に含める（`sekken-word--continues-p'）。
+日本語の文に英語を数語挟んでも文を 1 語のまま保つため。"
   (when (and sekken-word--origin
              (< sekken-word--origin (point)))
     (let* ((end (point))
@@ -147,8 +157,9 @@ END が BEG の削除は打ち始めにしない。打つコマンド以外が�
       ;; 打ち始めから走査し、literal の外の空白の直後を語の始まりにする。
       (while (< index end)
         (unless (or (sekken-word--char-p (char-after index))
-                    (sekken-word--literal-open-p
-                     (buffer-substring-no-properties start index)))
+                    (sekken-word--continues-p
+                     (buffer-substring-no-properties start index)
+                     (char-after index)))
           (setq start (1+ index)))
         (setq index (1+ index)))
       (when (< start end)

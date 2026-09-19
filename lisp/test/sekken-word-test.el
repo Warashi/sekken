@@ -89,6 +89,23 @@
     (sekken-test-type "'don''t stop")
     (should (equal (sekken-word-bounds) (cons 1 (point-max))))))
 
+(ert-deftest sekken-word/変換表のキーを完成させる空白は語を切らない ()
+  ;; `z' の後の空白は全角空白のキーなので、和文の中に全角空白を打てる。
+  (with-temp-buffer
+    (sekken-test-type "Nekoz")
+    (sekken-test-type " ")
+    (should (equal (sekken-word-bounds) (cons 1 (point-max))))
+    (sekken-test-type "Ha")
+    (should (equal (sekken-word-bounds) (cons 1 (point-max))))
+    ;; 次の空白はキーにならないので語を終える。
+    (sekken-test-type " ")
+    (should (null (sekken-word-bounds))))
+  ;; abbrev の中の空白は語を終える。
+  (with-temp-buffer
+    (sekken-test-type "/z")
+    (sekken-test-type " ")
+    (should (null (sekken-word-bounds)))))
+
 (ert-deftest sekken-word/literal_を閉じた後の空白は語を切る ()
   (dolist (roman '("'git;" "'git'" "'git/" "/git"))
     (with-temp-buffer

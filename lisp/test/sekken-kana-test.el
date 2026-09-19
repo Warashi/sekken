@@ -26,6 +26,8 @@
   (should (sekken-kana-completes-key-p "z" ?/))
   (should-not (sekken-kana-completes-key-p "neko" ?/))
   (should-not (sekken-kana-completes-key-p "" ?/))
+  ;; 語を終える空白も、キーを完成させるなら取り込む。
+  (should (sekken-kana-completes-key-p "nekoz" ?\s))
   ;; 1 文字のキーは境界の文字を取り込まない。
   (should-not (sekken-kana-completes-key-p "neko" ?-)))
 

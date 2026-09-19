@@ -68,6 +68,7 @@ nekHa	ねっ▽は	kana:ねっ	convert:は
 Neko.	▽ねこ。	convert:ねこ。
 nekozh	ねこ←	kana:ねこ←
 Nekozl	▽ねこ→	convert:ねこ→
+nekoz Ha	ねこ　▽は	kana:ねこ　	convert:は
 
 # 閉じただけの末尾の区間は送らない
 Neko;	▽ねこ▽	convert:ねこ
