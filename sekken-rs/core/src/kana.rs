@@ -153,8 +153,6 @@ mod tests {
         assert_eq!(t.roman2kana("a"), "ア");
     }
 
-    /// エディタ側の変換と同じ結果になることを確かめる共通の fixture。
-    /// エディタが送るかなが変換結果を決めるので、Emacs 側のテストも同じ表を読む。
     #[test]
     fn 境界の文字がキーを完成させるかを引く() {
         let table = KanaTable::default_table();
@@ -166,6 +164,8 @@ mod tests {
         assert!(!table.completes_key("neko", '-'));
     }
 
+    /// エディタ側の変換と同じ結果になることを確かめる共通の fixture。
+    /// エディタが送るかなが変換結果を決めるので、Emacs 側のテストも同じ表を読む。
     #[test]
     fn 共通の_fixture_と一致する() {
         let t = KanaTable::default_table();
