@@ -86,28 +86,45 @@ impl Adapter {
     }
 }
 
-/// 学習する文が来るまでモデルの読み込みを待たない。読み込み中の終了で
-/// 保存を待たせないため。読み込みに失敗したら文は捨てる。
+/// モデルの読み込みを待たない。読み込みが終わるまでに来た文は溜めておき、
+/// 終わってから順に学習する。読み込み中に終了しても保存を待たせないため、
+/// 溜めたまま `Flush` が来れば学習も保存もせずに返す。読み込みに失敗したら
+/// 文は捨てる。
 fn work(ready: mpsc::Receiver<Ready>, rx: mpsc::Receiver<Job>, args: &AdaptArgs) {
     let mut model: Option<Ready> = None;
     let mut broken = false;
+    let mut pending: Vec<(String, String)> = Vec::new();
     let mut moved = false;
     for job in rx {
-        match job {
-            Job::Adapt { input, sentence } => {
-                if model.is_none() && !broken {
-                    match ready.recv() {
-                        Ok(r) => model = Some(r),
-                        Err(_) => broken = true,
-                    }
+        if model.is_none() && !broken {
+            match ready.try_recv() {
+                Ok(r) => model = Some(r),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    broken = true;
+                    pending.clear();
                 }
-                if let Some(model) = &model {
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if let Some(model) = &model {
+            for (input, sentence) in pending.drain(..) {
+                model
+                    .scorer
+                    .adapt(&input, &sentence, args.adapt_lr, Plastic::Head);
+                moved = true;
+            }
+        }
+        match job {
+            Job::Adapt { input, sentence } => match &model {
+                Some(model) => {
                     model
                         .scorer
                         .adapt(&input, &sentence, args.adapt_lr, Plastic::Head);
                     moved = true;
                 }
-            }
+                None if !broken => pending.push((input, sentence)),
+                None => {}
+            },
             Job::Flush(ack) => {
                 if let (true, Some(model), Some(path)) =
                     (moved, model.as_mut(), args.adapted_lm.as_deref())
@@ -255,6 +272,16 @@ mod tests {
         // 読み込みが終わらないまま終了する場合。`flush` は返らなければならない。
         let (_ready_tx, ready_rx) = mpsc::channel();
         adapter(ready_rx).flush();
+    }
+
+    #[test]
+    fn 読み込み中に文が来ても_flush_は読み込みを待たない() {
+        // 読み込みが終わらないまま文を送って終了する場合。以前は最初の文で
+        // 読み込みを待ち始め、その後ろに並んだ flush が返らなかった。
+        let (_ready_tx, ready_rx) = mpsc::channel();
+        let adapter = adapter(ready_rx);
+        adapter.adapt("ねこ".to_string(), "猫".to_string());
+        adapter.flush();
     }
 
     #[test]
