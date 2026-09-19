@@ -190,6 +190,19 @@
   (should (equal (sekken-input-pieces "'a;;b") [(:kind "literal" :text "a;b")]))
   (should (equal (sekken-input-pieces "/a//b") [(:kind "abbrev" :text "a/b")])))
 
+(ert-deftest sekken-input/変換表のキーは境界の文字より長く一致する ()
+  ;; `z/' は ・ のキーなので、`z' の後の `/' は abbrev の入口にならない。
+  (should (equal (sekken-input-pieces "nekoz/") [(:kind "kana" :text "ねこ・")]))
+  (should (equal (sekken-input-display "Nekoz/Ha") "▽ねこ・▽は"))
+  (should-not (sekken-input-has-boundary-p "nekoz/"))
+  ;; 2 文字目の `/' にはもう `z' が無いので境界。
+  (should (equal (sekken-input-display "z//") "・▽/"))
+  ;; 綴りのままの区間では表を引かない。
+  (should (equal (sekken-input-pieces "'z//;ha")
+                 [(:kind "literal" :text "z/") (:kind "convert" :text "は")]))
+  ;; 大文字はキーの一部にならない。
+  (should (equal (sekken-input-display "zH") "っ▽h")))
+
 (ert-deftest sekken-input/境界の直後のアポストロフィはその区間を_literal_にする ()
   (should (equal (sekken-input-pieces "O>'emacs")
                  [(:kind "convert" :text "お" :prefix t) (:kind "literal" :text "emacs")]))

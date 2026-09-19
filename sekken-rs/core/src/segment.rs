@@ -2,7 +2,11 @@
 //!
 //! 境界は大文字と `;` のほか、abbrev 区間を開く `/`、綴りをそのまま出す literal 区間を
 //! 開く `'`、接頭辞・接尾辞の印になる `>`。
+//! かなの区間では変換表のキーを境界の文字より長く一致させるので、直前までと合わせて
+//! 表のキーになる文字は境界にならない（`z/` は ・）。大文字は常に境界で、キーの一部にはならない。
 //! エディタ側（lisp/sekken-input.el）も同じ規則で分けるので、規則を変えるときは両方を直す。
+
+use crate::kana::KanaTable;
 
 /// 入力を境界で分割した結果。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,7 +49,7 @@ impl Segment {
 /// abbrev と literal の区間は次の `;` `/` `'` まで続き、中の大文字は境界にしない。
 /// 二重の `;` `/` `'` は、かなの区間でも綴りのままの区間でも、その文字 1 つの
 /// リテラルになる（`'don''t`）。
-pub fn segment(roman: &str) -> Segmented {
+pub fn segment(table: &KanaTable, roman: &str) -> Segmented {
     let mut head = String::new();
     let mut segments: Vec<Segment> = Vec::new();
     let mut chars = roman.chars().peekable();
@@ -54,6 +58,18 @@ pub fn segment(roman: &str) -> Segmented {
     // `/` か `'` で開いた、綴りのまま送る区間の中か。
     let mut in_spelled = false;
     while let Some(c) = chars.next() {
+        if !in_spelled && !c.is_ascii_uppercase() {
+            let text = segments.last().map_or(head.as_str(), |s| s.text.as_str());
+            if table.completes_key(text, c) {
+                if let Some(last) = segments.last_mut() {
+                    last.text.push(c);
+                } else {
+                    head.push(c);
+                }
+                fresh = false;
+                continue;
+            }
+        }
         if matches!(c, ';' | '/' | '\'') && chars.peek() == Some(&c) {
             chars.next();
             if let Some(last) = segments.last_mut() {
@@ -123,6 +139,10 @@ pub fn segment(roman: &str) -> Segmented {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn segment(roman: &str) -> Segmented {
+        super::segment(&KanaTable::default_table(), roman)
+    }
 
     fn seg(head: &str, segments: &[&str]) -> Segmented {
         Segmented {
@@ -292,6 +312,24 @@ mod tests {
                 ..Segment::default()
             }]
         );
+    }
+
+    #[test]
+    fn 変換表のキーは境界の文字より長く一致する() {
+        assert_eq!(segment("nekoz/"), seg("nekoz/", &[]));
+        assert_eq!(segment("Nekoz/Ha"), seg("", &["nekoz/", "ha"]));
+        // 2 文字目の `/` にはもう `z` が無いので境界。
+        assert_eq!(
+            segment("z//").segments,
+            [Segment {
+                abbrev: true,
+                ..Segment::default()
+            }]
+        );
+        // 綴りのままの区間では表を引かない。
+        assert_eq!(segment("'z//;ha").segments[0].text, "z/");
+        // 大文字はキーの一部にならない。
+        assert_eq!(segment("zH"), seg("z", &["h"]));
     }
 
     #[test]

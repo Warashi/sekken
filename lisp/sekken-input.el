@@ -29,6 +29,9 @@ HEAD は先頭の境界より前の文字列。SEGMENTS の各要素は plist �
 :prefix t、直前に `>' があれば :suffix t を持つ。
 大文字と単独のセミコロンが境界。二重の `;' `/' `'' は、かなの区間でも
 綴りのままの区間でも、その文字 1 つのリテラルになる（`'don''t'）。
+かなの区間では変換表のキーを境界の文字より長く一致させるので、直前まで
+と合わせて表のキーになる文字は境界にならない（`z/' は ・）。大文字は
+常に境界で、キーの一部にはならない。
 境界で開いた直後の大文字や `;' は新しい区間を作らず、その区間を続ける。
 開いた直後の `/' はその区間を abbrev に、`'' は literal にする。
 abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字は境界にしない。"
@@ -51,6 +54,13 @@ abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字
       (while (< index (length roman))
         (let ((char (aref roman index)))
           (cond
+           ((and (not in-spelled)
+                 (not (and (<= ?A char) (<= char ?Z)))
+                 (sekken-kana-completes-key-p
+                  (if current (plist-get current :text) head) char))
+            (append-text (char-to-string char))
+            (setq fresh nil
+                  index (1+ index)))
            ((and (memq char '(?\; ?/ ?'))
                  (< (1+ index) (length roman))
                  (eq (aref roman (1+ index)) char))

@@ -9,6 +9,8 @@ pub struct KanaTable {
     matcher: Option<DoubleArrayAhoCorasick<u32>>,
     outputs: Vec<String>,
     linear_entries: Vec<(String, String)>,
+    /// 2 文字以上のキー。境界の文字がキーを完成させるかを引く。
+    long_keys: Vec<String>,
 }
 
 /// 既定の変換表（`kana-table.tsv`）の本文。逆引き表を作る側もこれを読む。
@@ -31,12 +33,18 @@ impl KanaTable {
             }
         }
         let entries: Vec<_> = entries.into_iter().collect();
+        let long_keys = entries
+            .iter()
+            .filter(|(roman, _)| roman.chars().count() > 1)
+            .map(|(roman, _)| roman.clone())
+            .collect();
         // Double-array は固定長の状態ブロックを持つため、小さい独自表では線形表の方が軽い。
         if entries.len() < 32 {
             return KanaTable {
                 matcher: None,
                 outputs: Vec::new(),
                 linear_entries: entries,
+                long_keys,
             };
         }
         let matcher = Some(
@@ -51,7 +59,18 @@ impl KanaTable {
             matcher,
             outputs,
             linear_entries: Vec::new(),
+            long_keys,
         }
+    }
+
+    /// `roman` の末尾に `c` を足すと 2 文字以上のキーが完成するか。
+    /// 境界や語の終わりの文字を、直前までと合わせてキーとして読むかを決める
+    /// （`z` の後の `/` は境界でなく ・ のキー）。
+    pub fn completes_key(&self, roman: &str, c: char) -> bool {
+        self.long_keys.iter().any(|key| {
+            key.strip_suffix(c)
+                .is_some_and(|stem| roman.ends_with(stem))
+        })
     }
 
     /// ローマ字列をひらがなに変換する。表に無い部分はそのまま残す。
@@ -136,6 +155,17 @@ mod tests {
 
     /// エディタ側の変換と同じ結果になることを確かめる共通の fixture。
     /// エディタが送るかなが変換結果を決めるので、Emacs 側のテストも同じ表を読む。
+    #[test]
+    fn 境界の文字がキーを完成させるかを引く() {
+        let table = KanaTable::default_table();
+        assert!(table.completes_key("nekoz", '/'));
+        assert!(table.completes_key("z", '/'));
+        assert!(!table.completes_key("neko", '/'));
+        assert!(!table.completes_key("", '/'));
+        // 1 文字のキーは境界の文字を取り込まない。
+        assert!(!table.completes_key("neko", '-'));
+    }
+
     #[test]
     fn 共通の_fixture_と一致する() {
         let t = KanaTable::default_table();

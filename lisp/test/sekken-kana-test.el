@@ -27,6 +27,14 @@
   (should (equal (sekken-kana-display "neko") "ねこ"))
   (should (equal (sekken-kana-display "kougi") "こうぎ")))
 
+(ert-deftest sekken-kana/末尾に足す文字が_2_文字以上のキーを完成させるかを引く ()
+  (should (sekken-kana-completes-key-p "nekoz" ?/))
+  (should (sekken-kana-completes-key-p "z" ?/))
+  (should-not (sekken-kana-completes-key-p "neko" ?/))
+  (should-not (sekken-kana-completes-key-p "" ?/))
+  ;; 1 文字のキーは境界の文字を取り込まない。
+  (should-not (sekken-kana-completes-key-p "neko" ?-)))
+
 (ert-deftest sekken-kana/Rust_と共通の_fixture_と一致する ()
   "エディタが送るかなが変換結果を決めるので、Rust 側と同じ表で一致を確かめる。"
   (with-temp-buffer

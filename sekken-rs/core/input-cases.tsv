@@ -46,6 +46,13 @@ Neko//Ha	▽ねこ/▽は	convert:ねこ/	convert:は
 'a;;b	▽'a;b	literal:a;b
 Neko;;;Kai	▽ねこ;▽かい	convert:ねこ;	convert:かい
 
+# 変換表のキーが境界の文字で終わるなら、その文字は境界でなくキーの一部（`z/` → ・）
+nekoz/	ねこ・	kana:ねこ・
+Nekoz/Ha	▽ねこ・▽は	convert:ねこ・	convert:は
+Z/	▽・	convert:・
+z//	・▽/	kana:・
+'z//;ha	▽'z/▽は	literal:z/	convert:は
+
 # `>` の印
 O>Kai	▽お>▽かい	convert+prefix:お	convert+suffix:かい
 O>Kai>Sha	▽お>▽かい>▽しゃ	convert+prefix:お	convert+prefix+suffix:かい	convert+suffix:しゃ

@@ -91,7 +91,7 @@ impl Input {
     /// エディタの表示と同じく変換せずに残す（`n` は単独で「ん」になるので除く）。
     /// 閉じた区間はもう待たないので変換する。abbrev と literal の区間は綴りのまま送る。
     pub fn from_roman(table: &KanaTable, roman: &str) -> Input {
-        let seg = segment(roman);
+        let seg = segment(table, roman);
         let settled = match seg.segments.split_last() {
             Some((last, rest)) if last.text.is_empty() => rest,
             _ => seg.segments.as_slice(),
