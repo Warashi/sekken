@@ -54,7 +54,7 @@
 
 (ert-deftest sekken-live/打ち足した語の候補が届くまでは前の候補に末尾のかなを繋いで見せる ()
   (dolist (case '(("Nekoga" . "猫が")
-                  ("Nekog" . "猫g")
+                  ("Nekog" . "猫っ")
                   ("NekoGa" . "猫▽が")
                   ("Neko'Emacs" . "猫▽'Emacs")))
     (with-temp-buffer
@@ -222,7 +222,7 @@
 (ert-deftest sekken-live/語を伸ばす打鍵では確定しない ()
   (with-temp-buffer
     (sekken-test-type "Nek")
-    (sekken-live-test--with-cache '(("Nek" "ねk"))
+    (sekken-live-test--with-cache '(("Nek" "ねっ"))
       (sekken-live-test--command #'self-insert-command (insert "o")))
     (should (equal (buffer-string) "Neko"))))
 
@@ -375,8 +375,8 @@
   (pcase-dolist (`(,roman ,cache ,display ,result)
                  '(("Neko" nil "▽ねこ" "ねこ ")
                    ("NekoGa" (("Neko" "猫")) "猫▽が" "猫が ")
-                   ;; 母音を待つ子音も、見えているとおり綴りのまま入る。
-                   ("Nek" nil "▽ねk" "ねk ")))
+                   ;; 末尾の子音も、見えているとおり促音で入る。
+                   ("Nek" nil "▽ねっ" "ねっ ")))
     (with-temp-buffer
       (sekken-test-type roman)
       (sekken-live-test--with-cache cache

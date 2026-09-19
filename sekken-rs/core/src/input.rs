@@ -87,9 +87,8 @@ impl Input {
     /// エディタが自前の変換で作って送るものと同じ結果にする。
     /// 語の終わりの `;` `/` `'` `>` は前の区間を閉じる意図しか持たないので、読みの
     /// 無い末尾の区間は送らない。
-    /// まだ打っている途中の区間の末尾の子音 1 文字は次の母音を待っているので、
-    /// エディタの表示と同じく変換せずに残す（`n` は単独で「ん」になるので除く）。
-    /// 閉じた区間はもう待たないので変換する。abbrev と literal の区間は綴りのまま送る。
+    /// かなはどの区間も表の最長一致そのままで、末尾の子音も母音を待たずに変換する
+    /// （`nek` は「ねっ」、`neka` で「ねか」に変わる）。abbrev と literal の区間は綴りのまま送る。
     pub fn from_roman(table: &KanaTable, roman: &str) -> Input {
         let seg = segment(table, roman);
         let settled = match seg.segments.split_last() {
@@ -109,19 +108,6 @@ impl Input {
                 Piece::convert(table.roman2kana(&s.text)).with_marks(s.prefix, s.suffix)
             }
         }));
-        // 落とした区間を含む最後の区間を見るので、閉じた区間には母音待ちが残らない。
-        let source = seg
-            .segments
-            .last()
-            .map_or(seg.head.as_str(), |s| s.text.as_str());
-        if let Some(last) = pieces.last_mut()
-            && !matches!(last.kind, Kind::Abbrev | Kind::Literal)
-            && let Some(c) = source.chars().last()
-            && c.is_ascii_lowercase()
-            && !"aeioun".contains(c)
-        {
-            last.text = table.roman2kana(&source[..source.len() - 1]) + &c.to_string();
-        }
         Input { pieces }
     }
 
@@ -187,20 +173,21 @@ mod tests {
     }
 
     #[test]
-    fn 末尾の子音はエディタの表示と同じく変換せずに残す() {
+    fn 末尾の子音も母音を待たずに表のとおり変換する() {
+        // `k` は一旦 っ で、`ka` が来れば か に変わる。`z` + 子音のキーも同じ規則で通る。
         assert_eq!(
             from_roman("KaK"),
-            [Piece::convert("か"), Piece::convert("k")]
+            [Piece::convert("か"), Piece::convert("っ")]
         );
-        assert_eq!(from_roman("Kak"), [Piece::convert("かk")]);
-        assert_eq!(from_roman("nek"), [Piece::kana("ねk")]);
-        // n は単独で「ん」になり、母音や記号は待つものが無い。
+        assert_eq!(from_roman("Kak"), [Piece::convert("かっ")]);
+        assert_eq!(from_roman("nek"), [Piece::kana("ねっ")]);
+        assert_eq!(from_roman("neka"), [Piece::kana("ねか")]);
         assert_eq!(from_roman("Kan"), [Piece::convert("かん")]);
-        assert_eq!(from_roman("Neko."), [Piece::convert("ねこ。")]);
+        assert_eq!(from_roman("nekozh"), [Piece::kana("ねこ←")]);
     }
 
     #[test]
-    fn 閉じただけの末尾の区間は送らず閉じた区間の子音は変換する() {
+    fn 閉じただけの末尾の区間は送らない() {
         assert_eq!(from_roman("Neko;"), [Piece::convert("ねこ")]);
         assert_eq!(from_roman("Nek;"), [Piece::convert("ねっ")]);
         assert_eq!(from_roman("nek'"), [Piece::kana("ねっ")]);
@@ -248,7 +235,6 @@ mod tests {
     #[test]
     fn スラッシュで開いた区間は綴りのまま_abbrev_区間になる() {
         assert_eq!(from_roman("/emacs"), [Piece::abbrev("emacs")]);
-        // 末尾の子音を待つ扱いはしない。
         assert_eq!(
             from_roman("Kyou/GPL;ha"),
             [
@@ -262,7 +248,6 @@ mod tests {
 
     #[test]
     fn アポストロフィで開いた区間は綴りのまま_literal_区間になる() {
-        // 末尾の子音を待つ扱いはしない。
         assert_eq!(from_roman("'emacs"), [Piece::literal("emacs")]);
         assert_eq!(
             from_roman("Kyouha'Emacs;wo"),

@@ -51,16 +51,15 @@
                    ("/emacs" "▽/emacs" "emacs")
                    ("'Emacs" "▽'Emacs" "Emacs")
                    ("O>" "▽お>▽" "お")
-                   ;; 母音を待つ子音は、見えているとおり綴りのまま確定する。
-                   ("Nek" "▽ねk" "ねk")
-                   ;; 境界で閉じた区間は母音を待たないので、表示も確定も「ねっ」。
+                   ;; 末尾の子音も母音を待たずに変換する。
+                   ("Nek" "▽ねっ" "ねっ")
                    ("Nek;" "▽ねっ▽" "ねっ")))
     (let ((analysis (sekken-input-analyze roman)))
       (should (equal (plist-get analysis :display) display))
       (should (equal (plist-get analysis :commit) commit)))))
 
 (ert-deftest sekken-input/大文字境界を▽で示してかなにする ()
-  (should (equal (sekken-input-display "WagahaihaNek") "▽わがはいは▽ねk"))
+  (should (equal (sekken-input-display "WagahaihaNek") "▽わがはいは▽ねっ"))
   (should (equal (sekken-input-display "kyouHa") "きょう▽は"))
   (should (equal (sekken-input-display "neko") "ねこ"))
   (should (equal (sekken-input-display ";shokai;kougi") "▽しょかい▽こうぎ"))
@@ -78,12 +77,15 @@
   (should (equal (sekken-input-pieces "neko") [(:kind "kana" :text "ねこ")]))
   (should (equal (sekken-input-pieces "") [])))
 
-(ert-deftest sekken-input/最後の区間は末尾の子音を変換せずに送る ()
+(ert-deftest sekken-input/末尾の子音も母音を待たずに表のとおり変換して送る ()
+  ;; `k' は一旦 っ で、`ka' が来れば か に変わる。`z' + 子音のキーも同じ規則で通る。
   (should (equal (sekken-input-pieces "KaK")
-                 [(:kind "convert" :text "か") (:kind "convert" :text "k")]))
-  (should (equal (sekken-input-pieces "Kak") [(:kind "convert" :text "かk")]))
-  (should (equal (sekken-input-pieces "nek") [(:kind "kana" :text "ねk")]))
-  (should (equal (sekken-input-pieces "Kan") [(:kind "convert" :text "かん")])))
+                 [(:kind "convert" :text "か") (:kind "convert" :text "っ")]))
+  (should (equal (sekken-input-pieces "Kak") [(:kind "convert" :text "かっ")]))
+  (should (equal (sekken-input-pieces "nek") [(:kind "kana" :text "ねっ")]))
+  (should (equal (sekken-input-pieces "neka") [(:kind "kana" :text "ねか")]))
+  (should (equal (sekken-input-pieces "Kan") [(:kind "convert" :text "かん")]))
+  (should (equal (sekken-input-pieces "nekozh") [(:kind "kana" :text "ねこ←")])))
 
 (ert-deftest sekken-input/境界で終わる語は末尾の空の区間を落として送る ()
   ;; 末尾の `;' は前の語を閉じる意図しか持たないので、打たなかったものとして扱う。
@@ -94,7 +96,6 @@
   (should (equal (sekken-input-pieces "Neko/") [(:kind "convert" :text "ねこ")]))
   ;; 接頭辞の印は残し、`お>' の見出しで引けるようにする。
   (should (equal (sekken-input-pieces "O>") [(:kind "convert" :text "お" :prefix t)]))
-  ;; 閉じた区間の末尾の子音は、もう母音を待たないので変換する。
   (should (equal (sekken-input-pieces "Nek;") [(:kind "convert" :text "ねっ")]))
   (should (equal (sekken-input-pieces "nek'") [(:kind "kana" :text "ねっ")]))
   ;; 境界だけなら何も残らない。
@@ -145,7 +146,7 @@
 
 (ert-deftest sekken-input/スラッシュで開いた区間は綴りのまま_abbrev_で送る ()
   (should (equal (sekken-input-pieces "/emacs") [(:kind "abbrev" :text "emacs")]))
-  ;; 中の大文字は境界にせず、末尾の子音も待たない。
+  ;; 中の大文字は境界にしない。
   (should (equal (sekken-input-pieces "Kyou/GPL;ha")
                  [(:kind "convert" :text "きょう")
                   (:kind "abbrev" :text "GPL")
@@ -159,7 +160,7 @@
 
 (ert-deftest sekken-input/アポストロフィで開いた区間は綴りのまま_literal_で送る ()
   (should (equal (sekken-input-pieces "'emacs") [(:kind "literal" :text "emacs")]))
-  ;; 中の大文字は境界にせず、末尾の子音も待たない。
+  ;; 中の大文字は境界にしない。
   (should (equal (sekken-input-pieces "Kyouha'Emacs;wo")
                  [(:kind "convert" :text "きょうは")
                   (:kind "literal" :text "Emacs")
@@ -182,9 +183,9 @@
   (should (equal (sekken-input-display "'don''t") "▽'don't"))
   (should-not (sekken-input-has-boundary-p "ka''na"))
   ;; `/' は abbrev の入口なので、和文の中の `/' は `//' で打つ。
-  (should (equal (sekken-input-pieces "a//b") [(:kind "kana" :text "あ/b")]))
+  (should (equal (sekken-input-pieces "a//i") [(:kind "kana" :text "あ/い")]))
   (should (equal (sekken-input-commit "Neko//Ha") "ねこ/は"))
-  (should-not (sekken-input-has-boundary-p "a//b"))
+  (should-not (sekken-input-has-boundary-p "a//i"))
   ;; 綴りのままの区間の中でも閉じずにその文字になる。
   (should (equal (sekken-input-pieces "'a//b") [(:kind "literal" :text "a/b")]))
   (should (equal (sekken-input-pieces "'a;;b") [(:kind "literal" :text "a;b")]))
@@ -201,7 +202,7 @@
   (should (equal (sekken-input-pieces "'z//;ha")
                  [(:kind "literal" :text "z/") (:kind "convert" :text "は")]))
   ;; 大文字はキーの一部にならない。
-  (should (equal (sekken-input-display "zH") "っ▽h")))
+  (should (equal (sekken-input-display "zI") "っ▽い")))
 
 (ert-deftest sekken-input/境界の直後のアポストロフィはその区間を_literal_にする ()
   (should (equal (sekken-input-pieces "O>'emacs")

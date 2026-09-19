@@ -39,7 +39,7 @@ Kyou/GPL;ha	▽きょう▽/GPL▽は	convert:きょう	abbrev:GPL	convert:は
 O>/emacs	▽お>▽/emacs	convert+prefix:お	abbrev:emacs
 
 # 二重の `;` `/` `'` は、かなの区間でも綴りのままの区間でも、その文字 1 つになる
-a//b	あ/b	kana:あ/b
+a//i	あ/い	kana:あ/い
 Neko//Ha	▽ねこ/▽は	convert:ねこ/	convert:は
 'a//b	▽'a/b	literal:a/b
 /a//b	▽/a/b	abbrev:a/b
@@ -59,15 +59,17 @@ O>Kai>Sha	▽お>▽かい>▽しゃ	convert+prefix:お	convert+prefix+suffix:�
 o>kai	お▽かい	kana:お	convert+suffix:かい
 Toukyou>kaiha	▽とうきょう>▽かいは	convert+prefix:とうきょう	convert+suffix:かいは
 
-# 打っている途中の区間の末尾の子音は、次の母音を待つので変換しない
-KaK	▽か▽k	convert:か	convert:k
-Kak	▽かk	convert:かk
-nek	ねk	kana:ねk
+# 末尾の子音も表のとおり変換し、次の母音を待たない（`k` は一旦 っ、`ka` で か になる）
+KaK	▽か▽っ	convert:か	convert:っ
+Kak	▽かっ	convert:かっ
+nek	ねっ	kana:ねっ
 Kan	▽かん	convert:かん
 nekHa	ねっ▽は	kana:ねっ	convert:は
 Neko.	▽ねこ。	convert:ねこ。
+nekozh	ねこ←	kana:ねこ←
+Nekozl	▽ねこ→	convert:ねこ→
 
-# 閉じただけの末尾の区間は送らない。閉じた区間の末尾の子音はもう待たない
+# 閉じただけの末尾の区間は送らない
 Neko;	▽ねこ▽	convert:ねこ
 Nek;	▽ねっ▽	convert:ねっ
 Neko/	▽ねこ▽/	convert:ねこ

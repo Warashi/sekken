@@ -21,12 +21,6 @@
 (ert-deftest sekken-kana/表に無い文字はそのまま残す ()
   (should (equal (sekken-kana-roman-to-kana "q") "q")))
 
-(ert-deftest sekken-kana/表示用は末尾の子音を変換せずに残す ()
-  (should (equal (sekken-kana-display "nek") "ねk"))
-  (should (equal (sekken-kana-display "kan") "かん"))
-  (should (equal (sekken-kana-display "neko") "ねこ"))
-  (should (equal (sekken-kana-display "kougi") "こうぎ")))
-
 (ert-deftest sekken-kana/末尾に足す文字が_2_文字以上のキーを完成させるかを引く ()
   (should (sekken-kana-completes-key-p "nekoz" ?/))
   (should (sekken-kana-completes-key-p "z" ?/))

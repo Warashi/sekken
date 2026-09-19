@@ -78,17 +78,5 @@
         (push found parts)))
     (apply #'concat (nreverse parts))))
 
-(defun sekken-kana-display (roman)
-  "入力途中の ROMAN を表示用にかなにする。
-末尾の子音 1 文字は次の母音を待っている途中なので変換せず残す。
-`n' は単独で「ん」になるため例外とする。"
-  (let ((len (length roman)))
-    (if (and (> len 0)
-             (string-match-p "[bcdfghjklmpqrstvwxyz]"
-                             (substring roman (1- len))))
-        (concat (sekken-kana-roman-to-kana (substring roman 0 (1- len)))
-                (substring roman (1- len)))
-      (sekken-kana-roman-to-kana roman))))
-
 (provide 'sekken-kana)
 ;;; sekken-kana.el ends here

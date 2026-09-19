@@ -301,7 +301,7 @@ mod tests {
         };
         assert_eq!(segment("'don''t").segments, [literal("don't")]);
         assert_eq!(segment("ka''na"), seg("ka'na", &[]));
-        assert_eq!(segment("a//b"), seg("a/b", &[]));
+        assert_eq!(segment("a//i"), seg("a/i", &[]));
         assert_eq!(segment("'a//b").segments, [literal("a/b")]);
         assert_eq!(segment("'a;;b").segments, [literal("a;b")]);
         assert_eq!(
