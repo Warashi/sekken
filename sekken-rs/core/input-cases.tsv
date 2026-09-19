@@ -49,6 +49,7 @@ KaK	▽か▽k	convert:か	convert:k
 Kak	▽かk	convert:かk
 nek	ねk	kana:ねk
 Kan	▽かん	convert:かん
+nekHa	ねっ▽は	kana:ねっ	convert:は
 Neko.	▽ねこ。	convert:ねこ。
 
 # 閉じただけの末尾の区間は送らない。閉じた区間の末尾の子音はもう待たない

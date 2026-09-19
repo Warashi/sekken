@@ -217,6 +217,7 @@ mod tests {
     /// 2 列目の表示はエディタにしかないので読まない。
     #[test]
     fn 共通の_fixture_と一致する() {
+        let mut cases = 0;
         for line in include_str!("../input-cases.tsv").lines() {
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -226,7 +227,9 @@ mod tests {
             fields.next().expect("2 列目は表示");
             let expected: Vec<Piece> = fields.map(fixture_piece).collect();
             assert_eq!(from_roman(roman), expected, "{roman}");
+            cases += 1;
         }
+        assert!(cases > 30, "fixture を読めていない: {cases} 行");
     }
 
     /// fixture の `KIND:TEXT` を区間にする。`>` の印は KIND に付く。
