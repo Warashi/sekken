@@ -21,14 +21,13 @@
 (defvar sekken-kana--max-key 1
   "変換表のキーの最大長。最長一致の探索幅。")
 
-(defvar sekken-kana--keys-by-last nil
-  "末尾の文字から、その文字で終わる 2 文字以上のキーの並びへのハッシュ表。
-`sekken-kana-completes-key-p' が引く。")
+(defvar sekken-kana--long-keys nil
+  "2 文字以上のキーの並び。`sekken-kana-key-across-p' が引く。")
 
 (defun sekken-kana-load-table (&optional file)
   "FILE（既定は `sekken-kana--table-file'）から変換表を読み込む。"
   (let ((table (make-hash-table :test #'equal))
-        (keys-by-last (make-hash-table))
+        (long-keys nil)
         (max-key 1))
     (with-temp-buffer
       (insert-file-contents (or file sekken-kana--table-file))
@@ -38,9 +37,9 @@
           (setq max-key (max max-key (length roman)))
           (puthash roman (match-string 2) table)
           (when (> (length roman) 1)
-            (push roman (gethash (aref roman (1- (length roman))) keys-by-last))))))
+            (push roman long-keys)))))
     (setq sekken-kana--table table
-          sekken-kana--keys-by-last keys-by-last
+          sekken-kana--long-keys long-keys
           sekken-kana--max-key max-key)
     table))
 
@@ -48,14 +47,20 @@
   "変換表を返す。未読み込みなら読む。"
   (or sekken-kana--table (sekken-kana-load-table)))
 
-(defun sekken-kana-completes-key-p (roman char)
-  "ROMAN の末尾に CHAR を足すと、2 文字以上の変換表のキーが完成するか。
-境界や語の終わりの文字を、直前までと合わせて表のキーとして読むかを決める
-（`z' の後の `/' は境界でなく ・ のキー）。"
+(defun sekken-kana-key-across-p (before after)
+  "BEFORE の末尾と AFTER の先頭にまたがる変換表のキーがあるか。
+BEFORE と AFTER の境目が最長一致のキーの途中に当たるかを決める。境界や
+語の終わりの文字を直前までと合わせてキーとして読むか（`z' の後の `/' は
+境界でなく ・ のキー）、先頭部分の候補に残りのかなを繋いでよいかに使う。"
   (sekken-kana--table)
-  (cl-some (lambda (key)
-             (string-suffix-p (substring key 0 -1) roman))
-           (gethash char sekken-kana--keys-by-last)))
+  (and (not (string-empty-p before))
+       (not (string-empty-p after))
+       (cl-some (lambda (key)
+                  (cl-loop for split from 1 below (length key)
+                           thereis (and (string-suffix-p (substring key 0 split) before)
+                                        (string-prefix-p (substring key split) after))))
+                sekken-kana--long-keys)
+       t))
 
 (defun sekken-kana-roman-to-kana (roman)
   "ROMAN をかなにする。表に無い部分はそのまま残す。"

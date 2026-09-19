@@ -21,15 +21,19 @@
 (ert-deftest sekken-kana/表に無い文字はそのまま残す ()
   (should (equal (sekken-kana-roman-to-kana "q") "q")))
 
-(ert-deftest sekken-kana/末尾に足す文字が_2_文字以上のキーを完成させるかを引く ()
-  (should (sekken-kana-completes-key-p "nekoz" ?/))
-  (should (sekken-kana-completes-key-p "z" ?/))
-  (should-not (sekken-kana-completes-key-p "neko" ?/))
-  (should-not (sekken-kana-completes-key-p "" ?/))
+(ert-deftest sekken-kana/境目にまたがる_2_文字以上のキーがあるかを引く ()
+  (should (sekken-kana-key-across-p "nekoz" "/"))
+  (should (sekken-kana-key-across-p "z" "/"))
+  (should-not (sekken-kana-key-across-p "neko" "/"))
+  (should-not (sekken-kana-key-across-p "" "/"))
   ;; 語を終える空白も、キーを完成させるなら取り込む。
-  (should (sekken-kana-completes-key-p "nekoz" ?\s))
-  ;; 1 文字のキーは境界の文字を取り込まない。
-  (should-not (sekken-kana-completes-key-p "neko" ?-)))
+  (should (sekken-kana-key-across-p "nekoz" " "))
+  ;; 1 文字のキーは境目をまたがない。
+  (should-not (sekken-kana-key-across-p "neko" "-"))
+  ;; 3 文字のキーはどの位置で切れても当たる。
+  (should (sekken-kana-key-across-p "nekok" "ya"))
+  (should (sekken-kana-key-across-p "nekoky" "a"))
+  (should-not (sekken-kana-key-across-p "nekok" "ka")))
 
 (ert-deftest sekken-kana/Rust_と共通の_fixture_と一致する ()
   "エディタが送るかなが変換結果を決めるので、Rust 側と同じ表で一致を確かめる。"

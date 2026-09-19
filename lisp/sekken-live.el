@@ -32,18 +32,19 @@
 
 (defun sekken-live--base (roman)
   "ROMAN の候補が届くまで代わりに見せる (先頭部分 . 1 位候補)。無ければ nil。
-候補を覚えている最も長い先頭部分を選ぶ。母音を待つ子音で終わる先頭部分と、
-綴りのままの区間の途中で終わる先頭部分は、残りを独立に解析すると綴りが
-かなに化けるので選ばない。"
+候補を覚えている最も長い先頭部分を選ぶ。変換表のキーの途中で切れる先頭部分
+（`Nekog' + `a' の `ga'）と、綴りのままの区間の途中で終わる先頭部分は、残りを
+独立に解析すると綴りがかなに化けるので選ばない。"
   (let ((length (1- (length roman)))
         base)
     (while (and (> length 0) (not base))
-      (let ((prefix (substring roman 0 length)))
-        (unless (or (string-match-p "[bcdfghjklmnpqrstvwxyz]\\'" (downcase prefix))
-                    (sekken-live--spelled-open-p prefix))
-          (let ((candidate (car (sekken-convert-cached prefix))))
-            (when candidate
-              (setq base (cons prefix candidate))))))
+      (let* ((prefix (substring roman 0 length))
+             (candidate (car (sekken-convert-cached prefix))))
+        (when (and candidate
+                   (not (sekken-kana-key-across-p (downcase prefix)
+                                                  (substring roman length)))
+                   (not (sekken-live--spelled-open-p prefix)))
+          (setq base (cons prefix candidate))))
       (setq length (1- length)))
     base))
 

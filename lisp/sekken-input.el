@@ -56,8 +56,8 @@ abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字
           (cond
            ((and (not in-spelled)
                  (not (and (<= ?A char) (<= char ?Z)))
-                 (sekken-kana-completes-key-p
-                  (if current (plist-get current :text) head) char))
+                 (sekken-kana-key-across-p
+                  (if current (plist-get current :text) head) (string char)))
             (append-text (char-to-string char))
             (setq fresh nil
                   index (1+ index)))

@@ -140,9 +140,9 @@ literal 区間の中の空白と、直前までと合わせて変換表のキー
     (cond
      ((plist-get last :literal) t)
      ((plist-get last :abbrev) nil)
-     (t (sekken-kana-completes-key-p
+     (t (sekken-kana-key-across-p
          (if last (plist-get last :text) (car segmented))
-         char)))))
+         (string char))))))
 
 (defun sekken-word-bounds ()
   "ポイント直前の入力中の語の (START . END)。無ければ nil。

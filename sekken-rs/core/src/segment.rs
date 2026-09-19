@@ -60,7 +60,7 @@ pub fn segment(table: &KanaTable, roman: &str) -> Segmented {
     while let Some(c) = chars.next() {
         if !in_spelled && !c.is_ascii_uppercase() {
             let text = segments.last().map_or(head.as_str(), |s| s.text.as_str());
-            if table.completes_key(text, c) {
+            if table.key_across(text, c.encode_utf8(&mut [0; 4])) {
                 if let Some(last) = segments.last_mut() {
                     last.text.push(c);
                 } else {

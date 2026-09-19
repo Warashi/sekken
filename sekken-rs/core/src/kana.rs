@@ -63,14 +63,18 @@ impl KanaTable {
         }
     }
 
-    /// `roman` の末尾に `c` を足すと 2 文字以上のキーが完成するか。
-    /// 境界や語の終わりの文字を、直前までと合わせてキーとして読むかを決める
-    /// （`z` の後の `/` は境界でなく ・ のキー）。
-    pub fn completes_key(&self, roman: &str, c: char) -> bool {
-        self.long_keys.iter().any(|key| {
-            key.strip_suffix(c)
-                .is_some_and(|stem| roman.ends_with(stem))
-        })
+    /// `before` の末尾と `after` の先頭にまたがる 2 文字以上のキーがあるか。
+    /// 境目が最長一致のキーの途中に当たるかを決める。境界の文字を直前までと
+    /// 合わせてキーとして読むか（`z` の後の `/` は境界でなく ・ のキー）に使う。
+    /// エディタ側（lisp/sekken-kana.el）も同じ述語を持つ。
+    pub fn key_across(&self, before: &str, after: &str) -> bool {
+        !before.is_empty()
+            && !after.is_empty()
+            && self.long_keys.iter().any(|key| {
+                key.char_indices().skip(1).any(|(split, _)| {
+                    before.ends_with(&key[..split]) && after.starts_with(&key[split..])
+                })
+            })
     }
 
     /// ローマ字列をひらがなに変換する。表に無い部分はそのまま残す。
@@ -154,14 +158,18 @@ mod tests {
     }
 
     #[test]
-    fn 境界の文字がキーを完成させるかを引く() {
+    fn 境目にまたがるキーがあるかを引く() {
         let table = KanaTable::default_table();
-        assert!(table.completes_key("nekoz", '/'));
-        assert!(table.completes_key("z", '/'));
-        assert!(!table.completes_key("neko", '/'));
-        assert!(!table.completes_key("", '/'));
-        // 1 文字のキーは境界の文字を取り込まない。
-        assert!(!table.completes_key("neko", '-'));
+        assert!(table.key_across("nekoz", "/"));
+        assert!(table.key_across("z", "/"));
+        assert!(!table.key_across("neko", "/"));
+        assert!(!table.key_across("", "/"));
+        // 1 文字のキーは境目をまたがない。
+        assert!(!table.key_across("neko", "-"));
+        // 3 文字のキーはどの位置で切れても当たる。
+        assert!(table.key_across("nekok", "ya"));
+        assert!(table.key_across("nekoky", "a"));
+        assert!(!table.key_across("nekok", "ka"));
     }
 
     /// エディタ側の変換と同じ結果になることを確かめる共通の fixture。

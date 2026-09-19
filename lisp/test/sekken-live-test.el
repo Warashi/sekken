@@ -75,12 +75,16 @@
         (sekken-live-update)
         (should (equal (sekken-live-test--display) "猫がすき"))))))
 
-(ert-deftest sekken-live/母音を待つ子音で終わる語と候補の無い語には繋がない ()
+(ert-deftest sekken-live/変換表のキーの途中で切れる語と候補の無い語には繋がない ()
+  ;; `Nekog' + `a' は `ga' の途中なので、`Nekog' の候補に「あ」を繋がない。
   (pcase-dolist (`(,cache ,roman ,display)
-                 '(((("Nekog" "猫g") ("Neko" "猫")) "Nekoga" "猫が")
+                 '(((("Nekog" "猫っ") ("Neko" "猫")) "Nekoga" "猫が")
                    ((("Nekon" "猫ん") ("Neko" "猫")) "Nekona" "猫な")
+                   ((("Nekoky" "猫っっ") ("Neko" "猫")) "Nekokya" "猫きゃ")
                    ((("Nekog") ("Neko" "猫")) "Nekoga" "猫が")
-                   ((("Nekog" "猫g")) "Nekoga" "▽ねこが")))
+                   ((("Nekog" "猫っ")) "Nekoga" "▽ねこが")
+                   ;; 促音の後の子音はキーの途中でないので繋ぐ。
+                   ((("Nekok" "猫っ")) "Nekokka" "猫っか")))
     (with-temp-buffer
       (sekken-test-type roman)
       (let (requests)
