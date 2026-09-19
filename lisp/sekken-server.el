@@ -68,6 +68,11 @@
 エンジンはこの応答を書いた直後に終了するが、Emacs 側が応答を処理する
 時点ではまだプロセスが生きて見えることがあるので、コードで判定する。")
 
+(defconst sekken-server--events-buffer-config '(:size 2000000 :format short)
+  "\"*sekken events*\" の記録の仕方。
+jsonrpc.el の既定は上限なしで JSON 全文を残すが、先読みの henkan が打鍵ごとに
+届くので、いつどのメソッドが行き来したかだけを残す。")
+
 (defvar sekken-server--connection nil
   "エンジンとの `jsonrpc-process-connection'。")
 
@@ -120,7 +125,9 @@ nil の間はモデルの読み込み中とみなし、`sekken-server-startup-ti
   (let ((conn (make-instance 'jsonrpc-process-connection
                              :name "sekken"
                              :process #'sekken-server--make-process
-                             :on-shutdown #'sekken-server--on-shutdown))
+                             :on-shutdown #'sekken-server--on-shutdown
+                             :events-buffer-config
+                             sekken-server--events-buffer-config))
         connected)
     (setq sekken-server--connection conn
           sekken-server--warmed nil)
