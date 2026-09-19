@@ -136,12 +136,15 @@
           (error "e2e: 読みの既定値が %S" yomi-default)))
       (unless (file-exists-p sekken-server-user-jisyo)
         (error "e2e: ユーザー辞書が書かれていない"))
-      ;; 「童」で自動確定した文を学習しているので、登録しただけでは 1 位に
-      ;; 戻らないことがある。登録した語を選んで確定すればそれを学習し、
-      ;; 次の変換から 1 位になる。
-      (unless (member "藁市" (sekken-server-henkan (sekken-input-pieces "Warashi") 3))
-        (error "e2e: 登録した語が候補に無い: %S"
-               (sekken-server-henkan (sekken-input-pieces "Warashi") 3)))
+      ;; 「童」で自動確定した文を学習しているので、辞書に足しただけでは
+      ;; 1 位に戻らない。登録は確定 1 回分として学習させるので、学習が
+      ;; 終われば次の変換から 1 位になる。
+      (with-timeout (10 (error "e2e: 登録しても登録した語が 1 位にならない: %S"
+                               (sekken-server-henkan (sekken-input-pieces "Warashi") 3)))
+        (while (not (equal (car (sekken-server-henkan (sekken-input-pieces "Warashi") 1))
+                           "藁市"))
+          (accept-process-output nil 0.1)))
+      ;; 登録した語は C-j の候補にも出て、選べば確定と同じく学習に回る。
       (erase-buffer)
       (e2e-type "Warashi")
       (let ((completion-in-region-function
@@ -155,11 +158,6 @@
         (sekken-convert))
       (unless (equal (buffer-string) "藁市")
         (error "e2e: 登録した語を選んだ結果が %S" (buffer-string)))
-      (with-timeout (10 (error "e2e: 学習しても登録した語が 1 位にならない: %S"
-                               (sekken-server-henkan (sekken-input-pieces "Warashi") 3)))
-        (while (not (equal (car (sekken-server-henkan (sekken-input-pieces "Warashi") 1))
-                           "藁市"))
-          (accept-process-output nil 0.1)))
       (deactivate-input-method))
     (delete-file sekken-server-user-jisyo)
     ;; 確定した文を学習させると、動いた出力層が shutdown で保存先に書かれる。
