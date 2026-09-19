@@ -124,10 +124,6 @@ abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字
 もう待たない（`Nek;' は「ねっ」）。"
   (car (last (cdr segmented))))
 
-(defun sekken-input-has-boundary-p (roman)
-  "ROMAN が変換境界（大文字・単独のセミコロン・`/'・`''・`>'）を含むか。"
-  (and (cdr (sekken-input-segment roman)) t))
-
 (defun sekken-input--segment-kana (segment typingp)
   "SEGMENT の :text をかなにする。
 TYPINGP なら末尾の子音を変換せずに残す（`sekken-kana-display'）。
@@ -222,28 +218,10 @@ jsonrpc.el が JSON の配列にするようベクタで返す。"
           :pieces (sekken-input--pieces settled typing)
           :commit (sekken-input--commit settled typing))))
 
-;; 以下は解析結果を 1 つしか使わない呼び出し元のための入口。
-;; 同じ ROMAN から 2 つ以上を使うなら `sekken-input-analyze' を 1 度呼ぶ。
-
-(defun sekken-input-display (roman)
-  "入力中の ROMAN をかなにし、変換境界を ▽ で示した文字列。"
-  (plist-get (sekken-input-analyze roman) :display))
-
-(defun sekken-input-ready-p (roman)
-  "ROMAN を先読みしてよければ non-nil を返す。"
-  (plist-get (sekken-input-analyze roman) :ready))
-
-(defun sekken-input-converts-p (roman)
-  "ROMAN に辞書を引く区間（convert か abbrev）があるか。"
-  (plist-get (sekken-input-analyze roman) :converts))
-
 (defun sekken-input-pieces (roman)
-  "入力中の ROMAN をエンジンに送る区間のベクタにする。"
+  "入力中の ROMAN をエンジンに送る区間のベクタにする。
+表示や確定も要る呼び出し元は `sekken-input-analyze' を 1 度呼ぶ。"
   (plist-get (sekken-input-analyze roman) :pieces))
-
-(defun sekken-input-commit (roman)
-  "ROMAN を、候補を使わずにバッファへ入れる文字列にする。"
-  (plist-get (sekken-input-analyze roman) :commit))
 
 (provide 'sekken-input)
 ;;; sekken-input.el ends here

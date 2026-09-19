@@ -7,6 +7,29 @@
 (require 'sekken-input)
 (require 'sekken-test)
 
+;; 解析結果の 1 つだけを見る入口。本体は `sekken-input-analyze' を使うので、
+;; テストの期待値を短く書くためにここで定義する。
+
+(defun sekken-input-display (roman)
+  "ROMAN の表示文字列。"
+  (plist-get (sekken-input-analyze roman) :display))
+
+(defun sekken-input-ready-p (roman)
+  "ROMAN を先読みしてよいか。"
+  (plist-get (sekken-input-analyze roman) :ready))
+
+(defun sekken-input-converts-p (roman)
+  "ROMAN に辞書を引く区間があるか。"
+  (plist-get (sekken-input-analyze roman) :converts))
+
+(defun sekken-input-commit (roman)
+  "ROMAN を候補を使わずに置き換える文字列。"
+  (plist-get (sekken-input-analyze roman) :commit))
+
+(defun sekken-input-has-boundary-p (roman)
+  "ROMAN が変換境界を含むか。"
+  (and (cdr (sekken-input-segment roman)) t))
+
 (ert-deftest sekken-input/1_度の解析から表示と先読みと送信を導く ()
   ;; 境界で終わる語は、表示に ▽ を残したまま、閉じた区間だけを送る。
   (let ((analysis (sekken-input-analyze "Neko;")))
