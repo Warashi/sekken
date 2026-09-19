@@ -226,18 +226,21 @@ ON-FAILURE があれば引数なしで呼ぶ。接続の起動に失敗すれば
   "PIECES を変換して確定した文 SENTENCE をエンジンに学習させる。
 非同期に送り、応答は待たない。学習のためだけにエンジンを起動はしないので、
 動いている接続が無ければ何もしない。失敗は `sekken-server--adapt-error' に
-残して知らせ、変換と同じく異常終了として数える。"
+残して知らせ、変換と同じく異常終了として数える。送ること自体の失敗も同じで、
+確定の hook から呼ばれるので、エラーを投げて hook を外させない。"
   (when (and sekken-server--connection
              (jsonrpc-running-p sekken-server--connection))
-    (jsonrpc-async-request
-     sekken-server--connection :adapt
-     (list :pieces pieces :sentence sentence)
-     :timeout (sekken-server--henkan-timeout)
-     :success-fn (lambda (_result) (setq sekken-server--adapt-error nil))
-     :error-fn (lambda (err)
-                 (sekken-server--adapt-failed (plist-get err :code)
-                                              (plist-get err :message)))
-     :timeout-fn (lambda () (sekken-server--adapt-failed nil nil)))))
+    (condition-case err
+        (jsonrpc-async-request
+         sekken-server--connection :adapt
+         (list :pieces pieces :sentence sentence)
+         :timeout (sekken-server--henkan-timeout)
+         :success-fn (lambda (_result) (setq sekken-server--adapt-error nil))
+         :error-fn (lambda (err)
+                     (sekken-server--adapt-failed (plist-get err :code)
+                                                  (plist-get err :message)))
+         :timeout-fn (lambda () (sekken-server--adapt-failed nil nil)))
+      (error (sekken-server--adapt-failed nil (error-message-string err))))))
 
 (defun sekken-server-register (yomi surface)
   "送りなしの読み YOMI の語 SURFACE をユーザー辞書に登録する。

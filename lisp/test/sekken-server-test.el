@@ -93,6 +93,18 @@
     (should (equal sekken-server--adapt-error "failed to load engine"))
     (should (= sekken-server--crashes 1))))
 
+(ert-deftest sekken-server/学習の送信に失敗してもエラーを投げず理由を残す ()
+  ;; 確定の hook から呼ばれるので、投げると hook ごと外されて自動確定が止まる。
+  (let ((sekken-server--connection 'connection)
+        (sekken-server--adapt-error nil)
+        (sekken-server--crashes 0))
+    (cl-letf (((symbol-function 'jsonrpc-running-p) (lambda (_) t))
+              ((symbol-function 'jsonrpc-async-request)
+               (lambda (&rest _) (error "Process sekken not running"))))
+      (sekken-server-adapt [(:kind "convert" :text "ねこ")] "猫"))
+    (should (equal sekken-server--adapt-error "Process sekken not running"))
+    (should (= sekken-server--crashes 0))))
+
 (ert-deftest sekken-server/学習のタイムアウトはプロセスが生きていれば異常終了として数えない ()
   (let ((sekken-server--connection 'connection)
         (sekken-server--adapt-error nil)
