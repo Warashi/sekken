@@ -199,7 +199,8 @@ jsonrpc.el が JSON の配列にするようベクタで返す。"
 (defun sekken-input-analyze (roman)
   "入力中の ROMAN を 1 度だけ解析し、表示と確定の両方に使う plist を返す。
 :display  overlay に見せる文字列。
-:ready    最後の変換境界より後に入力があるか。先読みしてよいかの判断。
+:ready    先読みしてよいか。最後の変換境界より後に入力があるか、`>' の印で
+          送る区間が手前の語のそれと変わったとき。
 :converts 辞書を引く区間（convert か abbrev）があるか。無ければエンジンに
           送っても文字列をつなぐだけなので、エディタで置き換えられる。
 :pieces   エンジンに送る区間のベクタ。
@@ -211,7 +212,9 @@ jsonrpc.el が JSON の配列にするようベクタで返す。"
          (typing (sekken-input--typing segmented))
          (settled (sekken-input--settle segmented)))
     (list :display (sekken-input--display segmented typing)
-          :ready (and typing (not (string-empty-p (plist-get typing :text))) t)
+          :ready (and (or (and typing (not (string-empty-p (plist-get typing :text))))
+                          (plist-get (car (last (cdr settled))) :prefix))
+                      t)
           :converts (and (cl-some (lambda (segment)
                                     (not (plist-get segment :literal)))
                                   (cdr settled))
@@ -227,7 +230,7 @@ jsonrpc.el が JSON の配列にするようベクタで返す。"
   (plist-get (sekken-input-analyze roman) :display))
 
 (defun sekken-input-ready-p (roman)
-  "ROMAN の最後の変換境界より後に入力があれば non-nil を返す。"
+  "ROMAN を先読みしてよければ non-nil を返す。"
   (plist-get (sekken-input-analyze roman) :ready))
 
 (defun sekken-input-converts-p (roman)

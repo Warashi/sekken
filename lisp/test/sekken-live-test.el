@@ -106,6 +106,17 @@
           (should (equal (sekken-live-test--display) display))
           (should (equal (sekken-live--result roman) commit)))))))
 
+(ert-deftest sekken-live/山括弧で終わる語は手前の語と別に先読みする ()
+  ;; `O>' の送る区間は接頭辞の印が付くので、`O' の候補では代わりにならない。
+  (with-temp-buffer
+    (sekken-test-type "O>")
+    (let (requests)
+      (sekken-live-test--with-prefetch requests
+        (setq sekken-convert--cache '(("O" "御")))
+        (sekken-live-update)
+        (should (equal (sekken-live-test--display) "御▽"))
+        (should (equal (car (car requests)) "O>"))))))
+
 (ert-deftest sekken-live/縮めた語を覚えていればその候補を見せる ()
   (with-temp-buffer
     (sekken-test-type "Neko")
@@ -404,9 +415,11 @@
 
 (ert-deftest sekken-live/境界で終わる語は手前までを確定する ()
   ;; 末尾の `;' `'' `>' は前の区間を閉じただけなので、その手前の語として引く。
-  ;; 境界で終わる語は先読みしないので、候補は境界の手前の語のものになる。
+  ;; `;' や `'' で終わる語は先読みしないので、候補は境界の手前の語のものになる。
   (dolist (case '(("Neko;" (("Neko" "猫")) "猫 ")
                   ("O>" (("O" "御")) "御 ")
+                  ;; `>' で終わる語は先読みするので、届いていればその候補になる。
+                  ("O>" (("O>" "お") ("O" "御")) "お ")
                   ;; 候補が届いていなければ、末尾の境界を落としたかなで確定する。
                   ("Neko;" nil "ねこ ")))
     (with-temp-buffer

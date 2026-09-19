@@ -193,7 +193,8 @@
                  [(:kind "kana" :text "お") (:kind "convert" :text "かい" :suffix t)]))
   (should (equal (sekken-input-display "O>Kai") "▽お>▽かい"))
   (should (sekken-input-has-boundary-p "o>kai"))
-  (should-not (sekken-input-ready-p "O>")))
+  ;; `>' で終わる語は送る区間が手前の語と違うので先読みする。
+  (should (sekken-input-ready-p "O>")))
 
 (defun sekken-input-test--piece (field)
   "共有 fixture の `KIND:TEXT' 形の FIELD を、期待する区間の plist にする。
