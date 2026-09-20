@@ -51,5 +51,27 @@
                        (cons (match-string 1) (match-string 2)))))
       (should (> count 20)))))
 
+(ert-deftest sekken-kana/表の全キーがどの位置で分かれても境目を検出する ()
+  (maphash
+   (lambda (key _kana)
+     (cl-loop for split from 1 below (length key)
+              do (should (sekken-kana-key-across-p
+                          (concat "neko" (substring key 0 split))
+                          (concat (substring key split) "neko")))))
+   (sekken-kana--table))
+  (should-not (sekken-kana-key-across-p "neko" ""))
+  (should-not (sekken-kana-key-across-p "neko" "XYZ")))
+
+(ert-deftest sekken-kana/境目の探索では最大キー長に応じた数の文字列だけを切り出す ()
+  (sekken-kana--table)
+  (let ((substring-function (symbol-function 'substring))
+        (count 0))
+    (cl-letf (((symbol-function 'substring)
+               (lambda (&rest args)
+                 (cl-incf count)
+                 (apply substring-function args))))
+      (should-not (sekken-kana-key-across-p "neko" "XYZ")))
+    (should (<= count (* 2 sekken-kana--max-key sekken-kana--max-key)))))
+
 (provide 'sekken-kana-test)
 ;;; sekken-kana-test.el ends here

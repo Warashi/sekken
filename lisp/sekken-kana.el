@@ -21,13 +21,9 @@
 (defvar sekken-kana--max-key 1
   "変換表のキーの最大長。最長一致の探索幅。")
 
-(defvar sekken-kana--long-keys nil
-  "2 文字以上のキーの並び。`sekken-kana-key-across-p' が引く。")
-
 (defun sekken-kana-load-table (&optional file)
   "FILE（既定は `sekken-kana--table-file'）から変換表を読み込む。"
   (let ((table (make-hash-table :test #'equal))
-        (long-keys nil)
         (max-key 1))
     (with-temp-buffer
       (insert-file-contents (or file sekken-kana--table-file))
@@ -35,11 +31,8 @@
       (while (re-search-forward "^\\([^\t\n]+\\)\t\\([^\t\n]+\\)$" nil t)
         (let ((roman (match-string 1)))
           (setq max-key (max max-key (length roman)))
-          (puthash roman (match-string 2) table)
-          (when (> (length roman) 1)
-            (push roman long-keys)))))
+          (puthash roman (match-string 2) table))))
     (setq sekken-kana--table table
-          sekken-kana--long-keys long-keys
           sekken-kana--max-key max-key)
     table))
 
@@ -52,15 +45,16 @@
 BEFORE と AFTER の境目が最長一致のキーの途中に当たるかを決める。境界や
 語の終わりの文字を直前までと合わせてキーとして読むか（`z' の後の `/' は
 境界でなく ・ のキー）、先頭部分の候補に残りのかなを繋いでよいかに使う。"
-  (sekken-kana--table)
-  (and (not (string-empty-p before))
-       (not (string-empty-p after))
-       (cl-some (lambda (key)
-                  (cl-loop for split from 1 below (length key)
-                           thereis (and (string-suffix-p (substring key 0 split) before)
-                                        (string-prefix-p (substring key split) after))))
-                sekken-kana--long-keys)
-       t))
+  (let ((table (sekken-kana--table)))
+    (and
+     (cl-loop for left from 1 to (min (length before) (1- sekken-kana--max-key))
+              thereis
+              (let ((prefix (substring before (- (length before) left))))
+                (cl-loop for right from 1 to (min (length after)
+                                                  (- sekken-kana--max-key left))
+                         thereis (gethash (concat prefix (substring after 0 right))
+                                          table))))
+     t)))
 
 (defun sekken-kana-roman-to-kana (roman)
   "ROMAN をかなにする。表に無い部分はそのまま残す。"
