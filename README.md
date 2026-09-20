@@ -223,6 +223,21 @@ cd lisp && ./test/run.sh
 nix flake check
 ```
 
+Emacs 側の入力性能は、長さと literal 内の空白の有無を変えて計測できる。
+長い入力の末尾で 1 文字の挿入・後退削除・カーソル移動を行い、コマンド前後の
+hook を含む同期処理の平均・最大時間と GC の回数・時間を出す。
+各条件を同じ入力から 5 回ずつ測り、入力と候補キャッシュの準備は時間に含めない。
+候補はダミーで、エンジンの応答待ちを再現するため、モデルは不要。
+実際の描画やエンジンの応答時間は測らない。
+
+```sh
+emacs -Q --batch -L lisp -l lisp/test/sekken-benchmark.el -f sekken-benchmark-run
+```
+
+`.elc` の有無と GC 設定で値が変わるので、比較時は同じ条件に揃える。
+回数や長さを変えるときは、`-f sekken-benchmark-run` の代わりに
+`--eval '(sekken-benchmark-run 20 (quote (100 400 1000)))'` を渡す。
+
 実際のエンジンを起動して Emacs から通しで確かめるには、5 つのパスを環境変数で渡す。
 
 ```sh
