@@ -116,6 +116,33 @@
       (should (equal (sekken-word-bounds)
                      (cons (+ (length roman) 2) (point-max)))))))
 
+(ert-deftest sekken-word/複数の_literal_と変換表の空白を含む語の範囲を保つ ()
+  (with-temp-buffer
+    (sekken-test-type "neko ")
+    (let ((start (point)))
+      (dolist (part '("Kyouha'git branch" ";wo'check out" ";Shiz " "Ka"
+                     "'don''t stop" ";z " "/z"))
+        (sekken-test-type part)
+        (should (equal (sekken-word-bounds) (cons start (point)))))
+      (sekken-test-type " ")
+      (should-not (sekken-word-bounds))
+      (let ((next (point)))
+        (sekken-test-type "'one two;;three//four''five six")
+        (should (equal (sekken-word-bounds) (cons next (point))))))))
+
+(ert-deftest sekken-word/literal_内の空白が増えても境界判定の回数は文字数に比例する ()
+  (with-temp-buffer
+    (sekken-test-type
+     (apply #'concat (make-list 40 "Neko'git branch;Ha")))
+    (let ((across-function (symbol-function 'sekken-kana-key-across-p))
+          (count 0))
+      (cl-letf (((symbol-function 'sekken-kana-key-across-p)
+                 (lambda (before after)
+                   (cl-incf count)
+                   (funcall across-function before after))))
+        (should (equal (sekken-word-bounds) (cons 1 (point-max)))))
+      (should (<= count (* 2 (buffer-size)))))))
+
 (ert-deftest sekken-word/セミコロンを入力中の語に含める ()
   (with-temp-buffer
     (sekken-test-type ";shokai;kougi")

@@ -131,17 +131,16 @@ END が BEG の削除は打ち始めにしない。打つコマンド以外が�
              (< beg sekken-word--origin))
     (sekken-word--forget-origin)))
 
-(defun sekken-word--continues-p (roman char)
-  "ROMAN の後に打った空白などの CHAR が語を終えずに続くか。
+(defun sekken-word--continues-p (reader char)
+  "READER が読み終えた位置の空白などの CHAR が語を終えずに続くか。
 literal 区間の中の空白と、直前までと合わせて変換表のキーになる文字
 （`z' の後の空白は全角空白のキー）は語に含める。"
-  (let* ((segmented (sekken-input-segment roman))
-         (last (car (last (cdr segmented)))))
+  (let ((last (sekken-input-reader-current reader)))
     (cond
      ((plist-get last :literal) t)
      ((plist-get last :abbrev) nil)
      (t (sekken-kana-key-across-p
-         (if last (plist-get last :text) (car segmented))
+         (if last (plist-get last :text) (sekken-input-reader-head reader))
          (string char))))))
 
 (defun sekken-word-bounds ()
@@ -153,14 +152,19 @@ literal 区間の中の空白と、直前までと合わせて変換表のキー
              (< sekken-word--origin (point)))
     (let* ((end (point))
            (start (marker-position sekken-word--origin))
-           (index start))
+           (index start)
+           roman reader)
       ;; 打ち始めから走査し、literal の外の空白の直後を語の始まりにする。
       (while (< index end)
-        (unless (or (sekken-word--char-p (char-after index))
-                    (sekken-word--continues-p
-                     (buffer-substring-no-properties start index)
-                     (char-after index)))
-          (setq start (1+ index)))
+        (unless (sekken-word--char-p (char-after index))
+          (unless reader
+            (setq reader (sekken-input-reader-create)
+                  roman (buffer-substring-no-properties start end)))
+          (sekken-input-read-until reader roman (- index start))
+          (unless (sekken-word--continues-p reader (char-after index))
+            (setq start (1+ index)
+                  reader nil
+                  roman nil)))
         (setq index (1+ index)))
       (when (< start end)
         (cons start end)))))

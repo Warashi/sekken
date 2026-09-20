@@ -30,6 +30,22 @@
   "ROMAN が変換境界を含むか。"
   (and (cdr (sekken-input-segment roman)) t))
 
+(ert-deftest sekken-input/途中で止めて再開しても一括の分割と一致する ()
+  (dolist (roman '("kyouHa'git branch;wo;Tsukau"
+                   "'don''t stop;;now//here;O>;Kai/GPL;z "
+                   "semi;;;koron/z;;Ha" "z/'';;//Neko" ""))
+    (let ((reader (sekken-input-reader-create)))
+      (dotimes (end (1+ (length roman)))
+        (sekken-input-read-until reader roman end)
+        (should
+         (equal
+          (cons (sekken-input-reader-head reader)
+                (append (reverse (sekken-input-reader-segments reader))
+                        (when (sekken-input-reader-current reader)
+                          (list (sekken-input-reader-current reader)))))
+          (sekken-input-segment
+           (substring roman 0 (sekken-input-reader-index reader)))))))))
+
 (ert-deftest sekken-input/1_度の解析から表示と先読みと送信を導く ()
   ;; 境界で終わる語は、表示に ▽ を残したまま、閉じた区間だけを送る。
   (let ((analysis (sekken-input-analyze "Neko;")))

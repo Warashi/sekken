@@ -21,6 +21,11 @@
 (require 'sekken-kana)
 (require 'subr-x)
 
+(cl-defstruct (sekken-input-reader (:constructor sekken-input-reader-create))
+  (head "")
+  segments current fresh in-spelled
+  (index 0))
+
 (defun sekken-input-segment (roman)
   "ROMAN を変換境界で分け、(HEAD . SEGMENTS) を返す。
 HEAD は先頭の境界より前の文字列。SEGMENTS の各要素は plist で、:text に
@@ -35,14 +40,25 @@ HEAD は先頭の境界より前の文字列。SEGMENTS の各要素は plist �
 境界で開いた直後の大文字や `;' は新しい区間を作らず、その区間を続ける。
 開いた直後の `/' はその区間を abbrev に、`'' は literal にする。
 abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字は境界にしない。"
-  (let ((head "")
-        (segments nil)
-        (current nil)
-        ;; 境界で開いたばかりで、まだ文字の無い区間か。
-        (fresh nil)
-        ;; `/' か `'' で開いた、綴りのまま送る区間の中か。
-        (in-spelled nil)
-        (index 0))
+  (let ((reader (sekken-input-reader-create)))
+    (sekken-input-read-until reader roman (length roman))
+    (cons (sekken-input-reader-head reader)
+          (nreverse (if (sekken-input-reader-current reader)
+                        (cons (sekken-input-reader-current reader)
+                              (sekken-input-reader-segments reader))
+                      (sekken-input-reader-segments reader))))))
+
+(defun sekken-input-read-until (reader roman end)
+  "READER で同じ ROMAN の続きから END の直前まで分割する。
+二重の境界文字は一度に読むので、その途中の END は 1 文字越える。
+空白の直前で止めれば、そこまでの区間を使って語を続けるか判定できる。"
+  (cl-symbol-macrolet
+      ((head (sekken-input-reader-head reader))
+       (segments (sekken-input-reader-segments reader))
+       (current (sekken-input-reader-current reader))
+       (fresh (sekken-input-reader-fresh reader))
+       (in-spelled (sekken-input-reader-in-spelled reader))
+       (index (sekken-input-reader-index reader)))
     (cl-flet ((open (&rest props)
                 (when current
                   (push current segments))
@@ -51,7 +67,7 @@ abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字
                 (if current
                     (plist-put current :text (concat (plist-get current :text) string))
                   (setq head (concat head string)))))
-      (while (< index (length roman))
+      (while (< index end)
         (let ((char (aref roman index)))
           (cond
            ((and (not in-spelled)
@@ -103,10 +119,7 @@ abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字
            (t
             (append-text (char-to-string char))
             (setq fresh nil
-                  index (1+ index))))))
-      (when current
-        (push current segments)))
-    (cons head (nreverse segments))))
+                  index (1+ index)))))))))
 
 (defun sekken-input--settle (segmented)
   "SEGMENTED から末尾の空の区間を落として返す。
