@@ -14,6 +14,7 @@ use sekken_core::verify::Verifier;
 use sekken_lm::file::SavedModel;
 use sekken_lm::scorer::LmScorer;
 use sekken_model::ngram::NgramModel;
+use sekken_model::personal::Personal;
 use sekken_model::scorer::NgramScorer;
 use sekken_model::tokenizer::Tokenizer;
 
@@ -49,6 +50,15 @@ pub struct EngineArgs {
     /// 読みをそのままかなにした候補に加えるコスト
     #[arg(long, default_value_t = sekken_core::lattice::KANA_PENALTY)]
     pub kana_penalty: f64,
+    /// 確定した文から数える本人の n-gram。無ければ空から数え始める
+    #[arg(long)]
+    pub personal: Option<PathBuf>,
+    /// `--personal` を新しく作るときに数える次数。既にあるファイルはその次数のまま読む
+    #[arg(long, default_value_t = 3, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
+    pub personal_order: usize,
+    /// 本人の n-gram の項（配布の bigram との対数確率の差）に掛ける重み
+    #[arg(long, default_value_t = 1.0)]
+    pub personal_weight: f64,
 }
 
 pub type Engine = Sekken<NgramScorer<Tokenizer>>;
@@ -98,10 +108,15 @@ impl EngineArgs {
             Some(path) => Dictionary::load_or_empty(path).context("load user dictionary")?,
             None => Dictionary::default(),
         };
+        let mut scorer = NgramScorer::new(model, tokenizer);
+        if let Some(path) = &self.personal {
+            let personal = Personal::load_or_new(path, self.personal_order)?;
+            scorer.set_personal(personal, self.personal_weight);
+        }
         Ok(Sekken {
             dict,
             user,
-            scorer: NgramScorer::new(model, tokenizer),
+            scorer,
             weights: sekken_core::lattice::Weights {
                 rank: self.rank_weight,
                 kana_penalty: self.kana_penalty,

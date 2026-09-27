@@ -74,6 +74,16 @@ impl EngineLoader {
         }))
     }
 
+    /// 読み込みが終わっていればエンジンを返す。終わっていなければ待たずに `None`。
+    pub fn loaded(&mut self) -> Option<&mut Engine> {
+        if let EngineLoader::Loading(handle) = self
+            && !handle.is_finished()
+        {
+            return None;
+        }
+        self.engine().as_mut().ok()
+    }
+
     /// 読み込みの完了を待って結果を返す。
     pub fn engine(&mut self) -> &mut Result<Engine> {
         if let EngineLoader::Loading(_) = self {
@@ -127,6 +137,7 @@ impl Reply {
 
 pub fn run(args: Args) -> Result<()> {
     let user_jisyo = args.engine.user_jisyo.clone();
+    let personal = args.engine.personal.clone();
     let adapted_lm = args.adapt.adapted_lm.clone();
     let (ready_tx, ready_rx) = mpsc::channel();
     let adapter = Adapter::spawn(ready_rx, args.adapt);
@@ -178,7 +189,14 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 continue;
             };
-            let reply = handle(&mut loader, &adapter, user_jisyo.as_deref(), id, &req);
+            let reply = handle(
+                &mut loader,
+                &adapter,
+                user_jisyo.as_deref(),
+                personal.as_deref(),
+                id,
+                &req,
+            );
             write_message(&mut stdout, &reply.response)?;
             if reply.exit {
                 std::process::exit(1);
@@ -215,6 +233,7 @@ pub fn handle(
     loader: &mut EngineLoader,
     adapter: &Adapter,
     user_jisyo: Option<&Path>,
+    personal: Option<&Path>,
     id: Value,
     req: &Request,
 ) -> Reply {
@@ -248,6 +267,11 @@ pub fn handle(
             };
             let reading = input.reading();
             if !reading.is_empty() && !sentence.is_empty() {
+                // 本人の n-gram は数えるだけで 0.1 ms もかからないので、変換と同じスレッドでやる。
+                // 読み込み中なら数えない（確定した文はエンジンの候補なので、ふつうは読み込み後に来る）。
+                if let Some(engine) = loader.loaded() {
+                    engine.scorer.learn(sentence);
+                }
                 adapter.adapt(reading, sentence.to_string());
             }
             Reply::ok(id, Value::Null)
@@ -275,12 +299,29 @@ pub fn handle(
                 },
             }
         }
-        // 動かした出力層はここで書く。この後の `exit` は即座に終了する。
+        // 動かした出力層と本人の n-gram はここで書く。この後の `exit` は即座に終了する。
         "shutdown" => {
             adapter.flush();
+            if let (Some(path), Some(engine)) = (personal, loader.loaded()) {
+                save_personal(engine, path);
+            }
             Reply::ok(id, Value::Null)
         }
         other => Reply::err(id, -32601, format!("unknown method: {other}")),
+    }
+}
+
+/// 本人の n-gram を書く。書けなくても終了は妨げず、理由を stderr に残す。
+fn save_personal(engine: &Engine, path: &Path) {
+    let Some(personal) = engine.scorer.personal() else {
+        return;
+    };
+    if let Err(err) = personal.save_to(path) {
+        let _ = writeln!(
+            std::io::stderr(),
+            "sekken: failed to save {}: {err:#}",
+            path.display()
+        );
     }
 }
 
@@ -469,6 +510,7 @@ mod tests {
             &mut loader,
             &idle_adapter(),
             None,
+            None,
             json!(1),
             &request("henkan", json!({ "input": "Neko" })),
         );
@@ -487,6 +529,7 @@ mod tests {
             &mut loader,
             &idle_adapter(),
             Some(Path::new("/tmp/user-jisyo")),
+            None,
             json!(1),
             &request("register", json!({ "yomi": "ねこ" })),
         );
@@ -497,6 +540,7 @@ mod tests {
         let reply = handle(
             &mut loader,
             &idle_adapter(),
+            None,
             None,
             json!(1),
             &request("register", json!({ "yomi": "ねこ", "surface": "根子" })),
@@ -522,6 +566,7 @@ mod tests {
             &mut loader,
             &idle_adapter(),
             None,
+            None,
             json!(1),
             &request(
                 "adapt",
@@ -535,6 +580,7 @@ mod tests {
             &mut loader,
             &idle_adapter(),
             None,
+            None,
             json!(1),
             &request(
                 "adapt",
@@ -547,6 +593,7 @@ mod tests {
         let reply = handle(
             &mut loader,
             &idle_adapter(),
+            None,
             None,
             json!(1),
             &request("adapt", json!({ "sentence": "猫" })),
@@ -573,6 +620,7 @@ mod tests {
             &mut loader,
             &adapter,
             None,
+            None,
             json!(1),
             &request("shutdown", Value::Null),
         );
@@ -591,6 +639,7 @@ mod tests {
             &mut loader,
             &idle_adapter(),
             None,
+            None,
             json!(1),
             &request("version", Value::Null),
         );
@@ -599,6 +648,7 @@ mod tests {
         let reply = handle(
             &mut loader,
             &idle_adapter(),
+            None,
             None,
             json!(1),
             &request("shutdown", Value::Null),
@@ -614,6 +664,7 @@ mod tests {
         let reply = handle(
             &mut loader,
             &idle_adapter(),
+            None,
             None,
             json!(1),
             &request(
@@ -638,6 +689,7 @@ mod tests {
         let reply = handle(
             &mut loader,
             &idle_adapter(),
+            None,
             None,
             json!(1),
             &request(
