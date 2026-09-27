@@ -160,7 +160,7 @@ impl Speculator {
             if !paths.is_empty() {
                 let t = Instant::now();
                 scored_count += paths.len();
-                let scored = self.score(lattice, &mut *session, head, head_len, paths);
+                let scored = self.score(lattice, scorer, &mut *session, head, head_len, paths);
                 verify_time += t.elapsed();
                 for s in scored {
                     let cost = s.path.cost + self.weight * s.verdict.cost;
@@ -208,6 +208,7 @@ impl Speculator {
     fn score(
         &self,
         lattice: &Lattice,
+        scorer: &dyn Scorer,
         session: &mut dyn VerifySession,
         head: &str,
         head_len: usize,
@@ -227,10 +228,15 @@ impl Speculator {
             .into_iter()
             .zip(sites)
             .zip(verdicts)
-            .map(|((path, sites), verdict)| Scored {
-                path,
-                sites,
-                verdict,
+            .zip(&sentences)
+            .map(|(((mut path, sites), verdict), sentence)| {
+                // 格子の接続で見えない文全体のコストを、格子側のコストに含める。
+                path.cost += scorer.sentence(sentence);
+                Scored {
+                    path,
+                    sites,
+                    verdict,
+                }
             })
             .collect()
     }
@@ -443,6 +449,28 @@ mod tests {
         let stats = s.stats.borrow();
         assert_eq!(stats.rounds, [0, 0, 1]);
         assert_eq!(stats.scored, 2);
+    }
+
+    #[test]
+    fn 文全体のコストは採点した文の格子側のコストに足す() {
+        /// 格子の接続では `scorer()` と同じで、文全体を見ると 放火 を嫌う。
+        struct Sentence(MapScorer);
+        impl Scorer for Sentence {
+            fn unigram(&self, s: &str) -> f64 {
+                self.0.unigram(s)
+            }
+            fn bigram(&self, l: Option<&str>, r: Option<&str>) -> f64 {
+                self.0.bigram(l, r)
+            }
+            fn sentence(&self, s: &str) -> f64 {
+                if s.starts_with("放火") { 20.0 } else { 0.0 }
+            }
+        }
+        let s = speculator(vec![(0, '放')], "放火", 3);
+        let result = s.decode(&lattice(), &Sentence(scorer()), "", "", 1).scored;
+        // 検証器は 放火 を好むが、文全体のコストで 法貨 に戻る。
+        assert_eq!(result[0].surfaces, ["法貨", "と"]);
+        assert_eq!(result[1].surfaces, ["放火", "と"]);
     }
 
     #[test]
