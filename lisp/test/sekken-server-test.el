@@ -13,7 +13,8 @@
         (sekken-server-jisyo "/d/SKK-JISYO.L")
         (sekken-server-lm "/d/lm.zst")
         (sekken-server-user-jisyo nil)
-        (sekken-server-adapted-lm nil))
+        (sekken-server-adapted-lm nil)
+        (sekken-server-personal nil))
     (should (equal (sekken-server--command)
                    '("/opt/sekken" "server"
                      "--dic" "/d/system.dic.zst"
@@ -36,7 +37,8 @@
         (sekken-server-jisyo "/d/SKK-JISYO.L")
         (sekken-server-lm "/d/lm.zst")
         (sekken-server-user-jisyo "~/.config/sekken/user-jisyo")
-        (sekken-server-adapted-lm nil))
+        (sekken-server-adapted-lm nil)
+        (sekken-server-personal nil))
     (should (equal (last (sekken-server--command) 2)
                    (list "--user-jisyo"
                          (expand-file-name "~/.config/sekken/user-jisyo"))))
@@ -49,13 +51,30 @@
         (sekken-server-jisyo "/d/SKK-JISYO.L")
         (sekken-server-lm "/d/lm.zst")
         (sekken-server-user-jisyo nil)
-        (sekken-server-adapted-lm "~/.config/sekken/adapted-lm.zst"))
+        (sekken-server-adapted-lm "~/.config/sekken/adapted-lm.zst")
+        (sekken-server-personal nil))
     (should (equal (last (sekken-server--command) 2)
                    (list "--adapted-lm"
                          (expand-file-name "~/.config/sekken/adapted-lm.zst"))))
     (should (stringp (default-value 'sekken-server-adapted-lm)))
     (setq sekken-server-adapted-lm nil)
     (should-not (member "--adapted-lm" (sekken-server--command)))))
+
+(ert-deftest sekken-server/本人の_n-gram_の保存先は既定で付き_nilなら付けない ()
+  (let ((sekken-server-program "/opt/sekken")
+        (sekken-server-dic "/d/system.dic.zst")
+        (sekken-server-model "/d/model.zst")
+        (sekken-server-jisyo "/d/SKK-JISYO.L")
+        (sekken-server-lm "/d/lm.zst")
+        (sekken-server-user-jisyo nil)
+        (sekken-server-adapted-lm nil)
+        (sekken-server-personal "~/.config/sekken/personal.zst"))
+    (should (equal (last (sekken-server--command) 2)
+                   (list "--personal"
+                         (expand-file-name "~/.config/sekken/personal.zst"))))
+    (should (stringp (default-value 'sekken-server-personal)))
+    (setq sekken-server-personal nil)
+    (should-not (member "--personal" (sekken-server--command)))))
 
 (ert-deftest sekken-server/確定した文は区間と一緒に_adapt_に送る ()
   (let ((sekken-server--connection 'connection)

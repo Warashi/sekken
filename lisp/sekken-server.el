@@ -48,6 +48,12 @@
 終了時に動かした分を書く。nil なら個人化しない。"
   :type '(choice (const nil) file))
 
+(defcustom sekken-server-personal (locate-user-emacs-file "sekken-personal.zst")
+  "確定した文から数える本人の語の n-gram の保存先。
+エンジンは起動時にこのファイルがあれば読み、終了時に数えた分を書く。
+語はハッシュで持つので、ファイルから文は復元できない。nil なら数えない。"
+  :type '(choice (const nil) file))
+
 (defcustom sekken-server-timeout 5
   "変換要求の応答を待つ秒数。"
   :type 'number)
@@ -100,7 +106,9 @@ nil の間はモデルの読み込み中とみなし、`sekken-server-startup-ti
    (when sekken-server-user-jisyo
      (list "--user-jisyo" (expand-file-name sekken-server-user-jisyo)))
    (when sekken-server-adapted-lm
-     (list "--adapted-lm" (expand-file-name sekken-server-adapted-lm)))))
+     (list "--adapted-lm" (expand-file-name sekken-server-adapted-lm)))
+   (when sekken-server-personal
+     (list "--personal" (expand-file-name sekken-server-personal)))))
 
 (defun sekken-server--make-process ()
   "エンジンのプロセスを作る。"
