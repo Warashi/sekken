@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use sekken_core::scorer::Scorer;
 
 use crate::ngram::NgramModel;
-use crate::personal::{self, Key, Personal};
+use crate::personal::{self, Base, Key, Personal};
 
 /// 表層形を語に分ける。実運用は vibrato、テストは単純な分割で差し替える。
 pub trait Segmenter {
@@ -130,17 +130,29 @@ impl<S: Segmenter> NgramScorer<S> {
         self.model.transition_cost(prev_id, next_id, chars)
     }
 
-    fn cost(&self, prev: Option<Word>, next: Option<Word>) -> f64 {
-        let base = self.cost_base(prev, next);
-        let Some((personal, weight)) = &self.personal else {
-            return base;
+    /// 本人の n-gram の最下位に置く、配布の bigram と unigram の対数確率。
+    fn base(&self, prev: Option<Word>, next: Option<Word>) -> Base {
+        let (next_id, chars) = match next {
+            None => (Some(crate::ngram::EOS), 0),
+            Some(n) => (n.id, n.chars),
         };
+        Base {
+            bigram: -self.cost_base(prev, next),
+            unigram: -self.model.transition_cost(None, next_id, chars),
+        }
+    }
+
+    fn cost(&self, prev: Option<Word>, next: Option<Word>) -> f64 {
+        let Some((personal, weight)) = &self.personal else {
+            return self.cost_base(prev, next);
+        };
+        let base = self.base(prev, next);
         let history = [prev.map_or(personal::BOS, |w| w.key)];
         let next = next.map_or(personal::EOS, |w| w.key);
         let log_prob = personal
             .borrow()
-            .log_prob(&history, next, -base, LATTICE_ORDER);
-        base + weight * (-log_prob - base)
+            .log_prob(&history, next, base, LATTICE_ORDER);
+        -base.bigram + weight * (base.bigram - log_prob)
     }
 }
 
@@ -186,7 +198,7 @@ impl<S: Segmenter> Scorer for NgramScorer<S> {
         let mut prev = None;
         let mut extra = 0.0;
         for next in words.iter().copied().map(Some).chain(std::iter::once(None)) {
-            let base = -self.cost_base(prev, next);
+            let base = self.base(prev, next);
             let key = next.map_or(personal::EOS, |w| w.key);
             let short = personal.log_prob(&history, key, base, LATTICE_ORDER);
             let long = personal.log_prob(&history, key, base, order);

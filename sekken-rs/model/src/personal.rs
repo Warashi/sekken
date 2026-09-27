@@ -5,13 +5,22 @@
 //! 知らず、言語モデルの出力層を 1 歩ずつ動かす個人化も効きが緩やかなので、
 //! 確定した文の語をそのまま数えて足す。
 //!
-//! 確率は Witten-Bell の補間で、最下位に配布の bigram の確率を置く。
+//! 1 段目（文脈なし）は配布の bigram を文脈ごと残し、本人と配布の unigram の比で
+//! 語ごとに伸び縮みさせる（Kneser らの MDI 適応、dynamic marginals）。
+//! P_1(w | h) = P_base(w | h) · P_本人(w) / P_base(w)。
+//! 本人の unigram を配布の bigram に補間で重ねると、本人の文に数回出ただけの語が
+//! 文脈に関係なく持ち上がり、配布の bigram が文脈で決めている語（来た「商人」）を
+//! 本人のよく書く同音語（「承認」）が押しのける。比を掛ける形なら文脈は配布の側に残る。
+//! 正規化はしない（採点の項として使うだけなので、語彙全体の和を取る費用を掛けない）。
+//!
+//! 2 段目から（本人の bigram 以上）は Witten-Bell の補間を重ねる。
 //! 文脈 h の後に c(h) 回・t(h) 種類の語が続いたとき
 //! P_k(w | h) = (c(h, w) + t(h) · P_{k-1}(w | h')) / (c(h) + t(h))。
 //! 本人の文は少なく毎日増えるので、割引を回数の分布から見積もる Kneser-Ney は
 //! 安定せず、正規化しない stupid backoff は次数ごとの重みの最適値がデータの量で
 //! 動く。Witten-Bell は文脈ごとの回数と種類数だけで決まり、文を足すたびに
-//! 数を増やすだけで正しく保てる。
+//! 数を増やすだけで正しく保てる。本人の unigram も同じ形で、配布の unigram を
+//! 下位に置いて平滑化する。
 //!
 //! 語と文脈は表層形のハッシュで持ち、文そのものは持たない。保存したファイルから
 //! 本人の文を復元できない。
@@ -81,6 +90,15 @@ impl Hasher for KeyHasher {
 
 type Table<V> = HashMap<u64, V, BuildHasherDefault<KeyHasher>>;
 
+/// 最下位に置く配布のモデルの対数確率。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Base {
+    /// 直前の語を文脈にした bigram。
+    pub bigram: f64,
+    /// 文脈なしの unigram。
+    pub unigram: f64,
+}
+
 /// 文脈の後に続いた語の数。
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 struct Followers {
@@ -136,10 +154,11 @@ impl Personal {
         }
     }
 
-    /// `history`（直近の語が最後）の後に `word` が来る対数確率。`base` は最下位に
-    /// 置く配布の bigram の対数確率。文脈は `max_order - 1` 語まで遡る。
-    pub fn log_prob(&self, history: &[Key], word: Key, base: f64, max_order: usize) -> f64 {
-        let mut p = base.exp();
+    /// `history`（直近の語が最後）の後に `word` が来る対数確率（1 段目が正規化されて
+    /// いないので、確率の和は 1 にならない）。`base` は最下位に置く配布のモデルの対数確率。
+    /// 文脈は `max_order - 1` 語まで遡る。
+    pub fn log_prob(&self, history: &[Key], word: Key, base: Base, max_order: usize) -> f64 {
+        let mut p = base.bigram.exp();
         let mut context = EMPTY;
         for k in 0..self.order.min(max_order) {
             if k > 0 {
@@ -154,7 +173,13 @@ impl Personal {
             };
             let n = self.counts.get(&ngram(context, word)).copied().unwrap_or(0);
             let (n, total, types) = (f64::from(n), f64::from(f.total), f64::from(f.types));
-            p = (n + types * p) / (total + types);
+            if k == 0 {
+                let unigram = base.unigram.exp();
+                let own = (n + types * unigram) / (total + types);
+                p *= own / unigram;
+            } else {
+                p = (n + types * p) / (total + types);
+            }
         }
         p.ln()
     }
@@ -256,9 +281,18 @@ mod tests {
         words.iter().map(|w| key(w)).collect()
     }
 
+    /// 文脈に依らない配布の確率。bigram と unigram が同じなら、1 段目は本人の
+    /// unigram の補間そのものになり、どの段でも確率の和が 1 になる。
+    fn flat(p: f64) -> Base {
+        Base {
+            bigram: p.ln(),
+            unigram: p.ln(),
+        }
+    }
+
     /// 語彙 `vocab` 上で、文脈 `history` の後の確率の和。基底は一様。
     fn total(p: &Personal, history: &[Key], vocab: &[Key], max_order: usize) -> f64 {
-        let base = (1.0 / vocab.len() as f64).ln();
+        let base = flat(1.0 / vocab.len() as f64);
         vocab
             .iter()
             .map(|&w| p.log_prob(history, w, base, max_order).exp())
@@ -268,17 +302,17 @@ mod tests {
     #[test]
     fn 何も数えていなければ配布の確率のまま() {
         let p = Personal::new(3);
-        let base = 0.25f64.ln();
-        assert!((p.log_prob(&[], key("格子"), base, 3) - base).abs() < 1e-12);
+        let base = flat(0.25);
+        assert!((p.log_prob(&[], key("格子"), base, 3) - base.bigram).abs() < 1e-12);
     }
 
     #[test]
     fn 数えた語は上がり数えていない語は下がる() {
         let mut p = Personal::new(1);
         p.add(&keys(&["格子", "を", "探索"]));
-        let base = 0.01f64.ln();
-        assert!(p.log_prob(&[], key("格子"), base, 1) > base);
-        assert!(p.log_prob(&[], key("講師"), base, 1) < base);
+        let base = flat(0.01);
+        assert!(p.log_prob(&[], key("格子"), base, 1) > base.bigram);
+        assert!(p.log_prob(&[], key("講師"), base, 1) < base.bigram);
     }
 
     #[test]
@@ -306,13 +340,39 @@ mod tests {
     }
 
     #[test]
+    fn 配布の_bigram_が文脈で決めている語は本人の同音語に押しのけられない() {
+        let mut p = Personal::new(1);
+        for _ in 0..3 {
+            p.add(&keys(&["承認", "を", "得る"]));
+        }
+        // 本人の文は他にも多くの語を含む。
+        for i in 0..200 {
+            p.add(&[key(&format!("語{i}"))]);
+        }
+        // 「来た」の後の配布の bigram は 商人 を強く選び、unigram では同じくらい。
+        let shounin = Base {
+            bigram: 0.2f64.ln(),
+            unigram: 0.001f64.ln(),
+        };
+        let shounin_approval = Base {
+            bigram: 0.0005f64.ln(),
+            unigram: 0.001f64.ln(),
+        };
+        let after = |w: &str, b| p.log_prob(&keys(&["来た"]), key(w), b, 1);
+        assert!(after("商人", shounin) > after("承認", shounin_approval));
+        // 本人の語は配布の bigram より上がり、本人の文に無い語は下がる。
+        assert!(after("承認", shounin_approval) > shounin_approval.bigram);
+        assert!(after("商人", shounin) < shounin.bigram);
+    }
+
+    #[test]
     fn 長い文脈で繰り返した続きを選び分ける() {
         let mut p = Personal::new(3);
         for _ in 0..3 {
             p.add(&keys(&["格子", "を", "探索"]));
             p.add(&keys(&["木", "を", "植える"]));
         }
-        let base = 0.01f64.ln();
+        let base = flat(0.01);
         let after = |h: &[&str], w: &str, order| p.log_prob(&keys(h), key(w), base, order);
         // bigram（「を」の後）では区別できず、trigram で文脈どおりに分かれる。
         assert!((after(&["を"], "探索", 2) - after(&["を"], "植える", 2)).abs() < 1e-12);
@@ -324,9 +384,9 @@ mod tests {
     fn 文頭と文末も文脈として数える() {
         let mut p = Personal::new(2);
         p.add(&keys(&["格子"]));
-        let base = 0.01f64.ln();
+        let base = flat(0.01);
         assert!(p.log_prob(&[BOS], key("格子"), base, 2) > p.log_prob(&[], key("格子"), base, 1));
-        assert!(p.log_prob(&keys(&["格子"]), EOS, base, 2) > base);
+        assert!(p.log_prob(&keys(&["格子"]), EOS, base, 2) > base.bigram);
     }
 
     #[test]
@@ -338,7 +398,7 @@ mod tests {
         p.save(&mut buf).unwrap();
         let q = Personal::load(buf.as_slice()).unwrap();
         assert_eq!(q.order(), 3);
-        let base = 0.01f64.ln();
+        let base = flat(0.01);
         for (h, w) in [
             (vec!["格子", "を"], "探索"),
             (vec!["の"], "反復"),
@@ -362,7 +422,7 @@ mod tests {
         let q = Personal::load_or_new(&path, 4).unwrap();
         // 読めたファイルの次数が優先する。
         assert_eq!(q.order(), 2);
-        let base = 0.01f64.ln();
+        let base = flat(0.01);
         assert_eq!(
             p.log_prob(&[BOS], key("格子"), base, 2),
             q.log_prob(&[BOS], key("格子"), base, 2)
