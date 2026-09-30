@@ -69,7 +69,10 @@ fn main() {
         }
     }
 
-    println!("\n== matmul_q int8 (n × k) per rows: ms, GOPS, speedup over f32");
+    println!(
+        "\n== matmul_q int8 (n × k) per rows: ms, GOPS, speedup over f32 (kernel={:?})",
+        sekken_lm::quant::kernel()
+    );
     for &(name, n, k) in &shapes {
         let w: Vec<f32> = (0..n * k).map(|i| (i % 7) as f32 * 0.1).collect();
         let q = QMatrix::new(&w, n, k);
