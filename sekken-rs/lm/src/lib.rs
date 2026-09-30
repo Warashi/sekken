@@ -3,6 +3,7 @@ pub mod config;
 pub mod file;
 pub mod infer;
 pub mod interleave;
+pub mod quant;
 pub mod scorer;
 pub mod session;
 mod simd;

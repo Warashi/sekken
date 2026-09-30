@@ -2,11 +2,13 @@
 //! 行列積・forward の実測を同じ機械で出す。
 //!
 //! 使い方: `cargo run --release -p sekken-lm --example roofline -- lm.zst [threads]`
+//! int8 の行列積（`Infer::int8`、aarch64 では dot product 命令）も同じ形で出す。
 
 use std::time::Instant;
 
 use sekken_lm::file::SavedModel;
 use sekken_lm::infer::{Chain, Infer, matmul_t};
+use sekken_lm::quant::{QMatrix, matmul_q};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -67,6 +69,25 @@ fn main() {
         }
     }
 
+    println!("\n== matmul_q int8 (n × k) per rows: ms, GOPS, speedup over f32");
+    for &(name, n, k) in &shapes {
+        let w: Vec<f32> = (0..n * k).map(|i| (i % 7) as f32 * 0.1).collect();
+        let q = QMatrix::new(&w, n, k);
+        for &m in &rows_list {
+            let x: Vec<f32> = (0..m * k).map(|i| (i % 5) as f32 * 0.1).collect();
+            let mut dst = vec![0.0f32; m * n];
+            let tf = bench(|| matmul_t(&x, m, k, &w, n, &mut dst, threads));
+            let tq = bench(|| matmul_q(&x, m, &q, &mut dst, threads));
+            let op = 2.0 * m as f64 * n as f64 * k as f64;
+            println!(
+                "{name:8} n={n:5} k={k:4} rows={m:3} {:.4}ms {:6.1}GOPS x{:.2}",
+                tq * 1e3,
+                op / tq / 1e9,
+                tf / tq
+            );
+        }
+    }
+
     println!("\n== read(): total ms and per-row; weight bytes / total as GB/s");
     let state = infer.init_state();
     for &m in &rows_list {
@@ -84,6 +105,28 @@ fn main() {
             t * 1e3 / m as f64,
             flop / t / 1e9,
             (total * 4) as f64 / t / 1e9
+        );
+    }
+    println!("\n== read() int8: total ms and per-row, speedup over f32");
+    let int8 = Infer::new(cfg.clone(), &saved.weights)
+        .unwrap()
+        .with_threads(threads)
+        .int8();
+    for &m in &rows_list {
+        let ids: Vec<u32> = (0..m as u32).map(|i| i % cfg.vocab_size as u32).collect();
+        let chain = |i: &Infer| {
+            i.read(&[Chain {
+                state: &state,
+                ids: &ids,
+            }]);
+        };
+        let tf = bench(|| chain(&infer));
+        let tq = bench(|| chain(&int8));
+        println!(
+            "rows={m:3} {:.4}ms {:.4}ms/row x{:.2}",
+            tq * 1e3,
+            tq * 1e3 / m as f64,
+            tf / tq
         );
     }
     let ids: Vec<u32> = (0..21u32).collect();

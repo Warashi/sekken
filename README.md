@@ -104,6 +104,11 @@ nix build
 ユーザー辞書があれば `--user-jisyo user-jisyo` も渡す。形式は UTF-8 の SKK-JISYO と同じで、
 送りなしの見出しだけを読む。
 
+`--lm-int8` を付けると、`lm.zst` の線形層を int8 の行列積で読む（重みは行ごと、入力は
+行ごとに量子化し、漸化式と正規化は f32 のまま）。aarch64 で dot product 命令（`asimddp`）の
+ある CPU（Apple Silicon、Neoverse N1 など）向けで、命令の無い CPU（x86 を含む）では
+f32 より遅くなる。自分の文 642 文と Wikipedia で、先頭一致は f32 と変わらない。
+
 ## Emacs での設定
 
 ```elisp

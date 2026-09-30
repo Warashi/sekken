@@ -38,6 +38,9 @@ pub struct EngineArgs {
     /// 言語モデルのコストに掛ける重み
     #[arg(long, default_value_t = 1.0)]
     pub lm_weight: f64,
+    /// 言語モデルの線形層を int8 の行列積で読む（aarch64 では dot product 命令を使う）
+    #[arg(long)]
+    pub lm_int8: bool,
     /// 言語モデルの提案で格子を再探索する回数の上限
     #[arg(long, default_value_t = 3, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
     pub spec_rounds: usize,
@@ -87,7 +90,14 @@ pub fn load_lm(path: &std::path::Path) -> Result<SavedModel> {
 impl EngineArgs {
     pub fn build(&self) -> Result<Engine> {
         let saved = self.load_lm()?;
-        self.build_with(Box::new(LmScorer::from_saved(&saved)?))
+        self.build_with(Box::new(self.lm_scorer(&saved)?))
+    }
+
+    /// 読んだ言語モデルから、`--lm-int8` に従って採点器を組む。
+    pub fn lm_scorer(&self, saved: &SavedModel) -> Result<LmScorer> {
+        let infer = saved.infer()?;
+        let infer = if self.lm_int8 { infer.int8() } else { infer };
+        Ok(LmScorer::new(infer, saved.vocab.clone(), saved.condition))
     }
 
     /// `--lm` のファイルを読む。

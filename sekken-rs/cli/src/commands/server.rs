@@ -32,7 +32,6 @@ use sekken_cli::adapt::{AdaptArgs, Adapter, Ready};
 use sekken_cli::engine::{Engine, EngineArgs};
 use sekken_cli::jsonrpc::{Request, Response, read_message, write_message};
 use sekken_core::input::{Input, Kind, Piece};
-use sekken_lm::scorer::LmScorer;
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -144,7 +143,7 @@ pub fn run(args: Args) -> Result<()> {
     let engine_args = args.engine;
     let mut loader = EngineLoader::spawn(move || {
         let saved = sekken_cli::adapt::load_model(&engine_args.lm, adapted_lm.as_deref())?;
-        let scorer = Arc::new(LmScorer::from_saved(&saved)?);
+        let scorer = Arc::new(engine_args.lm_scorer(&saved)?);
         let engine = engine_args.build_with(Box::new(scorer.clone()))?;
         // 学習は組み立てに成功してからでよい。失敗すればサーバーごと終わる。
         let _ = ready_tx.send(Ready { scorer, saved });

@@ -17,12 +17,32 @@ use std::sync::RwLock;
 use anyhow::{Context as _, Result, bail};
 
 use crate::config::{ModelConfig, Weight};
+use crate::quant::{QMatrix, matmul_q};
 use crate::simd;
+
+/// 線形層の重み（出力 × 入力）。`Infer::int8` の後は int8 だけを持つ。
+struct Linear {
+    w: Vec<f32>,
+    q: Option<QMatrix>,
+}
+
+impl Linear {
+    fn new(w: Vec<f32>) -> Linear {
+        Linear { w, q: None }
+    }
+
+    /// int8 にし、f32 の重みは捨てる。
+    fn quantize(&mut self, inputs: usize) {
+        let outputs = self.w.len() / inputs;
+        self.q = Some(QMatrix::new(&self.w, outputs, inputs));
+        self.w = Vec::new();
+    }
+}
 
 struct Block {
     norm1: Vec<f32>,
     /// (proj_width, d_model)
-    in_proj: Vec<f32>,
+    in_proj: Linear,
     dt_bias: Vec<f32>,
     /// -exp(a_log)
     a: Vec<f32>,
@@ -34,13 +54,13 @@ struct Block {
     c_bias: Vec<f32>,
     d_skip: Vec<f32>,
     /// (d_model, inner)
-    out_proj: Vec<f32>,
+    out_proj: Linear,
     norm2: Vec<f32>,
     /// (mlp_dim, d_model)
-    gate: Vec<f32>,
-    up: Vec<f32>,
+    gate: Linear,
+    up: Linear,
     /// (d_model, mlp_dim)
-    down: Vec<f32>,
+    down: Linear,
 }
 
 pub struct Infer {
@@ -62,6 +82,8 @@ struct Head {
     weight: Vec<f32>,
     /// (vocab)。学習側は bias を持たないので、ファイルに無ければ零。
     bias: Vec<f32>,
+    /// `Infer::int8` の後の int8 の重み。`adapt` は f32 の重みを動かしてから作り直す。
+    q: Option<QMatrix>,
 }
 
 /// `adapt` で動かす出力層の部分。
@@ -105,7 +127,7 @@ impl Infer {
             let p = |s: &str| format!("block{i}.{s}");
             blocks.push(Block {
                 norm1: get(&p("norm1.weight"))?,
-                in_proj: get(&p("mixer.in_proj.weight"))?,
+                in_proj: Linear::new(get(&p("mixer.in_proj.weight"))?),
                 dt_bias: get(&p("mixer.dt_bias"))?,
                 a: get(&p("mixer.a_log"))?.iter().map(|a| -a.exp()).collect(),
                 theta_bias: get(&p("mixer.theta_bias"))?,
@@ -113,16 +135,17 @@ impl Infer {
                 b_bias: get(&p("mixer.b_bias"))?,
                 c_bias: get(&p("mixer.c_bias"))?,
                 d_skip: get(&p("mixer.d_skip"))?,
-                out_proj: get(&p("mixer.out_proj.weight"))?,
+                out_proj: Linear::new(get(&p("mixer.out_proj.weight"))?),
                 norm2: get(&p("norm2.weight"))?,
-                gate: get(&p("mlp.gate.weight"))?,
-                up: get(&p("mlp.up.weight"))?,
-                down: get(&p("mlp.down.weight"))?,
+                gate: Linear::new(get(&p("mlp.gate.weight"))?),
+                up: Linear::new(get(&p("mlp.up.weight"))?),
+                down: Linear::new(get(&p("mlp.down.weight"))?),
             });
         }
         let head = Head {
             weight: get("head.weight")?,
             bias: get("head.bias").unwrap_or_else(|_| vec![0.0; cfg.vocab_size]),
+            q: None,
         };
         if head.weight.len() != cfg.vocab_size * cfg.d_model || head.bias.len() != cfg.vocab_size {
             bail!("head shape does not match config");
@@ -135,7 +158,7 @@ impl Infer {
             threads: 1,
             cfg,
         };
-        if infer.blocks[0].in_proj.len() != infer.proj_width() * infer.cfg.d_model {
+        if infer.blocks[0].in_proj.w.len() != infer.proj_width() * infer.cfg.d_model {
             bail!("in_proj shape does not match config");
         }
         if !infer.cfg.d_state.is_multiple_of(2) || infer.cfg.d_state > MAX_STATE {
@@ -147,6 +170,23 @@ impl Infer {
     /// 行列積を rayon で `threads` 本に分ける。0 なら 1 本。
     pub fn with_threads(mut self, threads: usize) -> Infer {
         self.threads = threads.max(1);
+        self
+    }
+
+    /// 線形層（in_proj、out_proj、MLP、出力層）を int8 の行列積にする。重みは出力の行ごと、
+    /// 入力は行ごとに量子化する（`quant`）。埋め込み・正規化・漸化式は f32 のまま。
+    /// 出力層は `adapt` で動かすので f32 の重みも残す。
+    pub fn int8(mut self) -> Infer {
+        let (d, inner, m) = (self.cfg.d_model, self.inner(), self.cfg.mlp_dim);
+        for blk in &mut self.blocks {
+            blk.in_proj.quantize(d);
+            blk.out_proj.quantize(inner);
+            blk.gate.quantize(d);
+            blk.up.quantize(d);
+            blk.down.quantize(m);
+        }
+        let head = self.head.get_mut().unwrap();
+        head.q = Some(QMatrix::new(&head.weight, self.cfg.vocab_size, d));
         self
     }
 
@@ -184,13 +224,23 @@ impl Infer {
     }
 
     /// `dst` (rows × out) = `x` (rows × in) · `w` (out × in)^T
-    fn linear(&self, x: &[f32], rows: usize, w: &[f32], dst: &mut [f32]) {
-        let k = x.len() / rows.max(1);
-        let n = w.len() / k;
-        debug_assert_eq!(dst.len(), rows * n);
+    fn linear(&self, x: &[f32], rows: usize, w: &Linear, dst: &mut [f32]) {
+        self.matmul(x, rows, &w.w, w.q.as_ref(), dst);
+    }
+
+    /// `q` があれば int8、無ければ f32 の `w` で行列積を取る。
+    fn matmul(&self, x: &[f32], rows: usize, w: &[f32], q: Option<&QMatrix>, dst: &mut [f32]) {
         if rows == 0 {
             return;
         }
+        if let Some(q) = q {
+            debug_assert_eq!(dst.len(), rows * q.rows());
+            matmul_q(x, rows, q, dst, self.threads);
+            return;
+        }
+        let k = x.len() / rows;
+        let n = w.len() / k;
+        debug_assert_eq!(dst.len(), rows * n);
         matmul_t(x, rows, k, w, n, dst, self.threads);
     }
 
@@ -335,7 +385,7 @@ impl Infer {
     /// `hidden`（rows × d_model）の各行の logits（rows × vocab）。
     fn logits(&self, hidden: &[f32], rows: usize, dst: &mut [f32]) {
         let head = self.head.read().unwrap();
-        self.linear(hidden, rows, &head.weight, dst);
+        self.matmul(hidden, rows, &head.weight, head.q.as_ref(), dst);
         for row in dst.chunks_exact_mut(self.cfg.vocab_size) {
             for (l, b) in row.iter_mut().zip(&head.bias) {
                 *l += b;
@@ -348,7 +398,12 @@ impl Infer {
         let d = self.cfg.d_model;
         let id = id as usize;
         let head = self.head.read().unwrap();
-        dot(&head.weight[id * d..(id + 1) * d], hidden) + head.bias[id] - lse
+        // log-sum-exp と同じ行列積の値にしないと、確率の和が 1 からずれる。
+        let logit = match &head.q {
+            Some(q) => q.dot_row(id, hidden),
+            None => dot(&head.weight[id * d..(id + 1) * d], hidden),
+        };
+        logit + head.bias[id] - lse
     }
 
     /// 出力層を delta 則で 1 歩動かす。`hidden` の各行（rows × d_model）で
@@ -398,6 +453,9 @@ impl Infer {
             matmul_t(&grad_t, v, rows, &hidden_t, d, &mut delta, self.threads);
             for (w, g) in head.weight.iter_mut().zip(&delta) {
                 *w -= lr * g;
+            }
+            if head.q.is_some() {
+                head.q = Some(QMatrix::new(&head.weight, v, d));
             }
         }
         nll
@@ -837,6 +895,56 @@ mod tests {
         }]);
         for pos in 0..ids.len() {
             let total: f32 = log_probs(&infer, &read, pos).iter().map(|p| p.exp()).sum();
+            assert!((total - 1.0).abs() < 1e-4, "pos={pos} total={total}");
+        }
+    }
+
+    #[test]
+    fn int8_にしても対数確率は_f32_に近く正規化されている() {
+        let f32_infer = infer();
+        let int8_infer = infer().int8();
+        let ids = [0u32, 3, 4, 5, 6, 1];
+        let read = |i: &Infer| {
+            i.read(&[Chain {
+                state: &i.init_state(),
+                ids: &ids,
+            }])
+        };
+        let (rf, rq) = (read(&f32_infer), read(&int8_infer));
+        for pos in 0..ids.len() {
+            let (pf, pq) = (
+                log_probs(&f32_infer, &rf, pos),
+                log_probs(&int8_infer, &rq, pos),
+            );
+            // d_model 16 の小さなモデルでは内積の項が少なく、量子化の誤差が相対的に大きい。
+            assert_close(&pf, &pq, 0.1);
+            let total: f32 = pq.iter().map(|p| p.exp()).sum();
+            assert!((total - 1.0).abs() < 1e-4, "pos={pos} total={total}");
+        }
+    }
+
+    #[test]
+    fn int8_でも出力層を動かすと正解が上がり正規化は保たれる() {
+        let infer = infer().int8();
+        let ids = [0u32, 3, 4, 5];
+        let read = || {
+            infer.read(&[Chain {
+                state: &infer.init_state(),
+                ids: &ids,
+            }])
+        };
+        let d = infer.cfg.d_model;
+        let before = read();
+        let nll = |r: &Read| -> f32 {
+            (0..3)
+                .map(|p| -log_probs(&infer, r, p)[ids[p + 1] as usize])
+                .sum()
+        };
+        infer.adapt(&before.hidden[..3 * d], &ids[1..], 0.05, Plastic::Head);
+        let after = read();
+        assert!(nll(&after) < nll(&before));
+        for pos in 0..ids.len() {
+            let total: f32 = log_probs(&infer, &after, pos).iter().map(|p| p.exp()).sum();
             assert!((total - 1.0).abs() < 1e-4, "pos={pos} total={total}");
         }
     }
