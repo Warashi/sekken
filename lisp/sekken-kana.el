@@ -16,22 +16,30 @@
   "ローマ字かな変換表のパス。")
 
 (defvar sekken-kana--table nil
-  "ローマ字文字列からかなへのハッシュ表。")
+  "ローマ字文字列から (かな . 読み直す文字数) へのハッシュ表。
+読み直す文字数は、キーの末尾のうち次のキーの先頭として読み直す分。")
 
 (defvar sekken-kana--max-key 1
   "変換表のキーの最大長。最長一致の探索幅。")
 
 (defun sekken-kana-load-table (&optional file)
-  "FILE（既定は `sekken-kana--table-file'）から変換表を読み込む。"
+  "FILE（既定は `sekken-kana--table-file'）から変換表を読み込む。
+省略できる 3 列目はキーの末尾のうち次のキーの先頭として読み直す文字で
+（`kk\\tっ\\tk'）、キーの末尾でなければその行を使わない。"
   (let ((table (make-hash-table :test #'equal))
         (max-key 1))
     (with-temp-buffer
       (insert-file-contents (or file sekken-kana--table-file))
       (goto-char (point-min))
-      (while (re-search-forward "^\\([^\t\n]+\\)\t\\([^\t\n]+\\)$" nil t)
-        (let ((roman (match-string 1)))
-          (setq max-key (max max-key (length roman)))
-          (puthash roman (match-string 2) table))))
+      (while (re-search-forward
+              "^\\([^\t\n]+\\)\t\\([^\t\n]+\\)\\(?:\t\\([^\t\n]+\\)\\)?$" nil t)
+        (let ((roman (match-string 1))
+              (reread (or (match-string 3) "")))
+          ;; 読み直す文字がキー全体だと位置が進まない。
+          (when (and (string-suffix-p reread roman)
+                     (> (length roman) (length reread)))
+            (setq max-key (max max-key (length roman)))
+            (puthash roman (cons (match-string 2) (length reread)) table)))))
     (setq sekken-kana--table table
           sekken-kana--max-key max-key)
     table))
@@ -66,10 +74,10 @@ BEFORE と AFTER の境目が最長一致のキーの途中に当たるかを決
       (let ((n (min sekken-kana--max-key (- len pos)))
             (found nil))
         (while (and (> n 0) (not found))
-          (let ((kana (gethash (substring roman pos (+ pos n)) table)))
-            (if kana
-                (setq found kana
-                      pos (+ pos n))
+          (let ((output (gethash (substring roman pos (+ pos n)) table)))
+            (if output
+                (setq found (car output)
+                      pos (+ pos (- n (cdr output))))
               (setq n (1- n)))))
         (unless found
           (setq found (substring roman pos (1+ pos))

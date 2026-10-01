@@ -21,6 +21,26 @@
 (ert-deftest sekken-kana/表に無い文字はそのまま残す ()
   (should (equal (sekken-kana-roman-to-kana "q") "q")))
 
+(defmacro sekken-kana-test--with-table (tsv &rest body)
+  "TSV の変換表で BODY を評価する。既定の表は書き換えない。"
+  (declare (indent 1))
+  `(let ((sekken-kana--table nil)
+         (sekken-kana--max-key 1)
+         (file (make-temp-file "sekken-kana-table" nil ".tsv" ,tsv)))
+     (unwind-protect
+         (progn (sekken-kana-load-table file) ,@body)
+       (delete-file file))))
+
+(ert-deftest sekken-kana/三列目の文字はキーの末尾として読み直す ()
+  (sekken-kana-test--with-table "ka\tか\nkk\tっ\tk\n"
+    (should (equal (sekken-kana-roman-to-kana "kk") "っk"))
+    (should (equal (sekken-kana-roman-to-kana "kka") "っか"))
+    (should (equal (sekken-kana-roman-to-kana "kkka") "っっか"))))
+
+(ert-deftest sekken-kana/キーの末尾でない三列目の行は使わない ()
+  (sekken-kana-test--with-table "ka\tか\nkk\tっ\ta\n"
+    (should (equal (sekken-kana-roman-to-kana "kka") "kか"))))
+
 (ert-deftest sekken-kana/境目にまたがる_2_文字以上のキーがあるかを引く ()
   (should (sekken-kana-key-across-p "nekoz" "/"))
   (should (sekken-kana-key-across-p "z" "/"))
