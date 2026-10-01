@@ -7,10 +7,17 @@ use daachorse::{DoubleArrayAhoCorasick, DoubleArrayAhoCorasickBuilder, MatchKind
 /// ローマ字からかなへの変換表。
 pub struct KanaTable {
     matcher: Option<DoubleArrayAhoCorasick<u32>>,
-    outputs: Vec<String>,
-    linear_entries: Vec<(String, String)>,
+    outputs: Vec<Output>,
+    linear_entries: Vec<(String, Output)>,
     /// 2 文字以上のキー。境界の文字がキーを完成させるかを引く。
     long_keys: Vec<String>,
+}
+
+/// キーに当たったときに出すかな。
+struct Output {
+    kana: String,
+    /// キーの末尾のうち、次のキーの先頭として読み直すバイト数（`kk` の `k` なら 1）。
+    reread: usize,
 }
 
 /// 既定の変換表（`kana-table.tsv`）の本文。逆引き表を作る側もこれを読む。
@@ -25,11 +32,19 @@ impl KanaTable {
     }
 
     /// TSV（`roman\tkana` 1 行 1 組）から変換表を作る。
+    /// 省略できる 3 列目はキーの末尾のうち次のキーの先頭として読み直す文字で
+    /// （`kk\tっ\tk`）、キーの末尾でなければその行を使わない。
     pub fn parse_tsv(tsv: &str) -> KanaTable {
         let mut entries = BTreeMap::new();
-        for (roman, kana) in tsv.lines().filter_map(|line| line.split_once('\t')) {
-            if !roman.is_empty() {
-                entries.insert(roman.to_string(), kana.to_string());
+        for (roman, rest) in tsv.lines().filter_map(|line| line.split_once('\t')) {
+            let (kana, reread) = rest.split_once('\t').unwrap_or((rest, ""));
+            // 読み直す文字がキー全体だと位置が進まない。
+            if !roman.is_empty() && roman.ends_with(reread) && roman.len() > reread.len() {
+                let output = Output {
+                    kana: kana.to_string(),
+                    reread: reread.len(),
+                };
+                entries.insert(roman.to_string(), output);
             }
         }
         let entries: Vec<_> = entries.into_iter().collect();
@@ -84,27 +99,29 @@ impl KanaTable {
         };
         let mut out = String::with_capacity(roman.len());
         let mut end = 0;
-        for matched in matcher.leftmost_find_iter(roman) {
-            out.push_str(&roman[end..matched.start()]);
-            out.push_str(&self.outputs[matched.value() as usize]);
-            end = matched.end();
+        // 読み直す文字の分だけ戻るので、イテレータを続けずに毎回その位置から探す。
+        while let Some(matched) = matcher.leftmost_find_iter(&roman[end..]).next() {
+            let output = &self.outputs[matched.value() as usize];
+            out.push_str(&roman[end..end + matched.start()]);
+            out.push_str(&output.kana);
+            end += matched.end() - output.reread;
         }
         out.push_str(&roman[end..]);
         out
     }
 }
 
-fn roman2kana_linear(entries: &[(String, String)], roman: &str) -> String {
+fn roman2kana_linear(entries: &[(String, Output)], roman: &str) -> String {
     let mut out = String::new();
     let mut rest = roman;
     while !rest.is_empty() {
-        if let Some((pattern, kana)) = entries
+        if let Some((pattern, output)) = entries
             .iter()
             .filter(|(pattern, _)| rest.starts_with(pattern))
             .max_by_key(|(pattern, _)| pattern.len())
         {
-            out.push_str(kana);
-            rest = &rest[pattern.len()..];
+            out.push_str(&output.kana);
+            rest = &rest[pattern.len() - output.reread..];
         } else {
             let c = rest.chars().next().unwrap();
             out.push(c);
@@ -155,6 +172,29 @@ mod tests {
     fn 重複するパターンでは後の定義を使う() {
         let t = KanaTable::parse_tsv("a\tあ\na\tア\n");
         assert_eq!(t.roman2kana("a"), "ア");
+    }
+
+    #[test]
+    fn 三列目の文字はキーの末尾として読み直す() {
+        let linear = KanaTable::parse_tsv("ka\tか\nkk\tっ\tk\n");
+        let defaults: String = DEFAULT_TABLE_TSV
+            .lines()
+            .filter(|line| !line.starts_with("k\t"))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let automaton = KanaTable::parse_tsv(&format!("{defaults}kk\tっ\tk\n"));
+        assert!(automaton.matcher.is_some());
+        for t in [linear, automaton] {
+            assert_eq!(t.roman2kana("kk"), "っk");
+            assert_eq!(t.roman2kana("kka"), "っか");
+            assert_eq!(t.roman2kana("kkka"), "っっか");
+        }
+    }
+
+    #[test]
+    fn キーの末尾でない三列目の行は使わない() {
+        let t = KanaTable::parse_tsv("ka\tか\nkk\tっ\ta\n");
+        assert_eq!(t.roman2kana("kka"), "kか");
     }
 
     #[test]
