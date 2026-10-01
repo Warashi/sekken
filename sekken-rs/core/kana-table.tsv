@@ -8,7 +8,7 @@
 ]	」
 a	あ
 ba	ば
-b	っ
+bb	っ	b
 be	べ
 bi	び
 bo	ぼ
@@ -18,7 +18,7 @@ bye	びぇ
 byi	びぃ
 byo	びょ
 byu	びゅ
-c	っ
+cc	っ	c
 cha	ちゃ
 che	ちぇ
 chi	ち
@@ -30,7 +30,7 @@ cyi	ちぃ
 cyo	ちょ
 cyu	ちゅ
 da	だ
-d	っ
+dd	っ	d
 de	で
 dha	でゃ
 dhe	でぇ
@@ -48,7 +48,7 @@ dyu	ぢゅ
 e	え
 fa	ふぁ
 fe	ふぇ
-f	っ
+ff	っ	f
 fi	ふぃ
 fo	ふぉ
 fu	ふ
@@ -59,7 +59,7 @@ fyo	ふょ
 fyu	ふゅ
 ga	が
 ge	げ
-g	っ
+gg	っ	g
 gi	ぎ
 go	ご
 gu	ぐ
@@ -70,7 +70,7 @@ gyo	ぎょ
 gyu	ぎゅ
 ha	は
 he	へ
-h	っ
+hh	っ	h
 hi	ひ
 ho	ほ
 hu	ふ
@@ -83,7 +83,7 @@ i	い
 ja	じゃ
 je	じぇ
 ji	じ
-j	っ
+jj	っ	j
 jo	じょ
 ju	じゅ
 jya	じゃ
@@ -94,7 +94,7 @@ jyu	じゅ
 ka	か
 ke	け
 ki	き
-k	っ
+kk	っ	k
 ko	こ
 ku	く
 kya	きゃ
@@ -105,7 +105,7 @@ kyu	きゅ
 ma	ま
 me	め
 mi	み
-m	っ
+mm	っ	m
 mo	も
 mu	む
 mya	みゃ
@@ -130,7 +130,7 @@ pa	ぱ
 pe	ぺ
 pi	ぴ
 po	ぽ
-p	っ
+pp	っ	p
 pu	ぷ
 pya	ぴゃ
 pye	ぴぇ
@@ -141,7 +141,7 @@ ra	ら
 re	れ
 ri	り
 ro	ろ
-r	っ
+rr	っ	r
 ru	る
 rya	りゃ
 rye	りぇ
@@ -157,7 +157,7 @@ sho	しょ
 shu	しゅ
 si	し
 so	そ
-s	っ
+ss	っ	s
 su	す
 sya	しゃ
 sye	しぇ
@@ -174,7 +174,7 @@ thu	てゅ
 ti	ち
 to	と
 tsu	つ
-t	っ
+tt	っ	t
 tu	つ
 tya	ちゃ
 tye	ちぇ
@@ -187,13 +187,13 @@ ve	ゔぇ
 vi	ゔぃ
 vo	ゔぉ
 vu	ゔ
-v	っ
+vv	っ	v
 wa	わ
 we	うぇ
 wi	うぃ
 wo	を
 wu	う
-w	っ
+ww	っ	w
 xa	ぁ
 xe	ぇ
 xi	ぃ
@@ -206,7 +206,7 @@ xu	ぅ
 xwa	ゎ
 xwe	ゑ
 xwi	ゐ
-x	っ
+xx	っ	x
 xya	ゃ
 xyo	ょ
 xyu	ゅ
@@ -214,7 +214,7 @@ ya	や
 ye	いぇ
 yo	よ
 yu	ゆ
-y	っ
+yy	っ	y
 z(	（
 z)	）
 z,	‥
@@ -238,4 +238,4 @@ zye	じぇ
 zyi	じぃ
 zyo	じょ
 zyu	じゅ
-z	っ
+zz	っ	z

@@ -53,7 +53,9 @@
   ;; 3 文字のキーはどの位置で切れても当たる。
   (should (sekken-kana-key-across-p "nekok" "ya"))
   (should (sekken-kana-key-across-p "nekoky" "a"))
-  (should-not (sekken-kana-key-across-p "nekok" "ka")))
+  ;; 重ねた子音もキーになる。
+  (should (sekken-kana-key-across-p "nekok" "ka"))
+  (should-not (sekken-kana-key-across-p "nekoka" "ka")))
 
 (ert-deftest sekken-kana/Rust_と共通の_fixture_と一致する ()
   "エディタが送るかなが変換結果を決めるので、Rust 側と同じ表で一致を確かめる。"

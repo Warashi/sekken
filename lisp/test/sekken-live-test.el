@@ -54,7 +54,7 @@
 
 (ert-deftest sekken-live/打ち足した語の候補が届くまでは前の候補に末尾のかなを繋いで見せる ()
   (dolist (case '(("Nekoga" . "猫が")
-                  ("Nekog" . "猫っ")
+                  ("Nekog" . "猫g")
                   ("NekoGa" . "猫▽が")
                   ("Neko'Emacs" . "猫▽'Emacs")))
     (with-temp-buffer
@@ -78,13 +78,13 @@
 (ert-deftest sekken-live/変換表のキーの途中で切れる語と候補の無い語には繋がない ()
   ;; `Nekog' + `a' は `ga' の途中なので、`Nekog' の候補に「あ」を繋がない。
   (pcase-dolist (`(,cache ,roman ,display)
-                 '(((("Nekog" "猫っ") ("Neko" "猫")) "Nekoga" "猫が")
+                 '(((("Nekog" "猫g") ("Neko" "猫")) "Nekoga" "猫が")
                    ((("Nekon" "猫ん") ("Neko" "猫")) "Nekona" "猫な")
-                   ((("Nekoky" "猫っっ") ("Neko" "猫")) "Nekokya" "猫きゃ")
+                   ((("Nekoky" "猫ky") ("Neko" "猫")) "Nekokya" "猫きゃ")
                    ((("Nekog") ("Neko" "猫")) "Nekoga" "猫が")
-                   ((("Nekog" "猫っ")) "Nekoga" "▽ねこが")
-                   ;; 促音の後の子音はキーの途中でないので繋ぐ。
-                   ((("Nekok" "猫っ")) "Nekokka" "猫っか")))
+                   ((("Nekog" "猫g")) "Nekoga" "▽ねこが")
+                   ;; 重ねた子音もキーなので、`Nekok' の候補に「か」を繋がない。
+                   ((("Nekok" "猫k")) "Nekokka" "▽ねこっか")))
     (with-temp-buffer
       (sekken-test-type roman)
       (let (requests)
@@ -379,8 +379,8 @@
   (pcase-dolist (`(,roman ,cache ,display ,result)
                  '(("Neko" nil "▽ねこ" "ねこ ")
                    ("NekoGa" (("Neko" "猫")) "猫▽が" "猫が ")
-                   ;; 末尾の子音も、見えているとおり促音で入る。
-                   ("Nek" nil "▽ねっ" "ねっ ")))
+                   ;; 末尾の子音も、見えているとおり綴りのまま入る。
+                   ("Nek" nil "▽ねk" "ねk ")))
     (with-temp-buffer
       (sekken-test-type roman)
       (sekken-live-test--with-cache cache

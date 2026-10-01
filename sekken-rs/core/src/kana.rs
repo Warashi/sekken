@@ -209,7 +209,9 @@ mod tests {
         // 3 文字のキーはどの位置で切れても当たる。
         assert!(table.key_across("nekok", "ya"));
         assert!(table.key_across("nekoky", "a"));
-        assert!(!table.key_across("nekok", "ka"));
+        // 重ねた子音もキーになる。
+        assert!(table.key_across("nekok", "ka"));
+        assert!(!table.key_across("nekoka", "ka"));
     }
 
     /// エディタ側の変換と同じ結果になることを確かめる共通の fixture。
