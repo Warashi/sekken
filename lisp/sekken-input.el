@@ -196,8 +196,8 @@ jsonrpc.el が JSON の配列にするようベクタで返す。"
 
 分けた結果の使い分けはここだけにある。表示は閉じただけの末尾の区間を
 ▽ として残し、確定と送信はそれを落とす（`sekken-input--settle'）。
-かなはどの区間も表の最長一致そのままで、末尾の子音も母音を待たずに
-変換する（`nek' は「ねっ」、`neka' で「ねか」に変わる）。"
+かなはどの区間も表の最長一致そのままで、末尾の子音も表のとおりに
+変換する（`nek' は「ねk」、`nekk' は「ねっk」、`neka' で「ねか」に変わる）。"
   (let* ((segmented (sekken-input-segment roman))
          (last (car (last (cdr segmented))))
          (settled (sekken-input--settle segmented)))
