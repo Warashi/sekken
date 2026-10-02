@@ -106,6 +106,13 @@ nix build
 ユーザー辞書があれば `--user-jisyo user-jisyo` も渡す。形式は UTF-8 の SKK-JISYO と同じで、
 送りなしの見出しだけを読む。
 
+`--lm-int8` を付けると、`lm.zst` の線形層を int8 の行列積で読む（重みは行ごと、入力は
+行ごとに量子化し、漸化式と正規化は f32 のまま）。int8 の内積命令を実行時に確かめて使う:
+aarch64 の dot product（`asimddp`。Apple Silicon、Neoverse N1 など）、x86_64 の AVX-512 VNNI
+（Intel Ice Lake 以降、AMD Zen 4 以降など）か AVX-VNNI（Intel Alder Lake 以降など）。どれも無い
+CPU では f32 のまま読む（使った命令は起動時に stderr に出る）。自分の文 642 文と Wikipedia で、
+先頭一致は f32 と変わらない。AVX-512 VNNI の x86 では打鍵 1 回の変換が約 1.5 倍速くなった。
+
 ## Emacs での設定
 
 ```elisp

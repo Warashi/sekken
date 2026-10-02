@@ -17,12 +17,53 @@ use std::sync::RwLock;
 use anyhow::{Context as _, Result, bail};
 
 use crate::config::{ModelConfig, Weight};
+use crate::quant::{QMatrix, matmul_q};
 use crate::simd;
+
+/// 線形層の重み（出力 × 入力）。`Infer::int8` の後は int8 だけを持つ。
+struct Linear {
+    w: Vec<f32>,
+    q: Option<QMatrix>,
+}
+
+impl Linear {
+    fn new(w: Vec<f32>) -> Linear {
+        Linear { w, q: None }
+    }
+
+    /// int8 にし、f32 の重みは捨てる。
+    fn quantize(&mut self, inputs: usize) {
+        let outputs = self.w.len() / inputs;
+        self.q = Some(QMatrix::new(&self.w, outputs, inputs));
+        self.w = Vec::new();
+    }
+}
 
 struct Block {
     norm1: Vec<f32>,
     /// (proj_width, d_model)
-    in_proj: Vec<f32>,
+    in_proj: Linear,
+    mixer: Mixer,
+    /// (d_model, inner)
+    out_proj: Linear,
+    norm2: Vec<f32>,
+    /// (mlp_dim, d_model)
+    gate: Linear,
+    up: Linear,
+    /// (d_model, mlp_dim)
+    down: Linear,
+}
+
+/// Mamba-3 層の式。ファイルの重みの名前で決まる（`block0.mixer.a_log` があれば `Legacy`、
+/// `block0.mixer.b_norm.weight` があれば `Official`）。
+enum Mixer {
+    /// 2026-09 までの自前の式（sekken-train の candle の学習）。新しい式のモデルに置き換えたら消す。
+    Legacy(LegacyMixer),
+    /// state-spaces/mamba の Mamba-3 SISO と同じ式（sekken-train の PyTorch の学習）。
+    Official(OfficialMixer),
+}
+
+struct LegacyMixer {
     dt_bias: Vec<f32>,
     /// -exp(a_log)
     a: Vec<f32>,
@@ -33,18 +74,29 @@ struct Block {
     b_bias: Vec<f32>,
     c_bias: Vec<f32>,
     d_skip: Vec<f32>,
-    /// (d_model, inner)
-    out_proj: Vec<f32>,
-    norm2: Vec<f32>,
-    /// (mlp_dim, d_model)
-    gate: Vec<f32>,
-    up: Vec<f32>,
-    /// (d_model, mlp_dim)
-    down: Vec<f32>,
+}
+
+struct OfficialMixer {
+    dt_bias: Vec<f32>,
+    /// (d_state)。B, C の RMSNorm の重み。全 head で共有する。
+    b_norm: Vec<f32>,
+    c_norm: Vec<f32>,
+    /// (heads, d_state)
+    b_bias: Vec<f32>,
+    c_bias: Vec<f32>,
+    d_skip: Vec<f32>,
+}
+
+/// `Mixer` の種類。状態と in_proj の幅を決める。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MixerKind {
+    Legacy,
+    Official,
 }
 
 pub struct Infer {
     cfg: ModelConfig,
+    kind: MixerKind,
     /// (vocab, d_model)
     embed: Vec<f32>,
     blocks: Vec<Block>,
@@ -62,6 +114,8 @@ struct Head {
     weight: Vec<f32>,
     /// (vocab)。学習側は bias を持たないので、ファイルに無ければ零。
     bias: Vec<f32>,
+    /// `Infer::int8` の後の int8 の重み。`adapt` は f32 の重みを動かしてから作り直す。
+    q: Option<QMatrix>,
 }
 
 /// `adapt` で動かす出力層の部分。
@@ -100,29 +154,51 @@ impl Infer {
                 .map(|(_, _, v)| v.clone())
                 .with_context(|| format!("weight {name} not found"))
         };
+        let kind = if weights
+            .iter()
+            .any(|(n, _, _)| n == "block0.mixer.b_norm.weight")
+        {
+            MixerKind::Official
+        } else {
+            MixerKind::Legacy
+        };
         let mut blocks = Vec::with_capacity(cfg.n_layers);
         for i in 0..cfg.n_layers {
             let p = |s: &str| format!("block{i}.{s}");
+            let mixer = match kind {
+                MixerKind::Legacy => Mixer::Legacy(LegacyMixer {
+                    dt_bias: get(&p("mixer.dt_bias"))?,
+                    a: get(&p("mixer.a_log"))?.iter().map(|a| -a.exp()).collect(),
+                    theta_bias: get(&p("mixer.theta_bias"))?,
+                    lambda_bias: get(&p("mixer.lambda_bias"))?,
+                    b_bias: get(&p("mixer.b_bias"))?,
+                    c_bias: get(&p("mixer.c_bias"))?,
+                    d_skip: get(&p("mixer.d_skip"))?,
+                }),
+                MixerKind::Official => Mixer::Official(OfficialMixer {
+                    dt_bias: get(&p("mixer.dt_bias"))?,
+                    b_norm: get(&p("mixer.b_norm.weight"))?,
+                    c_norm: get(&p("mixer.c_norm.weight"))?,
+                    b_bias: get(&p("mixer.b_bias"))?,
+                    c_bias: get(&p("mixer.c_bias"))?,
+                    d_skip: get(&p("mixer.d_skip"))?,
+                }),
+            };
             blocks.push(Block {
                 norm1: get(&p("norm1.weight"))?,
-                in_proj: get(&p("mixer.in_proj.weight"))?,
-                dt_bias: get(&p("mixer.dt_bias"))?,
-                a: get(&p("mixer.a_log"))?.iter().map(|a| -a.exp()).collect(),
-                theta_bias: get(&p("mixer.theta_bias"))?,
-                lambda_bias: get(&p("mixer.lambda_bias"))?,
-                b_bias: get(&p("mixer.b_bias"))?,
-                c_bias: get(&p("mixer.c_bias"))?,
-                d_skip: get(&p("mixer.d_skip"))?,
-                out_proj: get(&p("mixer.out_proj.weight"))?,
+                in_proj: Linear::new(get(&p("mixer.in_proj.weight"))?),
+                mixer,
+                out_proj: Linear::new(get(&p("mixer.out_proj.weight"))?),
                 norm2: get(&p("norm2.weight"))?,
-                gate: get(&p("mlp.gate.weight"))?,
-                up: get(&p("mlp.up.weight"))?,
-                down: get(&p("mlp.down.weight"))?,
+                gate: Linear::new(get(&p("mlp.gate.weight"))?),
+                up: Linear::new(get(&p("mlp.up.weight"))?),
+                down: Linear::new(get(&p("mlp.down.weight"))?),
             });
         }
         let head = Head {
             weight: get("head.weight")?,
             bias: get("head.bias").unwrap_or_else(|_| vec![0.0; cfg.vocab_size]),
+            q: None,
         };
         if head.weight.len() != cfg.vocab_size * cfg.d_model || head.bias.len() != cfg.vocab_size {
             bail!("head shape does not match config");
@@ -134,8 +210,9 @@ impl Infer {
             blocks,
             threads: 1,
             cfg,
+            kind,
         };
-        if infer.blocks[0].in_proj.len() != infer.proj_width() * infer.cfg.d_model {
+        if infer.blocks[0].in_proj.w.len() != infer.proj_width() * infer.cfg.d_model {
             bail!("in_proj shape does not match config");
         }
         if !infer.cfg.d_state.is_multiple_of(2) || infer.cfg.d_state > MAX_STATE {
@@ -150,6 +227,23 @@ impl Infer {
         self
     }
 
+    /// 線形層（in_proj、out_proj、MLP、出力層）を int8 の行列積にする。重みは出力の行ごと、
+    /// 入力は行ごとに量子化する（`quant`）。埋め込み・正規化・漸化式は f32 のまま。
+    /// 出力層は `adapt` で動かすので f32 の重みも残す。
+    pub fn int8(mut self) -> Infer {
+        let (d, inner, m) = (self.cfg.d_model, self.inner(), self.cfg.mlp_dim);
+        for blk in &mut self.blocks {
+            blk.in_proj.quantize(d);
+            blk.out_proj.quantize(inner);
+            blk.gate.quantize(d);
+            blk.up.quantize(d);
+            blk.down.quantize(m);
+        }
+        let head = self.head.get_mut().unwrap();
+        head.q = Some(QMatrix::new(&head.weight, self.cfg.vocab_size, d));
+        self
+    }
+
     pub fn config(&self) -> &ModelConfig {
         &self.cfg
     }
@@ -158,21 +252,31 @@ impl Infer {
         self.cfg.n_heads * self.cfg.head_dim
     }
 
+    /// in_proj の出力の幅。`Legacy` は [z, x, B, C, dt, θ (H × N/2), λ]、
+    /// `Official` は [z, x, B, C, dt, A, trap, 角 (R)]。
     pub fn proj_width(&self) -> usize {
         let h = self.cfg.n_heads;
         let n = self.cfg.d_state;
-        2 * self.inner() + 2 * n + h + h * n / 2 + h
+        match self.kind {
+            MixerKind::Legacy => 2 * self.inner() + 2 * n + h + h * n / 2 + h,
+            MixerKind::Official => 2 * self.inner() + 2 * n + 3 * h + rope_angles(n),
+        }
     }
 
-    /// 1 層分の状態の長さ: head ごとに h と v_prev が P × N ずつ、累積角が N / 2。
+    /// 1 層分の状態の長さ。
     fn layer_state_len(&self) -> usize {
         self.cfg.n_heads * self.head_state_len()
     }
 
     /// 1 head 分の状態の長さ。層の状態は head ごとにこの長さで並ぶ。
+    /// `Legacy` は h と v_prev（P × N ずつ）と累積角（N / 2）、
+    /// `Official` は h（P × N）、回した k_prev（N）、x_prev（P）、累積角（R）。
     fn head_state_len(&self) -> usize {
         let (p, n) = (self.cfg.head_dim, self.cfg.d_state);
-        2 * p * n + n / 2
+        match self.kind {
+            MixerKind::Legacy => 2 * p * n + n / 2,
+            MixerKind::Official => p * n + n + p + rope_angles(n),
+        }
     }
 
     pub fn state_len(&self) -> usize {
@@ -184,13 +288,23 @@ impl Infer {
     }
 
     /// `dst` (rows × out) = `x` (rows × in) · `w` (out × in)^T
-    fn linear(&self, x: &[f32], rows: usize, w: &[f32], dst: &mut [f32]) {
-        let k = x.len() / rows.max(1);
-        let n = w.len() / k;
-        debug_assert_eq!(dst.len(), rows * n);
+    fn linear(&self, x: &[f32], rows: usize, w: &Linear, dst: &mut [f32]) {
+        self.matmul(x, rows, &w.w, w.q.as_ref(), dst);
+    }
+
+    /// `q` があれば int8、無ければ f32 の `w` で行列積を取る。
+    fn matmul(&self, x: &[f32], rows: usize, w: &[f32], q: Option<&QMatrix>, dst: &mut [f32]) {
         if rows == 0 {
             return;
         }
+        if let Some(q) = q {
+            debug_assert_eq!(dst.len(), rows * q.rows());
+            matmul_q(x, rows, q, dst, self.threads);
+            return;
+        }
+        let k = x.len() / rows;
+        let n = w.len() / k;
+        debug_assert_eq!(dst.len(), rows * n);
         matmul_t(x, rows, k, w, n, dst, self.threads);
     }
 
@@ -335,7 +449,7 @@ impl Infer {
     /// `hidden`（rows × d_model）の各行の logits（rows × vocab）。
     fn logits(&self, hidden: &[f32], rows: usize, dst: &mut [f32]) {
         let head = self.head.read().unwrap();
-        self.linear(hidden, rows, &head.weight, dst);
+        self.matmul(hidden, rows, &head.weight, head.q.as_ref(), dst);
         for row in dst.chunks_exact_mut(self.cfg.vocab_size) {
             for (l, b) in row.iter_mut().zip(&head.bias) {
                 *l += b;
@@ -348,7 +462,12 @@ impl Infer {
         let d = self.cfg.d_model;
         let id = id as usize;
         let head = self.head.read().unwrap();
-        dot(&head.weight[id * d..(id + 1) * d], hidden) + head.bias[id] - lse
+        // log-sum-exp と同じ行列積の値にしないと、確率の和が 1 からずれる。
+        let logit = match &head.q {
+            Some(q) => q.dot_row(id, hidden),
+            None => dot(&head.weight[id * d..(id + 1) * d], hidden),
+        };
+        logit + head.bias[id] - lse
     }
 
     /// 出力層を delta 則で 1 歩動かす。`hidden` の各行（rows × d_model）で
@@ -399,6 +518,9 @@ impl Infer {
             for (w, g) in head.weight.iter_mut().zip(&delta) {
                 *w -= lr * g;
             }
+            if head.q.is_some() {
+                head.q = Some(QMatrix::new(&head.weight, v, d));
+            }
         }
         nll
     }
@@ -427,6 +549,20 @@ impl Infer {
     fn scan_head(
         &self,
         blk: &Block,
+        hd: usize,
+        state: &mut [f32],
+        proj: &[f32],
+        y: Option<&mut [f32]>,
+    ) {
+        match &blk.mixer {
+            Mixer::Legacy(m) => self.scan_head_legacy(m, hd, state, proj, y),
+            Mixer::Official(m) => self.scan_head_official(m, hd, state, proj, y),
+        }
+    }
+
+    fn scan_head_legacy(
+        &self,
+        blk: &LegacyMixer,
         hd: usize,
         state: &mut [f32],
         proj: &[f32],
@@ -491,6 +627,66 @@ impl Infer {
                 y[pi] = acc + xv * blk.d_skip[hd];
             }
         }
+    }
+
+    /// `Official` の 1 head を 1 位置進める。式は sekken-train の `python/sekken_lm/model.py`
+    /// （公式の `mamba3_siso_step_ref`）と同じ。`state` は h、k_prev、x_prev、累積角の順。
+    fn scan_head_official(
+        &self,
+        m: &OfficialMixer,
+        hd: usize,
+        state: &mut [f32],
+        proj: &[f32],
+        y: Option<&mut [f32]>,
+    ) {
+        let h = self.cfg.n_heads;
+        let p = self.cfg.head_dim;
+        let n = self.cfg.d_state;
+        let r = rope_angles(n);
+        let inner = h * p;
+        let (_z, rest) = proj.split_at(inner);
+        let (x, rest) = rest.split_at(inner);
+        let (b, rest) = rest.split_at(n);
+        let (c, rest) = rest.split_at(n);
+        let (dd_dt, rest) = rest.split_at(h);
+        let (dd_a, rest) = rest.split_at(h);
+        let (trap, angles) = rest.split_at(h);
+        let (hs, rest) = state.split_at_mut(p * n);
+        let (k_prev, rest) = rest.split_at_mut(n);
+        let (x_prev, phi) = rest.split_at_mut(p);
+
+        let dt = softplus(dd_dt[hd] + m.dt_bias[hd]);
+        let a = (-heavy_tail(dd_a[hd])).min(-A_FLOOR);
+        let alpha = (a * dt).exp();
+        let lambda = sigmoid(trap[hd]);
+        let gamma = lambda * dt;
+        let beta = (1.0 - lambda) * dt * alpha;
+        for (ph, an) in phi.iter_mut().zip(&angles[..r]) {
+            let v = *ph + an.tanh() * std::f32::consts::PI * dt;
+            *ph = v - TWO_PI * (v / TWO_PI).floor();
+        }
+        let mut k = [0.0f32; MAX_STATE];
+        let mut q = [0.0f32; MAX_STATE];
+        let bias = hd * n..(hd + 1) * n;
+        norm_bias_rotate(b, &m.b_norm, &m.b_bias[bias.clone()], phi, &mut k[..n]);
+        norm_bias_rotate(c, &m.c_norm, &m.c_bias[bias], phi, &mut q[..n]);
+        let xh = &x[hd * p..(hd + 1) * p];
+        let mut y = y;
+        for pi in 0..p {
+            let hrow = &mut hs[pi * n..(pi + 1) * n];
+            let (bx, gx) = (beta * x_prev[pi], gamma * xh[pi]);
+            let mut acc = 0.0f32;
+            for i in 0..n {
+                let v = alpha * hrow[i] + bx * k_prev[i] + gx * k[i];
+                hrow[i] = v;
+                acc += v * q[i];
+            }
+            if let Some(y) = y.as_deref_mut() {
+                y[pi] = acc + xh[pi] * m.d_skip[hd];
+            }
+        }
+        k_prev.copy_from_slice(&k[..n]);
+        x_prev.copy_from_slice(xh);
     }
 }
 
@@ -779,6 +975,36 @@ fn rms_scale(x: &[f32]) -> f32 {
     1.0 / (ms + 1e-6).sqrt()
 }
 
+const A_FLOOR: f32 = 1e-4;
+const TWO_PI: f32 = 2.0 * std::f32::consts::PI;
+
+/// 回す角の数 R。公式の rope_fraction = 0.5 と同じく、状態の半分を偶数に丸めた数の組。
+fn rope_angles(d_state: usize) -> usize {
+    let split = d_state / 2;
+    (split - split % 2) / 2
+}
+
+/// 公式の heavy_tail_activation: x ≥ 0 なら 1 + x、負なら 1 / (1 − x)。
+fn heavy_tail(x: f32) -> f32 {
+    if x >= 0.0 { 1.0 + x } else { 1.0 / (1.0 - x) }
+}
+
+/// `v` を RMSNorm（重み `norm`、eps 1e-5）して `bias` を足し、先頭 2R 個を隣り合う 2 つずつ
+/// 角 `phi`（R 個）だけ回して `dst` に書く。
+fn norm_bias_rotate(v: &[f32], norm: &[f32], bias: &[f32], phi: &[f32], dst: &mut [f32]) {
+    let ms = v.iter().map(|x| x * x).sum::<f32>() / v.len() as f32;
+    let s = 1.0 / (ms + 1e-5).sqrt();
+    for ((d, (x, w)), b) in dst.iter_mut().zip(v.iter().zip(norm)).zip(bias) {
+        *d = x * s * w + b;
+    }
+    for (i, a) in phi.iter().enumerate() {
+        let (sin, cos) = a.sin_cos();
+        let (t0, t1) = (dst[2 * i], dst[2 * i + 1]);
+        dst[2 * i] = t0 * cos - t1 * sin;
+        dst[2 * i + 1] = t0 * sin + t1 * cos;
+    }
+}
+
 /// 行ごとに RMS を 1 にして重みを掛ける。
 fn rms_norm_rows(x: &[f32], weight: &[f32], dst: &mut [f32], d: usize) {
     for (row, out) in x.chunks_exact(d).zip(dst.chunks_exact_mut(d)) {
@@ -793,7 +1019,7 @@ fn rms_norm_rows(x: &[f32], weight: &[f32], dst: &mut [f32], d: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::random_weights;
+    use crate::testing::{random_official_weights, random_weights};
 
     fn config() -> ModelConfig {
         ModelConfig {
@@ -809,6 +1035,70 @@ mod tests {
 
     fn infer() -> Infer {
         Infer::new(config(), &random_weights(&config(), 1)).unwrap()
+    }
+
+    /// 公式の式の推論経路。回す角が 1 組以上になるよう d_state を 8 にする。
+    fn official() -> Infer {
+        let cfg = ModelConfig {
+            d_state: 8,
+            ..config()
+        };
+        Infer::new(cfg.clone(), &random_official_weights(&cfg, 1)).unwrap()
+    }
+
+    #[test]
+    fn 重みの名前で式を選ぶ() {
+        assert_eq!(infer().kind, MixerKind::Legacy);
+        assert_eq!(official().kind, MixerKind::Official);
+    }
+
+    #[test]
+    fn 公式の式でも正規化され_続きの読みと作り直した状態が一度に読んだのと同じ() {
+        let infer = official();
+        let ids = [0u32, 3, 4, 5, 6, 1];
+        let whole = infer.read(&[Chain {
+            state: &infer.init_state(),
+            ids: &ids,
+        }]);
+        for pos in 0..ids.len() {
+            let total: f32 = log_probs(&infer, &whole, pos).iter().map(|p| p.exp()).sum();
+            assert!((total - 1.0).abs() < 1e-4, "pos={pos} total={total}");
+        }
+        let head = infer.read(&[Chain {
+            state: &infer.init_state(),
+            ids: &ids[..3],
+        }]);
+        let tail = infer.read(&[Chain {
+            state: &head.states[0],
+            ids: &ids[3..],
+        }]);
+        for pos in 0..3 {
+            assert_close(
+                &log_probs(&infer, &tail, pos),
+                &log_probs(&infer, &whole, 3 + pos),
+                1e-4,
+            );
+        }
+        let stride = infer.cfg.n_layers * infer.proj_width();
+        let mut state = infer.init_state();
+        infer.rescan(&mut state, &whole.proj[..3 * stride]);
+        assert_close(&state, &head.states[0], 1e-5);
+    }
+
+    #[test]
+    fn 公式の式でも_int8_は_f32_に近い() {
+        let (f, q) = (official(), official().int8());
+        let ids = [0u32, 3, 4, 5, 6, 1];
+        let read = |i: &Infer| {
+            i.read(&[Chain {
+                state: &i.init_state(),
+                ids: &ids,
+            }])
+        };
+        let (rf, rq) = (read(&f), read(&q));
+        for pos in 0..ids.len() {
+            assert_close(&log_probs(&f, &rf, pos), &log_probs(&q, &rq, pos), 0.1);
+        }
     }
 
     fn log_probs(infer: &Infer, read: &Read, pos: usize) -> Vec<f32> {
@@ -837,6 +1127,56 @@ mod tests {
         }]);
         for pos in 0..ids.len() {
             let total: f32 = log_probs(&infer, &read, pos).iter().map(|p| p.exp()).sum();
+            assert!((total - 1.0).abs() < 1e-4, "pos={pos} total={total}");
+        }
+    }
+
+    #[test]
+    fn int8_にしても対数確率は_f32_に近く正規化されている() {
+        let f32_infer = infer();
+        let int8_infer = infer().int8();
+        let ids = [0u32, 3, 4, 5, 6, 1];
+        let read = |i: &Infer| {
+            i.read(&[Chain {
+                state: &i.init_state(),
+                ids: &ids,
+            }])
+        };
+        let (rf, rq) = (read(&f32_infer), read(&int8_infer));
+        for pos in 0..ids.len() {
+            let (pf, pq) = (
+                log_probs(&f32_infer, &rf, pos),
+                log_probs(&int8_infer, &rq, pos),
+            );
+            // d_model 16 の小さなモデルでは内積の項が少なく、量子化の誤差が相対的に大きい。
+            assert_close(&pf, &pq, 0.1);
+            let total: f32 = pq.iter().map(|p| p.exp()).sum();
+            assert!((total - 1.0).abs() < 1e-4, "pos={pos} total={total}");
+        }
+    }
+
+    #[test]
+    fn int8_でも出力層を動かすと正解が上がり正規化は保たれる() {
+        let infer = infer().int8();
+        let ids = [0u32, 3, 4, 5];
+        let read = || {
+            infer.read(&[Chain {
+                state: &infer.init_state(),
+                ids: &ids,
+            }])
+        };
+        let d = infer.cfg.d_model;
+        let before = read();
+        let nll = |r: &Read| -> f32 {
+            (0..3)
+                .map(|p| -log_probs(&infer, r, p)[ids[p + 1] as usize])
+                .sum()
+        };
+        infer.adapt(&before.hidden[..3 * d], &ids[1..], 0.05, Plastic::Head);
+        let after = read();
+        assert!(nll(&after) < nll(&before));
+        for pos in 0..ids.len() {
+            let total: f32 = log_probs(&infer, &after, pos).iter().map(|p| p.exp()).sum();
             assert!((total - 1.0).abs() < 1e-4, "pos={pos} total={total}");
         }
     }

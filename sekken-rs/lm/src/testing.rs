@@ -16,12 +16,26 @@ impl Lcg {
     }
 }
 
-/// `cfg` に合う名前と形の重みを、種 `seed` から作る。
+/// `cfg` に合う名前と形の重み（2026-09 までの自前の式）を、種 `seed` から作る。
 pub fn random_weights(cfg: &ModelConfig, seed: u64) -> Vec<Weight> {
+    random(cfg, seed, false)
+}
+
+/// `cfg` に合う名前と形の重み（公式の Mamba-3 SISO の式）を、種 `seed` から作る。
+pub fn random_official_weights(cfg: &ModelConfig, seed: u64) -> Vec<Weight> {
+    random(cfg, seed, true)
+}
+
+fn random(cfg: &ModelConfig, seed: u64, official: bool) -> Vec<Weight> {
     let mut rng = Lcg(seed);
     let (h, n, d, p) = (cfg.n_heads, cfg.d_state, cfg.d_model, cfg.head_dim);
     let inner = h * p;
-    let proj_width = 2 * inner + 2 * n + h + h * n / 2 + h;
+    let rope = (n / 2 - n / 2 % 2) / 2;
+    let proj_width = if official {
+        2 * inner + 2 * n + 3 * h + rope
+    } else {
+        2 * inner + 2 * n + h + h * n / 2 + h
+    };
     let mut out = Vec::new();
     let mut push = |name: String, shape: Vec<usize>, lo: f32, up: f32| {
         let len = shape.iter().product();
@@ -41,9 +55,14 @@ pub fn random_weights(cfg: &ModelConfig, seed: u64) -> Vec<Weight> {
             linear(d),
         );
         push(p("mixer.dt_bias"), vec![h], -6.9, -2.25);
-        push(p("mixer.a_log"), vec![h], 0.0, 16f32.ln());
-        push(p("mixer.theta_bias"), vec![h, n / 2], 0.5, 20.0);
-        push(p("mixer.lambda_bias"), vec![h], 0.0, 0.0);
+        if official {
+            push(p("mixer.b_norm.weight"), vec![n], 0.5, 1.5);
+            push(p("mixer.c_norm.weight"), vec![n], 0.5, 1.5);
+        } else {
+            push(p("mixer.a_log"), vec![h], 0.0, 16f32.ln());
+            push(p("mixer.theta_bias"), vec![h, n / 2], 0.5, 20.0);
+            push(p("mixer.lambda_bias"), vec![h], 0.0, 0.0);
+        }
         push(p("mixer.b_bias"), vec![h, n], 1.0, 1.0);
         push(p("mixer.c_bias"), vec![h, n], 1.0, 1.0);
         push(p("mixer.d_skip"), vec![h], 1.0, 1.0);
