@@ -15,6 +15,9 @@ pub struct Candidate {
     pub rank: usize,
     /// 辞書を引かず読みをそのままかなにした候補か。
     pub kana: bool,
+    /// literal の直後の区間の、読みをそのままひらがなにした候補か。かな罰則の代わりに
+    /// literal の後のかな罰則を課す（`Weights::literal_kana_penalty`）。
+    pub after_literal: bool,
     /// ユーザー辞書の候補か。使う本人が足した語で、モデルが知らない語でも
     /// 分かち書きの内部コストを払わない。
     pub user: bool,
@@ -27,6 +30,7 @@ impl Candidate {
             span: 1,
             rank: 0,
             kana: true,
+            after_literal: false,
             user: false,
         }
     }
@@ -37,6 +41,7 @@ impl Candidate {
             span,
             rank,
             kana: false,
+            after_literal: false,
             user: false,
         }
     }
@@ -47,6 +52,7 @@ impl Candidate {
             span: 1,
             rank,
             kana: false,
+            after_literal: false,
             user: true,
         }
     }
@@ -160,6 +166,8 @@ fn okuri_ari(dict: &Dictionary, yomi: &str, okuri: &str) -> Vec<String> {
 /// や接尾辞（`>かい`）の見出しでも引く。abbrev 区間は綴りをそのまま見出しにする。
 /// かな区間とそのまま出す区間は、その文字列 1 つだけを候補にする。
 /// 送りなしと abbrev の見出しは `user`（ユーザー辞書）を先に引く。
+/// literal は `;` でしか閉じられず、直後の助詞（`'Emacs;wo`）も辞書を引く区間になってひらがなと示す
+/// 手段が無いので、literal の直後の区間のひらがなの候補には印を付け、軽いかな罰則にする。
 pub fn candidates_at(
     dict: &Dictionary,
     user: &Dictionary,
@@ -226,7 +234,9 @@ pub fn candidates_at(
         }
     }
 
-    out.push(Candidate::kana(piece.text.clone()));
+    let mut hiragana = Candidate::kana(piece.text.clone());
+    hiragana.after_literal = index > 0 && pieces[index - 1].kind == Kind::Literal;
+    out.push(hiragana);
     out.push(Candidate::kana(hira2kata(&piece.text)));
     out
 }
@@ -513,5 +523,19 @@ emacs /Emacs/
                 .iter()
                 .all(|c| c.span == 1)
         );
+    }
+
+    #[test]
+    fn literal_の直後の区間はひらがなの候補にだけ印を付ける() {
+        let pieces = [Piece::literal("Emacs"), Piece::convert("お")];
+        let c = candidates_at(&dict(), &Dictionary::default(), &pieces, 1);
+        let marked: Vec<&str> = c
+            .iter()
+            .filter(|c| c.after_literal)
+            .map(|c| c.surface.as_str())
+            .collect();
+        assert_eq!(marked, ["お"]);
+        let c = candidates_at(&dict(), &Dictionary::default(), &convert(&["お"]), 0);
+        assert!(c.iter().all(|c| !c.after_literal));
     }
 }

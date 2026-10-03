@@ -19,6 +19,10 @@ pub const RANK_WEIGHT: f64 = 3.0;
 /// （6 では別の文が落ちる）。
 pub const KANA_PENALTY: f64 = 4.0;
 
+/// literal の直後の区間で、読みをそのままひらがなにした候補に加えるコスト。直後の助詞
+/// （`'Emacs;wo`）はかなと示す手段が無いので `KANA_PENALTY` より軽くする。
+pub const LITERAL_KANA_PENALTY: f64 = KANA_PENALTY;
+
 /// 途中経路を残す本数の下限。同点や後段の逆転に備え、要求数が少なくても
 /// これだけは残す。
 pub const BEAM: usize = 20;
@@ -30,6 +34,8 @@ pub struct Weights {
     pub rank: f64,
     /// 読みをそのままかなにした候補に加えるコスト。
     pub kana_penalty: f64,
+    /// literal の直後の区間で、読みをそのままひらがなにした候補に加えるコスト。
+    pub literal_kana_penalty: f64,
 }
 
 impl Default for Weights {
@@ -37,6 +43,7 @@ impl Default for Weights {
         Weights {
             rank: RANK_WEIGHT,
             kana_penalty: KANA_PENALTY,
+            literal_kana_penalty: LITERAL_KANA_PENALTY,
         }
     }
 }
@@ -150,10 +157,10 @@ impl<'a> Search<'a> {
                 pos_uni.push(
                     unigram
                         + lattice.weights.rank * (1.0 + cand.rank as f64).ln()
-                        + if cand.kana {
-                            lattice.weights.kana_penalty
-                        } else {
-                            0.0
+                        + match (cand.kana, cand.after_literal) {
+                            (true, true) => lattice.weights.literal_kana_penalty,
+                            (true, false) => lattice.weights.kana_penalty,
+                            (false, _) => 0.0,
                         },
                 );
                 max_span = max_span.max(cand.span);
@@ -381,6 +388,7 @@ mod tests {
             span,
             rank: 0,
             kana: false,
+            after_literal: false,
             user: false,
         }
     }
@@ -441,6 +449,7 @@ mod tests {
                     span: 1,
                     rank: 1,
                     kana: false,
+                    after_literal: false,
                     user: false,
                 },
                 Candidate {
@@ -448,6 +457,7 @@ mod tests {
                     span: 1,
                     rank: 0,
                     kana: false,
+                    after_literal: false,
                     user: false,
                 },
             ]],
@@ -470,6 +480,7 @@ mod tests {
                     span: 1,
                     rank: 0,
                     kana: false,
+                    after_literal: false,
                     user: true,
                 },
             ]],
@@ -579,6 +590,7 @@ mod tests {
                 span: 1,
                 rank: 0,
                 kana: false,
+                after_literal: false,
                 user: false,
             })
             .collect();
