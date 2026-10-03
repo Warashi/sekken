@@ -15,10 +15,32 @@ use std::collections::HashSet;
 
 use sekken_core::kana::hira2kata_char;
 
-/// 区間の読みの前に置く字。
-pub const READING: char = '\u{1e}';
-/// 区間の出力の前に置く字。
-pub const OUTPUT: char = '\t';
+/// 学習・採点に使う行の 1 要素。区切りは字と別の要素なので、本文の字（literal のタブなど）と
+/// 取り違えない。語彙では区切りに字と別の id を振る（`Vocab::sym`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Sym {
+    /// 区間の読みの始まり。前の区間の終わりも示す。
+    Reading,
+    /// 区間の出力の始まり（交互でない条件付きの行では、前置した読みの終わり）。
+    Output,
+    Char(char),
+}
+
+/// 学習・採点に使う 1 行。
+pub type Line = Vec<Sym>;
+
+/// 区切りの無い行（無条件の文）。
+pub fn plain(text: &str) -> Line {
+    text.chars().map(Sym::Char).collect()
+}
+
+/// 読みを前置した行（`Condition::Katakana`）。読み、`Output`、出力の順。
+pub fn prefixed(reading: &str, output: &str) -> Line {
+    let mut line = plain(reading);
+    line.push(Sym::Output);
+    line.extend(output.chars().map(Sym::Char));
+    line
+}
 
 /// 表層を「変換される並び」と「読みにそのまま現れる並び」に分けたときの 1 並び。
 struct Run {
@@ -177,14 +199,14 @@ pub fn align(surface: &str, reading: &str) -> Option<Vec<(String, String)>> {
     Some(segments)
 }
 
-/// 学習・採点に使う 1 行。区間ごとに `READING` 読み `OUTPUT` 出力を並べる。
+/// 学習・採点に使う 1 行。区間ごとに `Reading` 読み `Output` 出力を並べる。
 /// 読みが表層に当てはまらなければ全体を 1 区間にする。
-pub fn build(reading: &str, output: &str) -> String {
+pub fn build(reading: &str, output: &str) -> Line {
     try_build(reading, output).unwrap_or_else(|| join(&[(reading, output)]))
 }
 
 /// 読みが表層に当てはまるときだけ `build` と同じ行を返す。
-pub fn try_build(reading: &str, output: &str) -> Option<String> {
+pub fn try_build(reading: &str, output: &str) -> Option<Line> {
     let segments = align(output, reading)?;
     let segments: Vec<(&str, &str)> = segments
         .iter()
@@ -193,66 +215,77 @@ pub fn try_build(reading: &str, output: &str) -> Option<String> {
     Some(join(&segments))
 }
 
-fn join(segments: &[(&str, &str)]) -> String {
-    let mut line = String::new();
+fn join(segments: &[(&str, &str)]) -> Line {
+    let mut line = Line::new();
     for (read, text) in segments {
-        line.push(READING);
-        line.push_str(read);
-        line.push(OUTPUT);
-        line.push_str(text);
+        line.push(Sym::Reading);
+        line.extend(read.chars().map(Sym::Char));
+        line.push(Sym::Output);
+        line.extend(text.chars().map(Sym::Char));
     }
     line
 }
 
 /// 行の中で出力の字がある位置（出力の i 文字目 → 行の何文字目か）。
 /// 交互でない行は全部の字が出力。
-pub fn output_positions(line: &str) -> Vec<usize> {
-    let chars: Vec<char> = line.chars().collect();
-    if !chars.contains(&READING) {
-        return (0..chars.len()).collect();
+pub fn output_positions(line: &[Sym]) -> Vec<usize> {
+    if !line.contains(&Sym::Reading) {
+        return (0..line.len()).collect();
     }
     let mut in_output = false;
     let mut positions = Vec::new();
-    for (i, &c) in chars.iter().enumerate() {
-        match c {
-            READING => in_output = false,
-            OUTPUT => in_output = true,
-            _ if in_output => positions.push(i),
-            _ => {}
+    for (i, &s) in line.iter().enumerate() {
+        match s {
+            Sym::Reading => in_output = false,
+            Sym::Output => in_output = true,
+            Sym::Char(_) if in_output => positions.push(i),
+            Sym::Char(_) => {}
         }
     }
     positions
 }
 
-/// 行の各字が損失（採点）に入るか。出力の字と、区間の終わりを示す `READING` は
-/// 入り、読みの字と `OUTPUT` は入らない。`READING` の無い行は `OUTPUT` の後ろ
+/// 行の各要素が損失（採点）に入るか。出力の字と、区間の終わりを示す `Reading` は
+/// 入り、読みの字と `Output` は入らない。`Reading` の無い行は `Output` の後ろ
 /// だけ、どちらも無い行は全部が入る。
-pub fn loss_mask(line: &str) -> Vec<bool> {
-    let chars: Vec<char> = line.chars().collect();
-    if !chars.contains(&READING) {
-        let start = chars.iter().position(|&c| c == OUTPUT).map_or(0, |i| i + 1);
-        return (0..chars.len()).map(|i| i >= start).collect();
+pub fn loss_mask(line: &[Sym]) -> Vec<bool> {
+    if !line.contains(&Sym::Reading) {
+        let start = line
+            .iter()
+            .position(|&s| s == Sym::Output)
+            .map_or(0, |i| i + 1);
+        return (0..line.len()).map(|i| i >= start).collect();
     }
     let mut in_output = false;
-    chars
-        .iter()
-        .map(|&c| match c {
-            READING => {
+    line.iter()
+        .map(|&s| match s {
+            Sym::Reading => {
                 in_output = false;
                 true
             }
-            OUTPUT => {
+            Sym::Output => {
                 in_output = true;
                 false
             }
-            _ => in_output,
+            Sym::Char(_) => in_output,
         })
         .collect()
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// テストで行を書く略記。U+001E を `Reading`、タブを `Output` にする。
+    pub(crate) fn line(s: &str) -> Line {
+        s.chars()
+            .map(|c| match c {
+                '\u{1e}' => Sym::Reading,
+                '\t' => Sym::Output,
+                c => Sym::Char(c),
+            })
+            .collect()
+    }
 
     fn aligned(surface: &str, reading: &str) -> Vec<(String, String)> {
         align(surface, reading).unwrap()
@@ -352,7 +385,7 @@ mod tests {
     fn 行は区間ごとに読みと出力を交互に並べる() {
         assert_eq!(
             build("ソレハネコダ", "それは猫だ"),
-            "\u{1e}ソレハ\tそれは\u{1e}ネコダ\t猫だ"
+            line("\u{1e}ソレハ\tそれは\u{1e}ネコダ\t猫だ")
         );
     }
 
@@ -360,33 +393,57 @@ mod tests {
     fn 当てはまらない行は全体を_1_区間にする() {
         assert_eq!(
             build("ネコノナク", "猫が鳴く"),
-            "\u{1e}ネコノナク\t猫が鳴く"
+            line("\u{1e}ネコノナク\t猫が鳴く")
         );
         assert_eq!(try_build("ネコノナク", "猫が鳴く"), None);
         assert_eq!(
-            try_build("ネコダ", "猫だ").as_deref(),
-            Some("\u{1e}ネコダ\t猫だ")
+            try_build("ネコダ", "猫だ"),
+            Some(line("\u{1e}ネコダ\t猫だ"))
         );
     }
 
     #[test]
     fn 損失は出力の字と区間の終わりに掛かる() {
-        let line = "\u{1e}ネコ\t猫\u{1e}ガ\tが";
         assert_eq!(
-            loss_mask(line),
+            loss_mask(&line("\u{1e}ネコ\t猫\u{1e}ガ\tが")),
             [true, false, false, false, true, true, false, false, true]
         );
     }
 
     #[test]
     fn 出力の字の位置を引ける() {
-        assert_eq!(output_positions("\u{1e}ネコ\t猫\u{1e}ガ\tが"), [4, 8]);
-        assert_eq!(output_positions("猫が"), [0, 1]);
+        assert_eq!(
+            output_positions(&line("\u{1e}ネコ\t猫\u{1e}ガ\tが")),
+            [4, 8]
+        );
+        assert_eq!(output_positions(&plain("猫が")), [0, 1]);
     }
 
     #[test]
     fn 交互でない行はタブの後ろだけ_タブも無ければ全部() {
-        assert_eq!(loss_mask("ネコ\t猫"), [false, false, false, true]);
-        assert_eq!(loss_mask("猫が"), [true, true]);
+        assert_eq!(
+            loss_mask(&prefixed("ネコ", "猫")),
+            [false, false, false, true]
+        );
+        assert_eq!(loss_mask(&plain("猫が")), [true, true]);
+    }
+
+    #[test]
+    fn 本文のタブや_u001e_は字のまま区切りにならない() {
+        let built = build("キョウハa\tbヲ", "今日はa\tbを");
+        assert_eq!(
+            built.iter().filter(|s| matches!(s, Sym::Reading)).count(),
+            1
+        );
+        assert!(built.contains(&Sym::Char('\t')));
+        // 読みの中のタブで出力が始まったことにならない。
+        let outputs: String = output_positions(&built)
+            .into_iter()
+            .map(|i| match built[i] {
+                Sym::Char(c) => c,
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(outputs, "今日はa\tbを");
     }
 }

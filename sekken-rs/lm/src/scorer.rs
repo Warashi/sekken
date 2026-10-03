@@ -1,14 +1,14 @@
 //! 言語モデルで文をまとめて採点する。
 //!
-//! 採点は入力側（BOS、条件付きなら前置する入力と `\t`）を 1 本だけ読んで状態を取り、
+//! 採点は入力側（BOS、条件付きなら前置する入力と出力の始まりの区切り）を 1 本だけ読んで状態を取り、
 //! 候補側は trie にまとめて、共有する接頭辞を一度だけ読む。上位 20 本の候補は
 //! 文字の半分以上が他の候補と接頭辞を共有するので、候補ごとに全文を読むより
 //! 計算が半分近くで済む。
 //!
 //! 入力中は 1 字打つごとに変換が来て、入力側は前回と長い接頭辞を共有する
 //! （`Wagah` → `ワガh`、`Wagaha` → `ワガハ` のように末尾は入れ替わる）。
-//! 直前の入力側の読み（`\t` の手前まで）の係数を残し、共有する接頭辞の
-//! 状態を係数から作って、その先と `\t` だけを読む。
+//! 直前の入力側の読み（区切りの手前まで）の係数を残し、共有する接頭辞の
+//! 状態を係数から作って、その先と区切りだけを読む。
 //!
 //! 交互形は入力側が BOS だけで、読みは候補の列に区間ごとに混ざる。先頭の
 //! 区間の列は入力が伸びても変わらないので、直前の変換で読んだ候補の節を
@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::condition::Condition;
 use crate::file::SavedModel;
 use crate::infer::{Infer, Plastic};
-use crate::interleave::{build, loss_mask, output_positions};
+use crate::interleave::{Line, Sym, build, loss_mask, output_positions, plain};
 use crate::session::{Carried, Session};
 use crate::vocab::{BOS, EOS, Vocab};
 
@@ -38,7 +38,7 @@ pub struct LmScorer {
     generation: AtomicU64,
 }
 
-/// 直前の入力側（BOS から `\t` の手前まで）の読み。
+/// 直前の入力側（BOS から区切りの手前まで）の読み。
 struct PrefixCache {
     ids: Vec<u32>,
     /// `ids` の各位置の係数（位置 × n_layers × proj_width）。
@@ -101,17 +101,12 @@ impl LmScorer {
         &self.vocab
     }
 
-    #[cfg(test)]
-    pub(crate) fn into_infer(self) -> Infer {
-        self.infer
-    }
-
-    /// 入力側の id 列。条件付きなら BOS、前置する入力、`\t`。無条件なら BOS だけ。
+    /// 入力側の id 列。条件付きなら BOS、前置する入力、出力の始まり。無条件なら BOS だけ。
     fn prefix_ids(&self, input: &str) -> Vec<u32> {
         let mut ids = vec![BOS];
         if let Some(prefix) = self.condition.prefix(input) {
             ids.extend(prefix.chars().map(|c| self.vocab.id(c)));
-            ids.push(self.vocab.id('\t'));
+            ids.push(self.vocab.sym(Sym::Output));
         }
         ids
     }
@@ -133,8 +128,8 @@ impl LmScorer {
         }
     }
 
-    /// 入力側の id 列を読んで場を開く。`\t` の手前までが直前の入力側と接頭辞を
-    /// 共有するなら、共有する分の状態を係数から作り、その先と `\t` だけを読む。
+    /// 入力側の id 列を読んで場を開く。区切りの手前までが直前の入力側と接頭辞を
+    /// 共有するなら、共有する分の状態を係数から作り、その先と区切りだけを読む。
     /// 結果は最初から読んだのと同じになる。
     fn open(&self, ids: &[u32]) -> Session<'_> {
         let body = &ids[..ids.len() - 1];
@@ -244,13 +239,13 @@ impl<'a> Scoring<'a> {
     /// 各文を読む。既に読んだ接頭辞は読み直さない。交互形なら文を読みと
     /// 区間ごとに並べた列にして読む。
     pub fn score(&mut self, sentences: &[String]) -> Vec<Scored> {
-        let lines: Vec<String> = match &self.reading {
+        let lines: Vec<Line> = match &self.reading {
             Some(reading) => sentences.iter().map(|s| build(reading, s)).collect(),
-            None => sentences.to_vec(),
+            None => sentences.iter().map(|s| plain(s)).collect(),
         };
         let ids: Vec<Vec<u32>> = lines
             .iter()
-            .map(|s| s.chars().map(|c| self.scorer.vocab.id(c)).collect())
+            .map(|line| line.iter().map(|&s| self.scorer.vocab.sym(s)).collect())
             .collect();
         let paths = self.session.read(&ids);
         ids.into_iter()
@@ -311,6 +306,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::config::ModelConfig;
     use crate::infer::Chain;
+    use crate::interleave::tests::line;
     use crate::testing::random_weights;
 
     fn config(vocab: &Vocab) -> ModelConfig {
@@ -336,9 +332,9 @@ pub(crate) mod tests {
         scorer_with(Vocab::build(["猫が鳴く"], 1), Condition::None)
     }
 
-    /// BOS も EOS も付けない id 列。
+    /// BOS も EOS も付けない id 列。`s` は行の略記（U+001E が区間の読み、タブが出力の始まり）。
     fn ids(vocab: &Vocab, s: &str) -> Vec<u32> {
-        s.chars().map(|c| vocab.id(c)).collect()
+        line(s).iter().map(|&x| vocab.sym(x)).collect()
     }
 
     /// 入力側と候補を 1 本の連鎖として読んだ、候補側（EOS まで）の負の対数尤度。
@@ -411,9 +407,9 @@ pub(crate) mod tests {
     }
 
     /// 交互形の列を 1 本で読み、数える位置だけの負の対数尤度と、位置ごとの対数確率。
-    fn reference_interleaved(s: &LmScorer, line: &str) -> (f64, Vec<f64>) {
+    fn reference_interleaved(s: &LmScorer, text: &str) -> (f64, Vec<f64>) {
         let mut whole = vec![BOS];
-        whole.extend(ids(&s.vocab, line));
+        whole.extend(ids(&s.vocab, text));
         let read = s.infer.read(&[Chain {
             state: &s.infer.init_state(),
             ids: &whole,
@@ -426,7 +422,7 @@ pub(crate) mod tests {
             )
         };
         let mut total = 0.0;
-        let counted = crate::interleave::loss_mask(line);
+        let counted = crate::interleave::loss_mask(&line(text));
         let mut per_char = Vec::new();
         for (i, &id) in whole[1..].iter().enumerate() {
             per_char.push(-log_prob(i, id));

@@ -35,7 +35,7 @@ mod tests {
     use crate::condition::Condition;
     use crate::scorer::LmScorer;
     use crate::scorer::tests::{scorer, scorer_with};
-    use crate::vocab::Vocab;
+    use crate::vocab::{BOS, OUTPUT, Vocab};
 
     fn verify(
         s: &LmScorer,
@@ -127,16 +127,24 @@ mod tests {
     }
 
     #[test]
-    fn 条件付きなら文の位置は入力の分だけ後ろの行を読む() {
-        let vocab = Vocab::build(["猫が鳴く\tネコ"], 1);
-        let plain = scorer_with(vocab.clone(), Condition::None);
-        // 無条件の採点器に「ネコ\t猫」を渡し、位置 3（タブの次）に「猫」を置くコスト。
-        let raw = verify(&plain, "", &["ネコ\t猫".to_string()], &[vec![(3, '猫')]]);
-        // 別の重みになるので、同じ採点器を条件付きとして使う。
-        let cond = LmScorer::new(plain.into_infer(), vocab, Condition::Katakana);
+    fn 条件付きなら文の位置は入力と区切りの後ろから読む() {
+        let vocab = Vocab::build(["猫が鳴くネコ"], 1);
+        let cond = scorer_with(vocab.clone(), Condition::Katakana);
         let v = verify(&cond, "ねこ", &["猫".to_string()], &[vec![(0, '猫')]]);
-        assert!((v[0].char_costs[0] - raw[0].char_costs[0]).abs() < 1e-4);
-        // 文全体のコストは出力側（猫 と EOS）だけで、全体より小さい。
-        assert!(v[0].cost < raw[0].cost);
+        // BOS、ネ、コ、出力の始まりを 1 本で読み、その次に「猫」が来るコスト。
+        let infer = cond.infer();
+        let ids = [BOS, vocab.id('ネ'), vocab.id('コ'), OUTPUT];
+        let read = infer.read(&[crate::infer::Chain {
+            state: &infer.init_state(),
+            ids: &ids,
+        }]);
+        let d = infer.config().d_model;
+        let want =
+            -f64::from(infer.log_prob(&read.hidden[3 * d..4 * d], read.lse[3], vocab.id('猫')));
+        assert!(
+            (v[0].char_costs[0] - want).abs() < 1e-4,
+            "{} vs {want}",
+            v[0].char_costs[0]
+        );
     }
 }

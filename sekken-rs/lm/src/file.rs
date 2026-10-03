@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::condition::Condition;
 use crate::config::{ModelConfig, Weight};
 use crate::infer::Infer;
-use crate::vocab::Vocab;
+use crate::vocab::{Layout, Vocab};
 
 #[derive(Serialize, Deserialize)]
 pub struct SavedModel {
@@ -28,35 +28,48 @@ struct Trailer1 {
     conditional: bool,
 }
 
-/// `Trailer1` の後ろに付ける欄。新しい欄はここに足す。
+/// `Trailer1` の後ろに付ける欄。
 #[derive(Serialize, Deserialize)]
 struct Trailer2 {
     condition: Condition,
 }
 
-/// 本体の後ろの欄から条件の種類を読む。欄が無ければ無条件。
+/// `Trailer2` の後ろに付ける欄。新しい欄はここに足す。無いファイルは区切りを字が兼ねる旧形式。
+#[derive(Serialize, Deserialize)]
+struct Trailer3 {
+    layout: Layout,
+}
+
+/// 本体の後ろの欄から条件の種類と語彙の区切りの置き方を読む。欄が無ければ無条件・旧形式。
 /// `Trailer1` までの旧形式で条件付きなのはローマ字入力で、エンジンが綴りを
 /// 受け取らなくなった今は採点できないので、読み込みで拒む。
-fn read_condition(rest: &[u8]) -> Result<Condition> {
+fn read_trailers(rest: &[u8]) -> Result<(Condition, Layout)> {
     if rest.is_empty() {
-        return Ok(Condition::None);
+        return Ok((Condition::None, Layout::Legacy));
     }
     let (trailer1, rest): (Trailer1, &[u8]) =
         postcard::take_from_bytes(rest).context("deserialize lm trailer")?;
-    let condition = if !rest.is_empty() {
-        let trailer2: Trailer2 = postcard::from_bytes(rest).context("deserialize lm trailer")?;
-        trailer2.condition
+    let (condition, rest) = if !rest.is_empty() {
+        let (trailer2, rest): (Trailer2, &[u8]) =
+            postcard::take_from_bytes(rest).context("deserialize lm trailer")?;
+        (trailer2.condition, rest)
     } else if trailer1.conditional {
-        Condition::Roman
+        (Condition::Roman, rest)
     } else {
-        Condition::None
+        (Condition::None, rest)
     };
     if condition == Condition::Roman {
         bail!(
             "lm conditioned on roman input is no longer supported; retrain with katakana or interleaved reading"
         );
     }
-    Ok(condition)
+    let layout = if rest.is_empty() {
+        Layout::Legacy
+    } else {
+        let trailer3: Trailer3 = postcard::from_bytes(rest).context("deserialize lm trailer")?;
+        trailer3.layout
+    };
+    Ok((condition, layout))
 }
 
 impl SavedModel {
@@ -70,6 +83,10 @@ impl SavedModel {
             condition: self.condition,
         };
         bytes.extend(postcard::to_stdvec(&trailer2).context("serialize lm trailer")?);
+        let trailer3 = Trailer3 {
+            layout: self.vocab.layout(),
+        };
+        bytes.extend(postcard::to_stdvec(&trailer3).context("serialize lm trailer")?);
         let mut enc = zstd::Encoder::new(w, 9).context("zstd encoder")?;
         enc.write_all(&bytes).context("write lm")?;
         enc.finish().context("finish zstd")?;
@@ -82,8 +99,9 @@ impl SavedModel {
         dec.read_to_end(&mut bytes).context("read lm")?;
         let (mut saved, rest): (SavedModel, &[u8]) =
             postcard::take_from_bytes(&bytes).context("deserialize lm")?;
-        saved.condition = read_condition(rest)?;
-        saved.vocab.rebuild_index();
+        let (condition, layout) = read_trailers(rest)?;
+        saved.condition = condition;
+        saved.vocab.set_layout(layout);
         Ok(saved)
     }
 
@@ -231,6 +249,44 @@ mod tests {
             SavedModel::load(zstd_wrap(postcard::to_stdvec(&saved).unwrap()).as_slice()).unwrap();
         assert_eq!(loaded.condition, Condition::None);
         assert_eq!(loaded.config.d_model, 8);
+    }
+
+    #[test]
+    fn 区切りの置き方を保存し_欄の無い旧ファイルは区切りを字が兼ねる形で読む() {
+        let vocab = Vocab::from_chars(vec!['猫', '\t', '\u{1e}']);
+        let saved = SavedModel {
+            config: ModelConfig {
+                vocab_size: vocab.len(),
+                d_model: 8,
+                n_layers: 1,
+                n_heads: 1,
+                head_dim: 8,
+                d_state: 4,
+                mlp_dim: 16,
+            },
+            vocab,
+            weights: Vec::new(),
+            condition: Condition::Interleaved,
+        };
+        let mut buf = Vec::new();
+        saved.save(&mut buf).unwrap();
+        let loaded = SavedModel::load(buf.as_slice()).unwrap();
+        assert_eq!(loaded.vocab.layout(), Layout::Separate);
+        assert_eq!(loaded.vocab.id('猫'), 5);
+        // Trailer2 までの旧形式（配布中の v0.5.0 まで）。
+        let mut old = postcard::to_stdvec(&saved).unwrap();
+        old.extend(postcard::to_stdvec(&Trailer1 { conditional: true }).unwrap());
+        old.extend(
+            postcard::to_stdvec(&Trailer2 {
+                condition: Condition::Interleaved,
+            })
+            .unwrap(),
+        );
+        let loaded = SavedModel::load(zstd_wrap(old).as_slice()).unwrap();
+        assert_eq!(loaded.condition, Condition::Interleaved);
+        assert_eq!(loaded.vocab.layout(), Layout::Legacy);
+        assert_eq!(loaded.vocab.id('猫'), 3);
+        assert_eq!(loaded.vocab.sym(crate::interleave::Sym::Output), 4);
     }
 
     #[test]

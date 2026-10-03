@@ -4,11 +4,15 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::interleave::loss_mask;
+use crate::interleave::{Sym, loss_mask};
 
 pub const BOS: u32 = 0;
 pub const EOS: u32 = 1;
 pub const UNK: u32 = 2;
+/// 区間の読みの始まり（`Sym::Reading`）の id。`Layout::Separate` のとき。
+pub const READING: u32 = 3;
+/// 出力の始まり（`Sym::Output`）の id。`Layout::Separate` のとき。
+pub const OUTPUT: u32 = 4;
 
 /// 符号化した 1 系列。`mask[i]` は `ids[i + 1]` を正解として損失に入れるか。
 /// 条件付き学習では読みの字がそこから外れる。
@@ -37,22 +41,54 @@ impl Seq {
     }
 }
 
+/// 区切りの id の置き方。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Layout {
+    /// 区切りを字と別の id（`READING`、`OUTPUT`）に置き、字は 5 から振る。
+    #[default]
+    Separate,
+    /// 2026-10 までの形式。区切りは語彙の字 U+001E とタブが兼ね、字は 3 から振る。配布中の旧モデルを
+    /// 読むためだけに残し、新しいモデルを配布したら消す。本文のその 2 字は区切りと取り違えないよう UNK にする。
+    Legacy,
+}
+
+impl Layout {
+    /// 字より前に置く特殊な id の数。
+    fn specials(self) -> u32 {
+        match self {
+            Layout::Separate => 5,
+            Layout::Legacy => 3,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Vocab {
     chars: Vec<char>,
     #[serde(skip)]
     index: HashMap<char, u32>,
+    /// ファイルの本体には書かず、モデルファイルの追加の欄で持つ（`file.rs`）。
+    #[serde(skip)]
+    layout: Layout,
+    /// `Sym::Reading` と `Sym::Output` の id。
+    #[serde(skip)]
+    separators: (u32, u32),
 }
 
 impl Vocab {
     /// 出現回数が `min_count` 以上の文字を語彙にする。順序は回数の多い順。
-    pub fn build<'a>(sentences: impl IntoIterator<Item = &'a str>, min_count: usize) -> Vocab {
+    pub fn build<'a>(texts: impl IntoIterator<Item = &'a str>, min_count: usize) -> Vocab {
         let mut counts: HashMap<char, usize> = HashMap::new();
-        for s in sentences {
+        for s in texts {
             for c in s.chars() {
                 *counts.entry(c).or_default() += 1;
             }
         }
+        Vocab::from_counts(counts, min_count)
+    }
+
+    /// 字の出現回数から語彙を作る。回数が `min_count` 以上の字を、回数の多い順に並べる。
+    pub fn from_counts(counts: HashMap<char, usize>, min_count: usize) -> Vocab {
         let mut chars: Vec<(char, usize)> = counts
             .into_iter()
             .filter(|(_, n)| *n >= min_count)
@@ -62,27 +98,54 @@ impl Vocab {
     }
 
     pub fn from_chars(chars: Vec<char>) -> Vocab {
-        let index = chars
-            .iter()
-            .enumerate()
-            .map(|(i, &c)| (c, i as u32 + 3))
-            .collect();
-        Vocab { chars, index }
+        let mut vocab = Vocab {
+            chars,
+            index: HashMap::new(),
+            layout: Layout::Separate,
+            separators: (READING, OUTPUT),
+        };
+        vocab.rebuild_index();
+        vocab
+    }
+
+    /// 区切りの置き方を決め、逆引き表を作り直す。モデルファイルを読んだ後に呼ぶ。
+    pub fn set_layout(&mut self, layout: Layout) {
+        self.layout = layout;
+        self.rebuild_index();
+    }
+
+    pub fn layout(&self) -> Layout {
+        self.layout
     }
 
     /// 読み込み後に逆引き表を作り直す。
     pub fn rebuild_index(&mut self) {
-        self.index = self
+        let offset = self.layout.specials();
+        let ids = self
             .chars
             .iter()
             .enumerate()
-            .map(|(i, &c)| (c, i as u32 + 3))
-            .collect();
+            .map(|(i, &c)| (c, i as u32 + offset));
+        match self.layout {
+            Layout::Separate => {
+                self.index = ids.collect();
+                self.separators = (READING, OUTPUT);
+            }
+            Layout::Legacy => {
+                let all: HashMap<char, u32> = ids.collect();
+                let sep = |c: char| all.get(&c).copied().unwrap_or(UNK);
+                self.separators = (sep('\u{1e}'), sep('\t'));
+                self.index = all
+                    .into_iter()
+                    .filter(|(c, _)| !matches!(c, '\u{1e}' | '\t'))
+                    .collect();
+            }
+        }
     }
 
-    /// 特殊トークン 3 つを含めた語彙数。
+    /// 特殊な id を含めた語彙数。
     pub fn len(&self) -> usize {
-        self.chars.len() + 3
+        self.chars.len() + self.layout.specials() as usize
     }
 
     pub fn is_empty(&self) -> bool {
@@ -93,17 +156,26 @@ impl Vocab {
         self.index.get(&c).copied().unwrap_or(UNK)
     }
 
-    /// 文を BOS と EOS で挟んだ id 列にする。
-    pub fn encode(&self, s: &str) -> Vec<u32> {
+    /// 行の要素の id。
+    pub fn sym(&self, s: Sym) -> u32 {
+        match s {
+            Sym::Reading => self.separators.0,
+            Sym::Output => self.separators.1,
+            Sym::Char(c) => self.id(c),
+        }
+    }
+
+    /// 行を BOS と EOS で挟んだ id 列にする。
+    pub fn encode(&self, line: &[Sym]) -> Vec<u32> {
         std::iter::once(BOS)
-            .chain(s.chars().map(|c| self.id(c)))
+            .chain(line.iter().map(|&s| self.sym(s)))
             .chain(std::iter::once(EOS))
             .collect()
     }
 
     /// 1 行を符号化する。損失に入る位置は行の形（`interleave::loss_mask`）で決まり、
-    /// 末尾の EOS は常に入る。区切りの字も普通の文字として id を持つ。
-    pub fn encode_line(&self, line: &str) -> Seq {
+    /// 末尾の EOS は常に入る。
+    pub fn encode_line(&self, line: &[Sym]) -> Seq {
         let mut mask = loss_mask(line);
         mask.push(true);
         Seq {
@@ -116,13 +188,14 @@ impl Vocab {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interleave::{plain, prefixed, tests::line};
 
     #[test]
-    fn 回数の多い順に_id_を振る() {
+    fn 回数の多い順に区切りの後ろから_id_を振る() {
         let v = Vocab::build(["猫猫犬", "猫"], 1);
-        assert_eq!(v.len(), 5);
-        assert_eq!(v.id('猫'), 3);
-        assert_eq!(v.id('犬'), 4);
+        assert_eq!(v.len(), 7);
+        assert_eq!(v.id('猫'), 5);
+        assert_eq!(v.id('犬'), 6);
     }
 
     #[test]
@@ -133,24 +206,27 @@ mod tests {
     }
 
     #[test]
-    fn 文を_bos_と_eos_で挟んで符号化する() {
+    fn 行を_bos_と_eos_で挟んで符号化する() {
         let v = Vocab::build(["猫犬"], 1);
-        assert_eq!(v.encode("犬鳥"), [BOS, v.id('犬'), UNK, EOS]);
+        assert_eq!(v.encode(&plain("犬鳥")), [BOS, v.id('犬'), UNK, EOS]);
     }
 
     #[test]
-    fn タブの無い行は全部を損失に入れる() {
+    fn 区切りの無い行は全部を損失に入れる() {
         let v = Vocab::build(["猫犬"], 1);
-        assert_eq!(v.encode_line("犬"), Seq::new(vec![BOS, v.id('犬'), EOS]));
+        assert_eq!(
+            v.encode_line(&plain("犬")),
+            Seq::new(vec![BOS, v.id('犬'), EOS])
+        );
     }
 
     #[test]
-    fn タブのある行は損失をタブの次から数える() {
-        let v = Vocab::build(["猫犬\t"], 1);
-        let seq = v.encode_line("犬猫\t猫");
+    fn 読みを前置した行は損失を出力の始まりの次から数える() {
+        let v = Vocab::build(["猫犬"], 1);
+        let seq = v.encode_line(&prefixed("犬猫", "猫"));
         assert_eq!(
             seq.ids,
-            [BOS, v.id('犬'), v.id('猫'), v.id('\t'), v.id('猫'), EOS]
+            [BOS, v.id('犬'), v.id('猫'), OUTPUT, v.id('猫'), EOS]
         );
         // targets = ids[1..] で、index 3 が最初の出力「猫」、index 4 が EOS。
         assert_eq!(seq.mask, [false, false, false, true, true]);
@@ -159,13 +235,31 @@ mod tests {
 
     #[test]
     fn 交互の行は出力の字と区間の終わりと_eos_を損失に入れる() {
-        let v = Vocab::build(["猫犬\t\u{1e}"], 1);
-        let seq = v.encode_line("\u{1e}犬\t猫\u{1e}犬\t犬");
+        let v = Vocab::build(["猫犬"], 1);
+        let seq = v.encode_line(&line("\u{1e}犬\t猫\u{1e}犬\t犬"));
+        assert_eq!(seq.ids[1], READING);
         assert_eq!(seq.ids.len(), 10);
         assert_eq!(
             seq.mask,
             [true, false, false, true, true, false, false, true, true]
         );
+    }
+
+    #[test]
+    fn 本文のタブは区切りと別の_id_になる() {
+        let v = Vocab::build(["猫\t"], 1);
+        assert_ne!(v.sym(Sym::Char('\t')), v.sym(Sym::Output));
+    }
+
+    #[test]
+    fn 旧形式は区切りの字の_id_を区切りに使い本文のその字は_unk() {
+        let mut v = Vocab::from_chars(vec!['猫', '\t', '\u{1e}']);
+        v.set_layout(Layout::Legacy);
+        assert_eq!(v.len(), 6);
+        assert_eq!(v.id('猫'), 3);
+        assert_eq!(v.sym(Sym::Output), 4);
+        assert_eq!(v.sym(Sym::Reading), 5);
+        assert_eq!(v.sym(Sym::Char('\t')), UNK);
     }
 
     #[test]
