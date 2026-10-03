@@ -54,6 +54,9 @@ pub struct EngineArgs {
     /// 読みをそのままかなにした候補に加えるコスト
     #[arg(long, default_value_t = sekken_core::lattice::KANA_PENALTY)]
     pub kana_penalty: f64,
+    /// literal の直後の区間で、読みをそのままひらがなにした候補に加えるコスト
+    #[arg(long, default_value_t = sekken_core::lattice::LITERAL_KANA_PENALTY)]
+    pub literal_kana_penalty: f64,
     /// 確定した文から数える本人の n-gram。無ければ空から数え始める
     #[arg(long)]
     pub personal: Option<PathBuf>,
@@ -143,6 +146,7 @@ impl EngineArgs {
             weights: sekken_core::lattice::Weights {
                 rank: self.rank_weight,
                 kana_penalty: self.kana_penalty,
+                literal_kana_penalty: self.literal_kana_penalty,
             },
             speculator: Speculator {
                 verifier: lm,

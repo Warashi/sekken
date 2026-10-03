@@ -392,6 +392,7 @@ mod tests {
             span,
             rank: 0,
             kana: false,
+            after_literal: false,
             user: false,
         }
     }
