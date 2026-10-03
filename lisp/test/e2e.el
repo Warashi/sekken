@@ -175,7 +175,7 @@
                     (file-attributes sekken-server-adapted-lm))
                    0)
                0)
-      (error "e2e: 動かした言語モデルが保存されていない"))
+      (error "e2e: 動かした出力層が保存されていない"))
     (delete-file sekken-server-adapted-lm)
     (unless (> (or (file-attribute-size
                     (file-attributes sekken-server-personal))

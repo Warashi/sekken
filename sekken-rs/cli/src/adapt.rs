@@ -3,8 +3,10 @@
 //! 変換と同じ採点器を共有し、学習は別のスレッドでやる。変換の応答を
 //! 待たせないためで、要求を受けた側は文を送るだけで返す。
 //!
-//! `--lm` のファイルは配布物で書けないことがあるので、上書きはせず
-//! `--adapted-lm` に書く。次の起動はそちらを先に読む。
+//! `--lm` のファイルは配布物で書けないことがあるので、上書きはせず、動かした出力層だけを
+//! `--adapted-lm` に書く（`sekken_lm::adapted`）。次の起動は `--lm` を読んでから出力層を
+//! 差し替える。出力層は元にした `--lm` の指紋を持ち、`--lm` が入れ替わっていれば読まずに
+//! `--lm` のまま学習し直す。
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -12,6 +14,7 @@ use std::sync::Arc;
 use std::sync::mpsc;
 
 use anyhow::{Context as _, Result};
+use sekken_lm::adapted::{AdaptedHead, fingerprint};
 use sekken_lm::file::SavedModel;
 use sekken_lm::infer::Plastic;
 use sekken_lm::scorer::LmScorer;
@@ -21,36 +24,51 @@ pub struct AdaptArgs {
     /// 確定した文で出力層を動かすときの学習率
     #[arg(long, default_value_t = 3e-3)]
     pub adapt_lr: f32,
-    /// 動かした出力層の保存先。あれば `--lm` より先に読む
+    /// 動かした出力層の保存先。あれば `--lm` の出力層をこれに差し替える（`--lm` が同じときだけ）
     #[arg(long)]
     pub adapted_lm: Option<PathBuf>,
 }
 
-/// 動かした出力層があればそれを、無ければ `--lm` を読む。
-/// 動かした側が壊れていても入力はできるべきなので、読めなければ理由を
-/// stderr に出して `--lm` に戻る。
-pub fn load_model(lm: &Path, adapted: Option<&Path>) -> Result<SavedModel> {
+/// `--lm` を読み、動かした出力層があれば差し替える。`--lm` の指紋も返す（保存する出力層に付ける）。
+/// 出力層が別の `--lm` から作られたもの、読めないもの、旧形式（モデル全体の写し）なら、理由を
+/// stderr に出して `--lm` のまま使う。次の保存で上書きされる。
+pub fn load_model(lm: &Path, adapted: Option<&Path>) -> Result<(SavedModel, u64)> {
+    let bytes = std::fs::read(lm).with_context(|| format!("read {}", lm.display()))?;
+    let base = fingerprint(&bytes);
+    let mut saved =
+        crate::engine::load_lm_bytes(&bytes).with_context(|| format!("load {}", lm.display()))?;
     if let Some(path) = adapted.filter(|p| p.exists()) {
-        match crate::engine::load_lm(path) {
-            Ok(saved) => return Ok(saved),
-            // stderr が閉じていても panic せずに続ける。
+        let head = std::fs::File::open(path)
+            .map_err(anyhow::Error::from)
+            .and_then(|f| AdaptedHead::load(std::io::BufReader::new(f)));
+        // stderr が閉じていても panic せずに続ける。
+        match head {
+            Ok(head) if head.base == base => saved.replace_weights(head.weights),
+            Ok(_) => {
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "sekken: {} was adapted from another model; starting over from {}",
+                    path.display(),
+                    lm.display()
+                );
+            }
             Err(err) => {
                 let _ = writeln!(
                     std::io::stderr(),
-                    "sekken: failed to load {}, falling back to the base model: {err:#}",
-                    path.display()
+                    "sekken: failed to load {}, starting over from {}: {err:#}",
+                    path.display(),
+                    lm.display()
                 );
             }
         }
     }
-    crate::engine::load_lm(lm)
+    Ok((saved, base))
 }
 
-/// 読み込みが終わった採点器と、その元になったファイルの中身。
-/// ファイルの中身は、動かした出力層を書き戻して保存するために持ち続ける。
+/// 読み込みが終わった採点器と、その元になった `--lm` の指紋。
 pub struct Ready {
     pub scorer: Arc<LmScorer>,
-    pub saved: SavedModel,
+    pub base: u64,
 }
 
 enum Job {
@@ -127,11 +145,13 @@ fn work(ready: mpsc::Receiver<Ready>, rx: mpsc::Receiver<Job>, args: &AdaptArgs)
             },
             Job::Flush(ack) => {
                 if let (true, Some(model), Some(path)) =
-                    (moved, model.as_mut(), args.adapted_lm.as_deref())
+                    (moved, model.as_ref(), args.adapted_lm.as_deref())
                 {
-                    let Ready { scorer, saved } = model;
-                    saved.replace_weights(scorer.infer().head_weights());
-                    match write(saved, path) {
+                    let head = AdaptedHead {
+                        base: model.base,
+                        weights: model.scorer.infer().head_weights(),
+                    };
+                    match write(path, |w| head.save(w)) {
                         Ok(()) => moved = false,
                         Err(err) => {
                             let _ = writeln!(
@@ -148,14 +168,15 @@ fn work(ready: mpsc::Receiver<Ready>, rx: mpsc::Receiver<Job>, args: &AdaptArgs)
     }
 }
 
-/// モデルを `path` に保存する。書いている途中で終了しても前のファイルを
+/// `path` に `save` で書く。書いている途中で終了しても前のファイルを
 /// 失わないよう、隣に書いてから置き換える。
-pub fn write(saved: &SavedModel, path: &Path) -> Result<()> {
+pub fn write(
+    path: &Path,
+    save: impl FnOnce(std::io::BufWriter<std::fs::File>) -> Result<()>,
+) -> Result<()> {
     let tmp = path.with_extension("tmp");
     let file = std::fs::File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
-    saved
-        .save(std::io::BufWriter::new(file))
-        .with_context(|| format!("write {}", tmp.display()))?;
+    save(std::io::BufWriter::new(file)).with_context(|| format!("write {}", tmp.display()))?;
     std::fs::rename(&tmp, path)
         .with_context(|| format!("rename {} to {}", tmp.display(), path.display()))?;
     Ok(())
@@ -169,23 +190,37 @@ mod tests {
 
     use super::*;
 
-    /// 重みの無い、読み書きだけを確かめるためのモデル。`d_model` で見分ける。
-    fn model(d_model: usize) -> SavedModel {
-        let vocab = Vocab::build(["猫犬"], 1);
+    /// 形だけ合った重みの、読み書きと学習ができる小さなモデル。`seed` で重みを変える。
+    fn small_model(seed: u64) -> SavedModel {
+        let vocab = Vocab::build(["猫が鳴く"], 1);
+        let config = ModelConfig {
+            vocab_size: vocab.len(),
+            d_model: 8,
+            n_layers: 1,
+            n_heads: 1,
+            head_dim: 8,
+            d_state: 4,
+            mlp_dim: 16,
+        };
         SavedModel {
-            config: ModelConfig {
-                vocab_size: vocab.len(),
-                d_model,
-                n_layers: 1,
-                n_heads: 1,
-                head_dim: 8,
-                d_state: 4,
-                mlp_dim: 16,
-            },
+            weights: sekken_lm::testing::random_weights(&config, seed),
+            config,
             vocab,
-            weights: Vec::new(),
             condition: Condition::None,
         }
+    }
+
+    fn save_model(saved: &SavedModel, path: &Path) {
+        write(path, |w| saved.save(w)).unwrap();
+    }
+
+    fn head_weight(saved: &SavedModel) -> &[f32] {
+        &saved
+            .weights
+            .iter()
+            .find(|(n, _, _)| n == "head.weight")
+            .unwrap()
+            .2
     }
 
     fn dir() -> PathBuf {
@@ -198,18 +233,32 @@ mod tests {
         dir
     }
 
+    /// `base` の指紋を付けて、出力層を全部 `value` にした保存先を書く。
+    fn save_head(base: &Path, value: f32, path: &Path) {
+        let saved = crate::engine::load_lm(base).unwrap();
+        let weights = saved
+            .weights
+            .iter()
+            .filter(|(n, _, _)| n.starts_with("head."))
+            .map(|(n, shape, w)| (n.clone(), shape.clone(), vec![value; w.len()]))
+            .collect();
+        let head = AdaptedHead {
+            base: fingerprint(&std::fs::read(base).unwrap()),
+            weights,
+        };
+        write(path, |w| head.save(w)).unwrap();
+    }
+
     #[test]
     fn 保存は隣に書いてから置き換える() {
         let dir = dir();
         let path = dir.join("lm.zst");
-        write(&model(8), &path).unwrap();
+        save_model(&small_model(1), &path);
+        save_model(&small_model(2), &path);
         assert_eq!(
-            crate::engine::load_lm(&path).unwrap().config.d_model,
-            8,
-            "保存したモデルを読み直せる"
+            head_weight(&crate::engine::load_lm(&path).unwrap()),
+            head_weight(&small_model(2))
         );
-        write(&model(16), &path).unwrap();
-        assert_eq!(crate::engine::load_lm(&path).unwrap().config.d_model, 16);
         assert!(
             !path.with_extension("tmp").exists(),
             "途中のファイルは残らない"
@@ -219,41 +268,52 @@ mod tests {
 
     #[test]
     fn 書けない場所への保存は理由を返す() {
-        let err = write(&model(8), Path::new("/nonexistent-dir/lm.zst")).unwrap_err();
+        let err = write(Path::new("/nonexistent-dir/lm.zst"), |_| Ok(())).unwrap_err();
         assert!(format!("{err:#}").contains("create"), "{err:#}");
     }
 
     #[test]
-    fn 動かした出力層があればそれを先に読む() {
+    fn 同じ_lm_から動かした出力層だけを差し替える() {
         let dir = dir();
         let base = dir.join("base.zst");
         let adapted = dir.join("adapted.zst");
-        write(&model(8), &base).unwrap();
-        write(&model(16), &adapted).unwrap();
-        assert_eq!(load_model(&base, None).unwrap().config.d_model, 8);
-        assert_eq!(
-            load_model(&base, Some(&adapted)).unwrap().config.d_model,
-            16
-        );
-        // 保存先がまだ無い初回は `--lm` を読む。
-        assert_eq!(
-            load_model(&base, Some(&dir.join("none.zst")))
-                .unwrap()
-                .config
-                .d_model,
-            8
-        );
+        save_model(&small_model(1), &base);
+        save_head(&base, 0.25, &adapted);
+        let (saved, fp) = load_model(&base, Some(&adapted)).unwrap();
+        assert!(head_weight(&saved).iter().all(|&w| w == 0.25));
+        assert_eq!(fp, fingerprint(&std::fs::read(&base).unwrap()));
+        // 保存先がまだ無い初回は `--lm` のまま。
+        let (saved, _) = load_model(&base, Some(&dir.join("none.zst"))).unwrap();
+        assert_eq!(head_weight(&saved), head_weight(&small_model(1)));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn 壊れた保存先は捨てて元のモデルを読む() {
+    fn lm_が入れ替わっていれば動かした出力層は読まない() {
         let dir = dir();
         let base = dir.join("base.zst");
         let adapted = dir.join("adapted.zst");
-        write(&model(8), &base).unwrap();
+        save_model(&small_model(1), &base);
+        save_head(&base, 0.25, &adapted);
+        save_model(&small_model(2), &base);
+        let (saved, _) = load_model(&base, Some(&adapted)).unwrap();
+        assert_eq!(head_weight(&saved), head_weight(&small_model(2)));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn 壊れた保存先と旧形式の写しは捨てて元のモデルを読む() {
+        let dir = dir();
+        let base = dir.join("base.zst");
+        let adapted = dir.join("adapted.zst");
+        save_model(&small_model(1), &base);
         std::fs::write(&adapted, b"not a model").unwrap();
-        assert_eq!(load_model(&base, Some(&adapted)).unwrap().config.d_model, 8);
+        let (saved, _) = load_model(&base, Some(&adapted)).unwrap();
+        assert_eq!(head_weight(&saved), head_weight(&small_model(1)));
+        // 2026-10 まではモデル全体の写しを保存していた。
+        save_model(&small_model(2), &adapted);
+        let (saved, _) = load_model(&base, Some(&adapted)).unwrap();
+        assert_eq!(head_weight(&saved), head_weight(&small_model(1)));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -284,42 +344,12 @@ mod tests {
         adapter.flush();
     }
 
-    /// 形だけ合った重みの、読み書きと学習ができる小さなモデル。
-    fn small_model() -> SavedModel {
-        let vocab = Vocab::build(["猫が鳴く"], 1);
-        let config = ModelConfig {
-            vocab_size: vocab.len(),
-            d_model: 8,
-            n_layers: 1,
-            n_heads: 1,
-            head_dim: 8,
-            d_state: 4,
-            mlp_dim: 16,
-        };
-        SavedModel {
-            weights: sekken_lm::testing::random_weights(&config, 1),
-            config,
-            vocab,
-            condition: Condition::None,
-        }
-    }
-
-    fn head_weight(saved: &SavedModel) -> &[f32] {
-        &saved
-            .weights
-            .iter()
-            .find(|(n, _, _)| n == "head.weight")
-            .unwrap()
-            .2
-    }
-
     #[test]
     fn 学習した出力層を保存し_次の起動で読み直せる() {
         let dir = dir();
         let base = dir.join("base.zst");
         let adapted = dir.join("adapted.zst");
-        let saved = small_model();
-        write(&saved, &base).unwrap();
+        save_model(&small_model(1), &base);
         let (ready_tx, ready_rx) = mpsc::channel();
         let adapter = Adapter::spawn(
             ready_rx,
@@ -330,25 +360,31 @@ mod tests {
         );
         // 読み込みが終わる前に来た文も、終わってから学習される。
         adapter.adapt("ねこ".to_string(), "猫".to_string());
+        let (saved, fp) = load_model(&base, Some(&adapted)).unwrap();
         let scorer = Arc::new(LmScorer::from_saved(&saved).unwrap());
-        // 重みは種が同じなので、もう一度作れば保存前の値になる。
         ready_tx
             .send(Ready {
-                scorer,
-                saved: small_model(),
+                scorer: scorer.clone(),
+                base: fp,
             })
             .unwrap();
         adapter.adapt("ねこ".to_string(), "猫が鳴く".to_string());
         adapter.flush();
-        let reloaded = load_model(&base, Some(&adapted)).unwrap();
+        let (reloaded, _) = load_model(&base, Some(&adapted)).unwrap();
         assert_ne!(
             head_weight(&reloaded),
             head_weight(&saved),
             "保存した出力層は学習で動いている"
         );
+        let head = scorer.infer().head_weights();
+        assert_eq!(head_weight(&reloaded), &head[0].2[..]);
         assert!(
             reloaded.weights.iter().any(|(n, _, _)| n == "head.bias"),
             "bias も一緒に保存する"
+        );
+        assert!(
+            std::fs::metadata(&adapted).unwrap().len() < std::fs::metadata(&base).unwrap().len(),
+            "モデル全体ではなく出力層だけを書く"
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }

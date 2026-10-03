@@ -43,9 +43,10 @@
   :type '(choice (const nil) file))
 
 (defcustom sekken-server-adapted-lm (locate-user-emacs-file "sekken-lm.zst")
-  "確定した文で動かした言語モデルの保存先。
-エンジンは起動時にこのファイルがあれば `sekken-server-lm' より先に読み、
-終了時に動かした分を書く。nil なら個人化しない。"
+  "確定した文で動かした言語モデルの出力層の保存先。
+エンジンは終了時に出力層と、元にした `sekken-server-lm' の指紋を書く。起動時は
+`sekken-server-lm' を読み、指紋が合えば出力層をこのファイルの値に差し替える。
+`sekken-server-lm' を入れ替えると古い出力層は読まずに学習し直す。nil なら個人化しない。"
   :type '(choice (const nil) file))
 
 (defcustom sekken-server-personal (locate-user-emacs-file "sekken-personal.zst")

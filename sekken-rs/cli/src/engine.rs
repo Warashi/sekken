@@ -78,8 +78,13 @@ pub fn henkan_roman(engine: &Engine, roman: &str, top_n: usize) -> Vec<String> {
 
 /// 文字言語モデルのファイルを読む。
 pub fn load_lm(path: &std::path::Path) -> Result<SavedModel> {
-    let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
-    let saved = SavedModel::load(std::io::BufReader::new(file)).context("load lm")?;
+    let bytes = std::fs::read(path).with_context(|| format!("open {}", path.display()))?;
+    load_lm_bytes(&bytes)
+}
+
+/// 読み込んだファイルの中身から言語モデルを組む。
+pub fn load_lm_bytes(bytes: &[u8]) -> Result<SavedModel> {
+    let saved = SavedModel::load(bytes).context("load lm")?;
     eprintln!(
         "lm: vocab={} condition={:?}",
         saved.vocab.len(),

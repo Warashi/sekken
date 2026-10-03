@@ -142,11 +142,11 @@ pub fn run(args: Args) -> Result<()> {
     let adapter = Adapter::spawn(ready_rx, args.adapt);
     let engine_args = args.engine;
     let mut loader = EngineLoader::spawn(move || {
-        let saved = sekken_cli::adapt::load_model(&engine_args.lm, adapted_lm.as_deref())?;
+        let (saved, base) = sekken_cli::adapt::load_model(&engine_args.lm, adapted_lm.as_deref())?;
         let scorer = Arc::new(engine_args.lm_scorer(&saved)?);
         let engine = engine_args.build_with(Box::new(scorer.clone()))?;
         // 学習は組み立てに成功してからでよい。失敗すればサーバーごと終わる。
-        let _ = ready_tx.send(Ready { scorer, saved });
+        let _ = ready_tx.send(Ready { scorer, base });
         Ok(engine)
     });
     let mut stdout = std::io::stdout().lock();

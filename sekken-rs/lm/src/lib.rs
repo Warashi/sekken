@@ -1,3 +1,4 @@
+pub mod adapted;
 pub mod condition;
 pub mod config;
 pub mod file;
