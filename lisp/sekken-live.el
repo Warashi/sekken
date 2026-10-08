@@ -95,7 +95,9 @@ ANALYSIS は ROMAN の解析結果。"
 (defcustom sekken-live-continue-commands
   '(sekken-im-self-insert self-insert-command
     delete-backward-char backward-delete-char-untabify
-    sekken-convert undo undo-redo undo-only)
+    sekken-convert undo undo-redo undo-only
+    universal-argument universal-argument-more
+    digit-argument negative-argument)
   "入力中の語を続けるので、走る前に確定しないコマンド。
 これに加えて、そのバッファで DEL と backspace に割り当てられたコマンドも
 後退削除として語を続ける（`sekken-live-continue-p'）。それ以外のコマンドは、

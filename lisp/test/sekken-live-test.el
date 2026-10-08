@@ -312,6 +312,19 @@
           (should (equal (buffer-string) "Neko"))
           (insert "g"))))))
 
+(ert-deftest sekken-live/前置引数のコマンドは走る前に確定せず次の打鍵で語が続く ()
+  ;; C-u 3 a の C-u と 3 は次のコマンドに引数を渡すだけで、確定するかは
+  ;; 次のコマンドが決める。
+  (dolist (command '(universal-argument universal-argument-more
+                     digit-argument negative-argument))
+    (with-temp-buffer
+      (sekken-test-type "Neko")
+      (sekken-live-test--with-cache '(("Neko" "猫"))
+        (sekken-live-test--command command
+          (should (equal (buffer-string) "Neko")))
+        (sekken-test-type "g"))
+      (should (equal (sekken-word-bounds) (cons 1 6))))))
+
 (defmacro sekken-live-test--with-completion-map (map &rest body)
   "候補一覧が MAP のキーマップで出ている状態で BODY を実行する。
 corfu と同じく `minor-mode-overriding-map-alist' に MAP を入れる。"
