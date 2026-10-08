@@ -312,16 +312,46 @@
           (should (equal (buffer-string) "Neko"))
           (insert "g"))))))
 
-(ert-deftest sekken-live/候補一覧が出ている間は列挙に無いコマンドでも走る前に確定しない ()
-  ;; corfu の C-n は列挙に無い corfu-next。走る前に確定すると一覧が閉じ、
-  ;; 先頭以外の候補を選べない。
+(defmacro sekken-live-test--with-completion-map (map &rest body)
+  "候補一覧が MAP のキーマップで出ている状態で BODY を実行する。
+corfu と同じく `minor-mode-overriding-map-alist' に MAP を入れる。"
+  (declare (indent 1))
+  `(let ((completion-in-region-mode t)
+         (minor-mode-overriding-map-alist
+          (list (cons 'completion-in-region-mode ,map))))
+     ,@body))
+
+(defun sekken-live-test--completion-map ()
+  "corfu-map に似た、候補一覧のキーマップ。"
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-n") #'sekken-live-test-next)
+    (define-key map [remap keyboard-quit] #'sekken-live-test-quit)
+    map))
+
+(ert-deftest sekken-live/候補一覧のキーマップにあるコマンドは列挙に無くても走る前に確定しない ()
+  ;; corfu の C-n は列挙に無い corfu-next で、C-g は keyboard-quit を
+  ;; corfu-quit に張り替える。走る前に確定すると一覧が閉じ、先頭以外の候補を
+  ;; 選べず、閉じてもローマ字に戻せない。
+  (dolist (command '(sekken-live-test-next sekken-live-test-quit))
+    (with-temp-buffer
+      (sekken-test-type "Neko")
+      (sekken-live-test--with-cache '(("Neko" "猫"))
+        (sekken-live-test--with-completion-map (sekken-live-test--completion-map)
+          (sekken-live-test--command command
+            (should (equal (buffer-string) "Neko")))))
+      (should (equal (buffer-string) "Neko")))))
+
+(ert-deftest sekken-live/候補一覧が出ていても一覧のキーマップに無いコマンドは走る前に_1_位候補で確定する ()
+  ;; corfu は先頭候補のままなら一覧の外のコマンドで何も入れない。
+  ;; C-c C-c の送信にローマ字が渡らないようにする。
   (with-temp-buffer
     (sekken-test-type "Neko")
-    (sekken-live-test--with-cache '(("Neko" "猫"))
-      (let ((completion-in-region-mode t))
-        (sekken-live-test--command #'corfu-next
-          (should (equal (buffer-string) "Neko")))))
-    (should (equal (buffer-string) "Neko"))))
+    (let (sent)
+      (sekken-live-test--with-cache '(("Neko" "猫"))
+        (sekken-live-test--with-completion-map (sekken-live-test--completion-map)
+          (sekken-live-test--command #'agent-shell-submit
+            (setq sent (buffer-string)))))
+      (should (equal sent "猫")))))
 
 (ert-deftest sekken-live/候補を選んだ直後に打った文字は新しい語の先頭になる ()
   ;; corfu は C-n で選んだ後に corfu 以外のキーを押すと、pre-command で候補を

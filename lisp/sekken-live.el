@@ -9,7 +9,7 @@
 ;; 語は、かな（と綴りのままの英字）を見せる。
 ;;
 ;; 確定の打鍵は無い。語を続けるコマンド（文字の挿入、後退削除、undo、
-;; 候補一覧が出ている間のすべて）以外のコマンドは、走る前に見せていた
+;; 候補一覧が出ている間の一覧のキーマップのコマンド）以外のコマンドは、走る前に見せていた
 ;; ものをバッファに入れる。入れるのは見せていたものと同じで、候補がまだ
 ;; 届いていなければかなのまま確定し、新しい変換は待たない。境界の ▽ は
 ;; 見せるだけでバッファには入れない。送信・保存・バッファの切り替えのようにポイントを動かさず
@@ -103,15 +103,28 @@ ANALYSIS は ROMAN の解析結果。"
   :type '(repeat function)
   :group 'sekken)
 
+(defun sekken-live--completion-command-p (command)
+  "completion-in-region の候補一覧が出ていて、COMMAND が一覧のキーマップにあるか。
+一覧を動く・絞る・閉じるコマンドは corfu のような UI ごとに違うので、名前
+ではなく、UI が `minor-mode-overriding-map-alist' に入れたキーマップで見る。
+`keyboard-quit' を張り替えた閉じるコマンドもあるので、remap も見る。"
+  (when completion-in-region-mode
+    (let* ((map (or (alist-get 'completion-in-region-mode
+                               minor-mode-overriding-map-alist)
+                    completion-in-region-mode-map))
+           (remap (lookup-key map [remap])))
+      (and (or (where-is-internal command (list map) t)
+               (and (keymapp remap)
+                    (where-is-internal command (list remap) t)))
+           t))))
+
 (defun sekken-live-continue-p (command)
   "COMMAND が入力中の語を続けるか。
-completion-in-region の候補一覧が出ている間はどのコマンドも続ける。一覧を
-動く・絞る・閉じるコマンドは corfu のような UI ごとに違うので、名前では
-なく `completion-in-region-mode' で見る。それ以外は
+候補一覧のキーマップにあるか（`sekken-live--completion-command-p'）、
 `sekken-live-continue-commands' にあるか、このバッファで DEL か backspace に
 割り当てられていれば続ける。org-mode のように major mode が後退削除を
 別のコマンドに張り替えても、キーで見れば漏れない。"
-  (or completion-in-region-mode
+  (or (sekken-live--completion-command-p command)
       (memq command sekken-live-continue-commands)
       (eq command (key-binding [?\d]))
       (eq command (key-binding [backspace]))))
