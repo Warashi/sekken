@@ -43,13 +43,13 @@
     (should (equal (sekken-kana-roman-to-kana "kka") "kか"))))
 
 (ert-deftest sekken-kana/四列目が_end_の行は区間を終えるときだけ使う ()
-  (sekken-kana-test--with-table "na\tな\nnn\tん\nn\tん\t\tend\nka\tか\n"
+  (sekken-kana-test--with-table "na\tな\nnn\tん\nn\tん\t\tend\nka\tか\n!\t！\n"
     (should (equal (sekken-kana-roman-to-kana "kan") "かn"))
     (should (equal (sekken-kana-roman-to-kana-end "kan") "かん"))
     (should (equal (sekken-kana-roman-to-kana-end "kann") "かん"))
     (should (equal (sekken-kana-roman-to-kana-end "kana") "かな"))
     ;; 区間の途中では使わない。
-    (should (equal (sekken-kana-roman-to-kana-end "nka") "nか"))))
+    (should (equal (sekken-kana-roman-to-kana-end "n!") "n！"))))
 
 (ert-deftest sekken-kana/区間を終えるときだけ使う行は境目にまたがらない ()
   (sekken-kana-test--with-table "ka\tか\nkn\tくん\t\tend\n"

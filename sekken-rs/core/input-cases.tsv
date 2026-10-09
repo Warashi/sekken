@@ -17,7 +17,7 @@ soreHaNekoDa	それ▽は▽ねこ▽だ	kana:それ	convert:は	convert:ねこ	
 kyouHa	きょう▽は	kana:きょう	convert:は
 neko	ねこ	kana:ねこ
 ;shokai;kougi	▽しょかい▽こうぎ	convert:しょかい	convert:こうぎ
-semi;;koron	せみ;ころん	kana:せみ;ころん
+semi;;koron	せみ;ころn	kana:せみ;ころん
 Neko;;;kai	▽ねこ;▽かい	convert:ねこ;	convert:かい
 ;Kai	▽かい	convert:かい
 ;o>;kai	▽お>▽かい	convert+prefix:お	convert+suffix:かい
@@ -60,11 +60,14 @@ o>kai	お▽かい	kana:お	convert+suffix:かい
 Toukyou>kaiha	▽とうきょう>▽かいは	convert+prefix:とうきょう	convert+suffix:かいは
 
 # 末尾の子音も表のとおり変換する（`k` は綴りのまま、`kk` で っk、`ka` で か になる）
+# 区間の末尾の `n` は表示では綴りのまま、送るときは区間を終えるときの行で ん になる
 KaK	▽か▽k	convert:か	convert:k
 Kak	▽かk	convert:かk
 Kakk	▽かっk	convert:かっk
 nek	ねk	kana:ねk
-Kan	▽かん	convert:かん
+Kan	▽かn	convert:かん
+KanI	▽かn▽い	convert:かん	convert:い
+honn	ほん	kana:ほん
 nekHa	ねk▽は	kana:ねk	convert:は
 Neko.	▽ねこ。	convert:ねこ。
 nekozh	ねこ←	kana:ねこ←

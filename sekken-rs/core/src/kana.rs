@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn 四列目が_end_の行は区間を終えるときだけ使う() {
-        let tsv = "na\tな\nnn\tん\nn\tん\t\tend\nka\tか\n";
+        let tsv = "na\tな\nnn\tん\nn\tん\t\tend\nka\tか\n!\t！\n";
         let linear = KanaTable::parse_tsv(tsv);
         let defaults: String = DEFAULT_TABLE_TSV
             .lines()
@@ -261,7 +261,7 @@ mod tests {
             assert_eq!(t.roman2kana_end("kann"), "かん");
             assert_eq!(t.roman2kana_end("kana"), "かな");
             // 区間の途中では使わない。
-            assert_eq!(t.roman2kana_end("nka"), "nか");
+            assert_eq!(t.roman2kana_end("n!"), "n！");
         }
     }
 

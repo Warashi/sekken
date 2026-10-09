@@ -79,7 +79,7 @@
   (should (equal (sekken-input-display "kyouHa") "きょう▽は"))
   (should (equal (sekken-input-display "neko") "ねこ"))
   (should (equal (sekken-input-display ";shokai;kougi") "▽しょかい▽こうぎ"))
-  (should (equal (sekken-input-display "semi;;koron") "せみ;ころん")))
+  (should (equal (sekken-input-display "semi;;koron") "せみ;ころn")))
 
 (ert-deftest sekken-input/エンジンに送る種類付きのかな区間にする ()
   (should (equal (sekken-input-pieces "soreHaNekoDa")
