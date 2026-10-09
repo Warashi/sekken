@@ -25,6 +25,7 @@
   "TSV の変換表で BODY を評価する。既定の表は書き換えない。"
   (declare (indent 1))
   `(let ((sekken-kana--table nil)
+         (sekken-kana--end-table nil)
          (sekken-kana--max-key 1)
          (file (make-temp-file "sekken-kana-table" nil ".tsv" ,tsv)))
      (unwind-protect
@@ -40,6 +41,19 @@
 (ert-deftest sekken-kana/キーの末尾でない三列目の行は使わない ()
   (sekken-kana-test--with-table "ka\tか\nkk\tっ\ta\n"
     (should (equal (sekken-kana-roman-to-kana "kka") "kか"))))
+
+(ert-deftest sekken-kana/四列目が_end_の行は区間を終えるときだけ使う ()
+  (sekken-kana-test--with-table "na\tな\nnn\tん\nn\tん\t\tend\nka\tか\n"
+    (should (equal (sekken-kana-roman-to-kana "kan") "かn"))
+    (should (equal (sekken-kana-roman-to-kana-end "kan") "かん"))
+    (should (equal (sekken-kana-roman-to-kana-end "kann") "かん"))
+    (should (equal (sekken-kana-roman-to-kana-end "kana") "かな"))
+    ;; 区間の途中では使わない。
+    (should (equal (sekken-kana-roman-to-kana-end "nka") "nか"))))
+
+(ert-deftest sekken-kana/区間を終えるときだけ使う行は境目にまたがらない ()
+  (sekken-kana-test--with-table "ka\tか\nkn\tくん\t\tend\n"
+    (should-not (sekken-kana-key-across-p "k" "n"))))
 
 (ert-deftest sekken-kana/境目にまたがる_2_文字以上のキーがあるかを引く ()
   (should (sekken-kana-key-across-p "nekoz" "/"))

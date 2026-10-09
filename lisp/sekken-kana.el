@@ -19,28 +19,40 @@
   "ローマ字文字列から (かな . 読み直す文字数) へのハッシュ表。
 読み直す文字数は、キーの末尾のうち次のキーの先頭として読み直す分。")
 
+(defvar sekken-kana--end-table nil
+  "区間を終えるときだけ使う、ローマ字文字列からかなへのハッシュ表。")
+
 (defvar sekken-kana--max-key 1
   "変換表のキーの最大長。最長一致の探索幅。")
 
 (defun sekken-kana-load-table (&optional file)
   "FILE（既定は `sekken-kana--table-file'）から変換表を読み込む。
 省略できる 3 列目はキーの末尾のうち次のキーの先頭として読み直す文字で
-（`kk\\tっ\\tk'）、キーの末尾でなければその行を使わない。"
+（`kk\\tっ\\tk'）、キーの末尾でなければその行を使わない。
+4 列目が `end' の行は区間を終えるときだけ使う（`n\\tん\\t\\tend'、
+`sekken-kana-roman-to-kana-end'）。"
   (let ((table (make-hash-table :test #'equal))
+        (end-table (make-hash-table :test #'equal))
         (max-key 1))
     (with-temp-buffer
       (insert-file-contents (or file sekken-kana--table-file))
       (goto-char (point-min))
       (while (re-search-forward
-              "^\\([^\t\n]+\\)\t\\([^\t\n]+\\)\\(?:\t\\([^\t\n]+\\)\\)?$" nil t)
+              "^\\([^\t\n]+\\)\t\\([^\t\n]+\\)\\(?:\t\\([^\t\n]*\\)\\(?:\t\\([^\t\n]+\\)\\)?\\)?$"
+              nil t)
         (let ((roman (match-string 1))
               (reread (or (match-string 3) "")))
-          ;; 読み直す文字がキー全体だと位置が進まない。
-          (when (and (string-suffix-p reread roman)
-                     (> (length roman) (length reread)))
+          (cond
+           ((equal (match-string 4) "end")
+            (when (string-empty-p reread)
+              (puthash roman (match-string 2) end-table)))
+           ;; 読み直す文字がキー全体だと位置が進まない。
+           ((and (string-suffix-p reread roman)
+                 (> (length roman) (length reread)))
             (setq max-key (max max-key (length roman)))
-            (puthash roman (cons (match-string 2) (length reread)) table)))))
+            (puthash roman (cons (match-string 2) (length reread)) table))))))
     (setq sekken-kana--table table
+          sekken-kana--end-table end-table
           sekken-kana--max-key max-key)
     table))
 
@@ -64,10 +76,12 @@ BEFORE と AFTER の境目が最長一致のキーの途中に当たるかを決
                                           table))))
      t)))
 
-(defun sekken-kana-roman-to-kana (roman)
-  "ROMAN をかなにする。表に無い部分はそのまま残す。"
+(defun sekken-kana--convert (roman)
+  "ROMAN をかなにし、(かな . 残った末尾の開始位置) を返す。
+かなには、どのキーにも当たらず末尾に残った文字を含めない。"
   (let ((table (sekken-kana--table))
         (pos 0)
+        (unmatched 0)
         (len (length roman))
         (parts nil))
     (while (< pos len)
@@ -76,14 +90,35 @@ BEFORE と AFTER の境目が最長一致のキーの途中に当たるかを決
         (while (and (> n 0) (not found))
           (let ((output (gethash (substring roman pos (+ pos n)) table)))
             (if output
-                (setq found (car output)
-                      pos (+ pos (- n (cdr output))))
+                (setq found output)
               (setq n (1- n)))))
-        (unless found
-          (setq found (substring roman pos (1+ pos))
-                pos (1+ pos)))
-        (push found parts)))
-    (apply #'concat (nreverse parts))))
+        (if (not found)
+            (setq pos (1+ pos))
+          (push (substring roman unmatched pos) parts)
+          (push (car found) parts)
+          (setq pos (+ pos (- n (cdr found)))
+                unmatched pos))))
+    (cons (apply #'concat (nreverse parts)) unmatched)))
+
+(defun sekken-kana-roman-to-kana (roman)
+  "ROMAN をかなにする。表に無い部分はそのまま残す。"
+  (let ((converted (sekken-kana--convert roman)))
+    (concat (car converted) (substring roman (cdr converted)))))
+
+(defun sekken-kana-roman-to-kana-end (roman)
+  "区間を終えるときの ROMAN をかなにする。
+`sekken-kana-roman-to-kana' に加えて、どのキーにも当たらず残った末尾が
+4 列目 `end' の行のキーで終わっていれば、そのかなにする。"
+  (sekken-kana--table)
+  (let* ((converted (sekken-kana--convert roman))
+         (tail (substring roman (cdr converted))))
+    ;; 最長のキーを使うため、末尾の先頭寄りから探す。
+    (concat
+     (car converted)
+     (or (cl-loop for start from 0 below (length tail)
+                  for kana = (gethash (substring tail start) sekken-kana--end-table)
+                  when kana return (concat (substring tail 0 start) kana))
+         tail))))
 
 (provide 'sekken-kana)
 ;;; sekken-kana.el ends here

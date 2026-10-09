@@ -11,6 +11,8 @@ pub struct KanaTable {
     linear_entries: Vec<(String, Output)>,
     /// 2 文字以上のキー。境界の文字がキーを完成させるかを引く。
     long_keys: Vec<String>,
+    /// 区間を終えるときだけ、どのキーにも当たらず残った末尾に使う (ローマ字, かな)。
+    end_entries: Vec<(String, String)>,
 }
 
 /// キーに当たったときに出すかな。
@@ -34,10 +36,22 @@ impl KanaTable {
     /// TSV（`roman\tkana` 1 行 1 組）から変換表を作る。
     /// 省略できる 3 列目はキーの末尾のうち次のキーの先頭として読み直す文字で
     /// （`kk\tっ\tk`）、キーの末尾でなければその行を使わない。
+    /// 4 列目が `end` の行は区間を終えるときだけ使う（`n\tん\t\tend`、`roman2kana_end`）。
     pub fn parse_tsv(tsv: &str) -> KanaTable {
         let mut entries = BTreeMap::new();
-        for (roman, rest) in tsv.lines().filter_map(|line| line.split_once('\t')) {
-            let (kana, reread) = rest.split_once('\t').unwrap_or((rest, ""));
+        let mut end_entries = BTreeMap::new();
+        for line in tsv.lines() {
+            let mut columns = line.split('\t');
+            let (Some(roman), Some(kana)) = (columns.next(), columns.next()) else {
+                continue;
+            };
+            let reread = columns.next().unwrap_or("");
+            if columns.next() == Some("end") {
+                if !roman.is_empty() && reread.is_empty() {
+                    end_entries.insert(roman.to_string(), kana.to_string());
+                }
+                continue;
+            }
             // 読み直す文字がキー全体だと位置が進まない。
             if !roman.is_empty() && roman.ends_with(reread) && roman.len() > reread.len() {
                 let output = Output {
@@ -53,6 +67,7 @@ impl KanaTable {
             .filter(|(roman, _)| roman.chars().count() > 1)
             .map(|(roman, _)| roman.clone())
             .collect();
+        let end_entries = end_entries.into_iter().collect();
         // Double-array は固定長の状態ブロックを持つため、小さい独自表では線形表の方が軽い。
         if entries.len() < 32 {
             return KanaTable {
@@ -60,6 +75,7 @@ impl KanaTable {
                 outputs: Vec::new(),
                 linear_entries: entries,
                 long_keys,
+                end_entries,
             };
         }
         let matcher = Some(
@@ -75,6 +91,7 @@ impl KanaTable {
             outputs,
             linear_entries: Vec::new(),
             long_keys,
+            end_entries,
         }
     }
 
@@ -94,8 +111,37 @@ impl KanaTable {
 
     /// ローマ字列をひらがなに変換する。表に無い部分はそのまま残す。
     pub fn roman2kana(&self, roman: &str) -> String {
+        let (mut out, tail) = self.convert(roman);
+        out.push_str(&roman[tail..]);
+        out
+    }
+
+    /// 区間を終えるときの変換。`roman2kana` に加えて、どのキーにも当たらず残った
+    /// 末尾が 4 列目 `end` の行のキーで終わっていれば、そのかなにする。
+    pub fn roman2kana_end(&self, roman: &str) -> String {
+        let (mut out, tail) = self.convert(roman);
+        let tail = &roman[tail..];
+        // 最長のキーを使うため、末尾の先頭寄りから探す。
+        let end = tail.char_indices().find_map(|(start, _)| {
+            self.end_entries
+                .iter()
+                .find(|(key, _)| *key == tail[start..])
+                .map(|(_, kana)| (start, kana))
+        });
+        match end {
+            Some((start, kana)) => {
+                out.push_str(&tail[..start]);
+                out.push_str(kana);
+            }
+            None => out.push_str(tail),
+        }
+        out
+    }
+
+    /// かなにした部分と、どのキーにも当たらず残った末尾の開始位置を返す。
+    fn convert(&self, roman: &str) -> (String, usize) {
         let Some(matcher) = &self.matcher else {
-            return roman2kana_linear(&self.linear_entries, roman);
+            return convert_linear(&self.linear_entries, roman);
         };
         let mut out = String::with_capacity(roman.len());
         let mut end = 0;
@@ -106,29 +152,30 @@ impl KanaTable {
             out.push_str(&output.kana);
             end += matched.end() - output.reread;
         }
-        out.push_str(&roman[end..]);
-        out
+        (out, end)
     }
 }
 
-fn roman2kana_linear(entries: &[(String, Output)], roman: &str) -> String {
+fn convert_linear(entries: &[(String, Output)], roman: &str) -> (String, usize) {
     let mut out = String::new();
-    let mut rest = roman;
-    while !rest.is_empty() {
+    let mut pos = 0;
+    let mut unmatched = 0;
+    while pos < roman.len() {
+        let rest = &roman[pos..];
         if let Some((pattern, output)) = entries
             .iter()
             .filter(|(pattern, _)| rest.starts_with(pattern))
             .max_by_key(|(pattern, _)| pattern.len())
         {
+            out.push_str(&roman[unmatched..pos]);
             out.push_str(&output.kana);
-            rest = &rest[pattern.len() - output.reread..];
+            pos += pattern.len() - output.reread;
+            unmatched = pos;
         } else {
-            let c = rest.chars().next().unwrap();
-            out.push(c);
-            rest = &rest[c.len_utf8()..];
+            pos += rest.chars().next().unwrap().len_utf8();
         }
     }
-    out
+    (out, unmatched)
 }
 
 #[cfg(test)]
@@ -195,6 +242,33 @@ mod tests {
     fn キーの末尾でない三列目の行は使わない() {
         let t = KanaTable::parse_tsv("ka\tか\nkk\tっ\ta\n");
         assert_eq!(t.roman2kana("kka"), "kか");
+    }
+
+    #[test]
+    fn 四列目が_end_の行は区間を終えるときだけ使う() {
+        let tsv = "na\tな\nnn\tん\nn\tん\t\tend\nka\tか\n";
+        let linear = KanaTable::parse_tsv(tsv);
+        let defaults: String = DEFAULT_TABLE_TSV
+            .lines()
+            .filter(|line| !line.starts_with("n\t"))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let automaton = KanaTable::parse_tsv(&format!("{defaults}{tsv}"));
+        assert!(automaton.matcher.is_some());
+        for t in [linear, automaton] {
+            assert_eq!(t.roman2kana("kan"), "かn");
+            assert_eq!(t.roman2kana_end("kan"), "かん");
+            assert_eq!(t.roman2kana_end("kann"), "かん");
+            assert_eq!(t.roman2kana_end("kana"), "かな");
+            // 区間の途中では使わない。
+            assert_eq!(t.roman2kana_end("nka"), "nか");
+        }
+    }
+
+    #[test]
+    fn 区間を終えるときだけ使う行は境目にまたがらない() {
+        let t = KanaTable::parse_tsv("ka\tか\nkn\tくん\t\tend\n");
+        assert!(!t.key_across("k", "n"));
     }
 
     #[test]

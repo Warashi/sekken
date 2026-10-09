@@ -87,7 +87,7 @@ impl Input {
     /// エディタが自前の変換で作って送るものと同じ結果にする。
     /// 語の終わりの `;` `/` `'` `>` は前の区間を閉じる意図しか持たないので、読みの
     /// 無い末尾の区間は送らない。
-    /// かなはどの区間も表の最長一致そのままで、末尾の子音も表のとおりに変換する
+    /// かなはどの区間も区間を終えるときの変換（`roman2kana_end`）で、末尾の子音も表のとおりに変換する
     /// （`nek` は「ねk」、`nekk` は「ねっk」、`neka` で「ねか」に変わる）。abbrev と literal の区間は綴りのまま送る。
     pub fn from_roman(table: &KanaTable, roman: &str) -> Input {
         let seg = segment(table, roman);
@@ -97,7 +97,7 @@ impl Input {
         };
         let mut pieces = Vec::new();
         if !seg.head.is_empty() {
-            pieces.push(Piece::kana(table.roman2kana(&seg.head)));
+            pieces.push(Piece::kana(table.roman2kana_end(&seg.head)));
         }
         pieces.extend(settled.iter().map(|s| {
             if s.abbrev {
@@ -105,7 +105,7 @@ impl Input {
             } else if s.literal {
                 Piece::literal(s.text.clone())
             } else {
-                Piece::convert(table.roman2kana(&s.text)).with_marks(s.prefix, s.suffix)
+                Piece::convert(table.roman2kana_end(&s.text)).with_marks(s.prefix, s.suffix)
             }
         }));
         Input { pieces }
@@ -186,6 +186,19 @@ mod tests {
         assert_eq!(from_roman("neka"), [Piece::kana("ねか")]);
         assert_eq!(from_roman("Kan"), [Piece::convert("かん")]);
         assert_eq!(from_roman("nekozh"), [Piece::kana("ねこ←")]);
+    }
+
+    #[test]
+    fn 区間ごとに区間を終えるときの変換を使う() {
+        let table = KanaTable::parse_tsv("ka\tか\ni\tい\nne\tね\nn\tん\t\tend\n");
+        assert_eq!(
+            Input::from_roman(&table, "nenKanI").pieces,
+            [
+                Piece::kana("ねん"),
+                Piece::convert("かん"),
+                Piece::convert("い")
+            ]
+        );
     }
 
     #[test]

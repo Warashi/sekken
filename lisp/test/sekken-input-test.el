@@ -105,6 +105,24 @@
   (should (equal (sekken-input-pieces "Kan") [(:kind "convert" :text "かん")]))
   (should (equal (sekken-input-pieces "nekozh") [(:kind "kana" :text "ねこ←")])))
 
+(ert-deftest sekken-input/区間ごとに区間を終えるときの変換で送り確定する ()
+  (let ((sekken-kana--table nil)
+        (sekken-kana--end-table nil)
+        (sekken-kana--max-key 1)
+        (file (make-temp-file "sekken-kana-table" nil ".tsv"
+                              "ka\tか\ni\tい\nne\tね\nn\tん\t\tend\n")))
+    (unwind-protect
+        (progn
+          (sekken-kana-load-table file)
+          (let ((analysis (sekken-input-analyze "nenKanI")))
+            (should (equal (plist-get analysis :display) "ねn▽かn▽い"))
+            (should (equal (plist-get analysis :pieces)
+                           [(:kind "kana" :text "ねん")
+                            (:kind "convert" :text "かん")
+                            (:kind "convert" :text "い")]))
+            (should (equal (plist-get analysis :commit) "ねんかんい"))))
+      (delete-file file))))
+
 (ert-deftest sekken-input/境界で終わる語は末尾の空の区間を落として送る ()
   ;; 末尾の `;' は前の語を閉じる意図しか持たないので、打たなかったものとして扱う。
   (should (equal (sekken-input-pieces "Neko;") (sekken-input-pieces "Neko")))

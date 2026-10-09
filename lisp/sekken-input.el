@@ -131,12 +131,14 @@ abbrev と literal の区間は次の `;' `/' `'' まで続き、中の大文字
         (cons (car segmented) (butlast segments))
       segmented)))
 
-(defun sekken-input--segment-kana (segment)
-  "SEGMENT の :text をかなにする。abbrev と literal の区間は綴りのまま返す。"
+(defun sekken-input--segment-kana (segment &optional end)
+  "SEGMENT の :text をかなにする。abbrev と literal の区間は綴りのまま返す。
+END なら区間を終えるときの変換（`sekken-kana-roman-to-kana-end'）を使う。"
   (let ((text (plist-get segment :text)))
-    (if (or (plist-get segment :abbrev) (plist-get segment :literal))
-        text
-      (sekken-kana-roman-to-kana text))))
+    (cond
+     ((or (plist-get segment :abbrev) (plist-get segment :literal)) text)
+     (end (sekken-kana-roman-to-kana-end text))
+     (t (sekken-kana-roman-to-kana text)))))
 
 (defun sekken-input--display (segmented)
   "SEGMENTED をかなにし、変換境界を ▽ で示す。
@@ -163,14 +165,14 @@ jsonrpc.el が JSON の配列にするようベクタで返す。"
   (let ((head (car settled))
         (pieces nil))
     (unless (string-empty-p head)
-      (push (list :kind "kana" :text (sekken-kana-roman-to-kana head))
+      (push (list :kind "kana" :text (sekken-kana-roman-to-kana-end head))
             pieces))
     (dolist (segment (cdr settled))
       (push (append
              (list :kind (cond ((plist-get segment :abbrev) "abbrev")
                                ((plist-get segment :literal) "literal")
                                (t "convert"))
-                   :text (sekken-input--segment-kana segment))
+                   :text (sekken-input--segment-kana segment t))
              (and (plist-get segment :prefix) '(:prefix t))
              (and (plist-get segment :suffix) '(:suffix t)))
             pieces))
@@ -181,8 +183,9 @@ jsonrpc.el が JSON の配列にするようベクタで返す。"
 `sekken-input--display' と同じかなを、境界の印（▽ `/' `'' `>'）だけ落として
 つなぐ。印は見せるためのもので、バッファには入れない。"
   (concat
-   (sekken-kana-roman-to-kana (car settled))
-   (mapconcat #'sekken-input--segment-kana (cdr settled) "")))
+   (sekken-kana-roman-to-kana-end (car settled))
+   (mapconcat (lambda (segment) (sekken-input--segment-kana segment t))
+              (cdr settled) "")))
 
 (defun sekken-input-analyze (roman)
   "入力中の ROMAN を 1 度だけ解析し、表示と確定の両方に使う plist を返す。
