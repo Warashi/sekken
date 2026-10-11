@@ -124,8 +124,9 @@ ANALYSIS は ROMAN の解析結果。"
   "COMMAND が入力中の語を続けるか。
 候補一覧のキーマップにあるか（`sekken-live--completion-command-p'）、
 `sekken-live-continue-commands' にあるか、このバッファで DEL か backspace に
-割り当てられていれば続ける。org-mode のように major mode が後退削除を
-別のコマンドに張り替えても、キーで見れば漏れない。"
+割り当てられていれば続ける。`sekken-mode-map' より優先されるキーマップ
+（`emulation-mode-map-alists' など）が後退削除を別のコマンドに張り替えても、
+キーで見れば漏れない。"
   (or (sekken-live--completion-command-p command)
       (memq command sekken-live-continue-commands)
       (eq command (key-binding [?\d]))

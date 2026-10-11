@@ -385,7 +385,7 @@ corfu と同じく `minor-mode-overriding-map-alist' に MAP を入れる。"
     (should (equal (buffer-string) "猫が"))))
 
 (ert-deftest sekken-live/DEL_に割り当てられたコマンドは列挙に無くても走る前に確定しない ()
-  ;; org-mode は DEL を org-delete-backward-char に張り替える。
+  ;; evil のように `sekken-mode-map' より優先されるキーマップが DEL を張り替える。
   (with-temp-buffer
     (use-local-map (let ((map (make-sparse-keymap)))
                      (define-key map (kbd "DEL") #'sekken-live-test-delete)
