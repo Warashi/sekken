@@ -150,10 +150,12 @@ overlay に見せるだけで、バッファには入らない。空白や改行
 日本語の文は空白か改行まで 1 語として扱われ、改行で一括して置き換わる。
 `'` の綴りの中では空白も語の文字なので、`'git branch` のように英語を数語挟んでも
 そこでは置き換わらない。`z` の後の空白も全角空白のキーとして語に含める。
-後退削除は、コマンド名に加えて DEL と backspace に割り当てられたコマンドで見るので、
-org-mode のように major mode が張り替えていても語を続ける。別のキーの後退削除は
-`sekken-live-continue-commands` に足す。足さないと、そのキーを押した時点で語が
-置き換わってから削除が走る。
+DEL と backspace は入力中の語の末尾をかな 1 つ分消す（`Nekoga` → `Neko`、
+`nekko` → `nek`）。綴りのままの区間は 1 文字、1 文字に見える二重の `''` などは
+2 文字を消す。語が無いときとリージョンがあるときは、major mode などがそのキーに
+割り当てたコマンド（org-mode の `org-delete-backward-char` など）が動く。
+別のキーの後退削除は `sekken-live-continue-commands` に足す。足さないと、そのキーを
+押した時点で語が置き換わってから削除が走る。
 
 1 位以外の候補を選ぶには `C-j`（`sekken-mode-map` の `sekken-convert`。別のキーにするなら
 `keymap-set sekken-mode-map` で付け替える）を使う。候補が `completion-in-region` に渡るので、corfu を使っていればその

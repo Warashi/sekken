@@ -94,7 +94,7 @@ ANALYSIS は ROMAN の解析結果。"
 
 (defcustom sekken-live-continue-commands
   '(sekken-im-self-insert self-insert-command
-    delete-backward-char backward-delete-char-untabify
+    sekken-delete-backward delete-backward-char backward-delete-char-untabify
     sekken-convert undo undo-redo undo-only
     universal-argument universal-argument-more
     digit-argument negative-argument)

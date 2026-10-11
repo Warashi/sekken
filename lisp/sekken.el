@@ -24,12 +24,15 @@
 (require 'sekken-word)
 (require 'sekken-convert)
 (require 'sekken-live)
+(require 'sekken-delete)
 (require 'sekken-register)
 (require 'sekken-im)
 
 (defvar sekken-mode-map
   (let ((map (make-sparse-keymap)))
     (keymap-set map "C-j" #'sekken-convert)
+    (keymap-set map "DEL" #'sekken-delete-backward)
+    (keymap-set map "<backspace>" #'sekken-delete-backward)
     (sekken-im-bind-map map)
     map)
   "`sekken-mode' のキーマップ。")
