@@ -71,6 +71,27 @@
   (should (sekken-kana-key-across-p "nekok" "ka"))
   (should-not (sekken-kana-key-across-p "nekoka" "ka")))
 
+(defun sekken-kana-test--shrink (roman)
+  "ROMAN の末尾のかな 1 つ分を落とした文字列。"
+  (substring roman 0 (- (length roman) (sekken-kana-last-unit-length roman))))
+
+(ert-deftest sekken-kana/末尾のかな_1_つを作ったキーの長さを返す ()
+  (should (equal (sekken-kana-test--shrink "kyouha") "kyou"))
+  (should (equal (sekken-kana-test--shrink "kya") ""))
+  (should (equal (sekken-kana-test--shrink "z/") ""))
+  (should (equal (sekken-kana-last-unit-length "") 0)))
+
+(ert-deftest sekken-kana/読み直す文字はかなを作った長さに含めない ()
+  (should (equal (sekken-kana-test--shrink "nekko") "nek"))
+  (should (equal (sekken-kana-roman-to-kana "nek") "ねk"))
+  (should (equal (sekken-kana-test--shrink "kanka") "kan"))
+  (should (equal (sekken-kana-roman-to-kana "kan") "かn")))
+
+(ert-deftest sekken-kana/表に当たらず残った末尾は_1_文字ずつにする ()
+  (should (equal (sekken-kana-test--shrink "nekk") "nek"))
+  (should (equal (sekken-kana-test--shrink "nek") "ne"))
+  (should (equal (sekken-kana-test--shrink "kan") "ka")))
+
 (ert-deftest sekken-kana/Rust_と共通の_fixture_と一致する ()
   "エディタが送るかなが変換結果を決めるので、Rust 側と同じ表で一致を確かめる。"
   (with-temp-buffer

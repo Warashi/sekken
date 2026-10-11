@@ -77,11 +77,13 @@ BEFORE と AFTER の境目が最長一致のキーの途中に当たるかを決
      t)))
 
 (defun sekken-kana--convert (roman)
-  "ROMAN をかなにし、(かな . 残った末尾の開始位置) を返す。
-かなには、どのキーにも当たらず末尾に残った文字を含めない。"
+  "ROMAN をかなにし、(かな 残った末尾の開始位置 最後に当たったキーの開始位置) を返す。
+かなには、どのキーにも当たらず末尾に残った文字を含めない。キーに当たらなければ
+最後のキーの開始位置は nil。"
   (let ((table (sekken-kana--table))
         (pos 0)
         (unmatched 0)
+        (last nil)
         (len (length roman))
         (parts nil))
     (while (< pos len)
@@ -96,14 +98,15 @@ BEFORE と AFTER の境目が最長一致のキーの途中に当たるかを決
             (setq pos (1+ pos))
           (push (substring roman unmatched pos) parts)
           (push (car found) parts)
-          (setq pos (+ pos (- n (cdr found)))
+          (setq last pos
+                pos (+ pos (- n (cdr found)))
                 unmatched pos))))
-    (cons (apply #'concat (nreverse parts)) unmatched)))
+    (list (apply #'concat (nreverse parts)) unmatched last)))
 
 (defun sekken-kana-roman-to-kana (roman)
   "ROMAN をかなにする。表に無い部分はそのまま残す。"
   (let ((converted (sekken-kana--convert roman)))
-    (concat (car converted) (substring roman (cdr converted)))))
+    (concat (car converted) (substring roman (nth 1 converted)))))
 
 (defun sekken-kana-roman-to-kana-end (roman)
   "区間を終えるときの ROMAN をかなにする。
@@ -111,7 +114,7 @@ BEFORE と AFTER の境目が最長一致のキーの途中に当たるかを決
 4 列目 `end' の行のキーで終わっていれば、そのかなにする。"
   (sekken-kana--table)
   (let* ((converted (sekken-kana--convert roman))
-         (tail (substring roman (cdr converted))))
+         (tail (substring roman (nth 1 converted))))
     ;; 最長のキーを使うため、末尾の先頭寄りから探す。
     (concat
      (car converted)
@@ -119,6 +122,17 @@ BEFORE と AFTER の境目が最長一致のキーの途中に当たるかを決
                   for kana = (gethash (substring tail start) sekken-kana--end-table)
                   when kana return (concat (substring tail 0 start) kana))
          tail))))
+
+(defun sekken-kana-last-unit-length (roman)
+  "ROMAN の末尾のかな 1 つ分の文字数。ROMAN が空なら 0。
+どのキーにも当たらず末尾に残った文字があれば、その 1 文字。無ければ最後に
+当たったキーのうち、次のキーとして読み直さない部分。"
+  (let ((converted (sekken-kana--convert roman))
+        (len (length roman)))
+    (cond
+     ((< (nth 1 converted) len) 1)
+     ((nth 2 converted) (- len (nth 2 converted)))
+     (t 0))))
 
 (provide 'sekken-kana)
 ;;; sekken-kana.el ends here
