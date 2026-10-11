@@ -301,6 +301,34 @@ TEXT は空白や `:' を含みうるので、最初の `:' だけで切る。"
           (push (split-string line "\t") cases)))
       (nreverse cases))))
 
+(defun sekken-input-test--shrink (roman)
+  "ROMAN の末尾の 1 単位を落とした文字列。"
+  (substring roman 0 (- (length roman) (sekken-input-last-unit-length roman))))
+
+(ert-deftest sekken-input/末尾のかな_1_つ分を_1_単位にする ()
+  (should (equal (sekken-input-test--shrink "kyouha") "kyou"))
+  (should (equal (sekken-input-test--shrink "nekko") "nek"))
+  (should (equal (sekken-input-test--shrink "nekoz/") "neko"))
+  (should (equal (sekken-input-last-unit-length "") 0)))
+
+(ert-deftest sekken-input/大文字の境界はそのかなと一緒に_1_単位にする ()
+  (should (equal (sekken-input-test--shrink "NekoGa") "Neko"))
+  (should (equal (sekken-input-test--shrink "Ne") "")))
+
+(ert-deftest sekken-input/単独の境界の文字は_1_文字を_1_単位にする ()
+  (should (equal (sekken-input-test--shrink "Neko;") "Neko"))
+  (should (equal (sekken-input-test--shrink "Neko>") "Neko"))
+  (should (equal (sekken-input-test--shrink "Neko'") "Neko"))
+  (should (equal (sekken-input-test--shrink "'git;") "'git")))
+
+(ert-deftest sekken-input/綴りのままの区間は_1_文字を_1_単位にする ()
+  (should (equal (sekken-input-test--shrink "'git") "'gi"))
+  (should (equal (sekken-input-test--shrink "/kyou") "/kyo")))
+
+(ert-deftest sekken-input/二重の境界の文字は_2_文字を_1_単位にする ()
+  (should (equal (sekken-input-test--shrink "'don''") "'don"))
+  (should (equal (sekken-input-test--shrink "Neko;;") "Neko")))
+
 (ert-deftest sekken-input/Rust_と共通の_fixture_と一致する ()
   "同じローマ字を Rust と Emacs が同じ区間に分けないと、先読みと確定がずれる。
 表示は Emacs にしかないので、この表の 2 列目は Emacs だけが読む。"

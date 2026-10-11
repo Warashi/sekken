@@ -220,5 +220,33 @@ jsonrpc.el が JSON の配列にするようベクタで返す。"
 表示や確定も要る呼び出し元は `sekken-input-analyze' を 1 度呼ぶ。"
   (plist-get (sekken-input-analyze roman) :pieces))
 
+(defun sekken-input-last-unit-length (roman)
+  "入力中の ROMAN の末尾の 1 単位の文字数。ROMAN が空なら 0。
+かなの区間ではかな 1 つ分（`sekken-kana-last-unit-length'）で、大文字の境界は
+そのかなに含める。1 文字として見える二重の境界の文字は 2、綴りのままの区間の
+文字と単独の境界の文字は 1。"
+  (let ((reader (sekken-input-reader-create))
+        (length (length roman)))
+    (if (zerop length)
+        0
+      (sekken-input-read-until reader roman (1- length))
+      (cond
+       ((> (sekken-input-reader-index reader) (1- length)) 2)
+       ((sekken-input-reader-in-spelled reader) 1)
+       (t
+        (sekken-input-read-until reader roman length)
+        (let* ((current (sekken-input-reader-current reader))
+               (text (if current
+                         (plist-get current :text)
+                       (sekken-input-reader-head reader)))
+               (unit (sekken-kana-last-unit-length text)))
+          ;; 区間の文字列は二重の境界の文字を 1 文字にしているので、
+          ;; ローマ字の末尾と同じ文字列のときだけかなの単位を使う。
+          (if (and (> unit 1)
+                   (string-suffix-p (substring text (- (length text) unit))
+                                    (downcase roman)))
+              unit
+            1)))))))
+
 (provide 'sekken-input)
 ;;; sekken-input.el ends here
