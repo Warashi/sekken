@@ -20,8 +20,10 @@ pub const RANK_WEIGHT: f64 = 3.0;
 pub const KANA_PENALTY: f64 = 4.0;
 
 /// literal の直後の区間で、読みをそのままひらがなにした候補に加えるコスト。直後の助詞
-/// （`'Emacs;wo`）はかなと示す手段が無いので `KANA_PENALTY` より軽くする。
-pub const LITERAL_KANA_PENALTY: f64 = KANA_PENALTY;
+/// （`'Emacs;wo`）はかなと示す手段が無いので `KANA_PENALTY` より軽くする。英数字を含む
+/// 自分の文 1,819 文で 0 から 4 を振り、最も良かった 2 にした（4 から +3.0 ポイント、
+/// 0 では数字の直後の漢字が崩れる。sekken-train の experiments/2026-10-12-own-literal）。
+pub const LITERAL_KANA_PENALTY: f64 = 2.0;
 
 /// 途中経路を残す本数の下限。同点や後段の逆転に備え、要求数が少なくても
 /// これだけは残す。
