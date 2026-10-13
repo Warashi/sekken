@@ -270,6 +270,21 @@ ON-FAILURE があれば引数なしで呼ぶ。接続の起動に失敗すれば
                  (or (alist-get 'jsonrpc-error-message (cdr err))
                      (error-message-string err))))))
 
+(defun sekken-server-learn (sentences)
+  "文のリスト SENTENCES をエンジンの本人の n-gram に数える。
+エンジンは数えた後すぐファイルに書く。数えた文の数を返す。
+断られれば `user-error' にする。"
+  (condition-case err
+      (plist-get (jsonrpc-request (sekken-server-connection) :learn
+                                  (list :sentences (vconcat sentences))
+                                  ;; 読み込み中なら終わるまで待つので、起動と同じだけ待つ。
+                                  :timeout sekken-server-startup-timeout)
+                 :sentences)
+    (jsonrpc-error
+     (user-error "sekken: 数えられませんでした: %s"
+                 (or (alist-get 'jsonrpc-error-message (cdr err))
+                     (error-message-string err))))))
+
 (defun sekken-server-shutdown ()
   "エンジンを止める。"
   (interactive)

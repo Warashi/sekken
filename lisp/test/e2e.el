@@ -162,6 +162,16 @@
         (error "e2e: 登録した語を選んだ結果が %S" (buffer-string)))
       (deactivate-input-method))
     (delete-file sekken-server-user-jisyo)
+    ;; 過去に書いた文は、エンジンを止めずに本人の n-gram に数えてすぐ書く。
+    (let ((org (make-temp-file "sekken-e2e-learn-" nil ".org"
+                               "* 見出しは数えない。\n吾輩は猫である。名前は\nまだ無い。\n")))
+      (unwind-protect
+          (let ((count (sekken-learn-files (list org))))
+            (unless (= count 2)
+              (error "e2e: 数えた文の数が %S" count)))
+        (delete-file org)))
+    (unless (file-exists-p sekken-server-personal)
+      (error "e2e: 数えた文が終了を待たずに書かれていない"))
     ;; 確定した文を学習させると、動いた出力層と数えた n-gram が shutdown で保存先に書かれる。
     (sekken-server-adapt (sekken-input-pieces "WagahaihaNekodearu.")
                          "吾輩は猫である。")

@@ -26,6 +26,7 @@
 (require 'sekken-live)
 (require 'sekken-delete)
 (require 'sekken-register)
+(require 'sekken-learn)
 (require 'sekken-im)
 
 (defvar sekken-mode-map
