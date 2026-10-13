@@ -202,6 +202,10 @@ SKK 辞書に無い固有名詞や自分の語彙は `M-x sekken-register` で�
 学習に回る。候補が届く前にかなのまま置き換わった語と、辞書を引かない語は
 エンジンの変換ではないので送らない。歩幅は `--adapt-lr`（既定 3e-3）で決める。
 学習は変換とは別のスレッドで走り、変換の応答は待たせない。
+動かすたびに、元の `lm.zst` の出力層との差の一部（`--adapt-lr` × `--adapt-anchor`、既定 10 なら 3%）を
+戻す。戻さないと出力層は確定を重ねるほど元から離れ続け、本人の文を数千文確定すると一般の文の変換が崩れる
+（sekken-train の experiments/2026-10-13-adapt-anchor: 4,763 文で Wikipedia の先頭一致が 37.7% から 19.1%。
+引き戻すと 37.5% に留まり、自分の文の伸びはほぼ変わらない）。
 
 動いた出力層は、エンジンをきちんと止めたとき（Emacs の終了、
 `M-x sekken-server-restart`）に `sekken-server-adapted-lm`（既定は
@@ -233,6 +237,17 @@ bigram・trigram を Witten-Bell の補間で重ねる。格子の接続では 2
 確定した文の量で増え、100 万字ほど数えて 9 MB になる。捨てるにはこのファイルを
 消す。`model.zst` を入れ替えても消さなくてよい（語を表層形で持ち、`model.zst` の
 語彙に依らないため）。`sekken-server-personal` を nil にすれば数えない。
+
+本人の n-gram は確定した文から数えるので、使い始めは空で効かない。これまでに書いた org・Markdown の文は
+`M-x sekken-learn-files` で先に数えておける。ファイルかディレクトリを聞き、ディレクトリなら中の `.org`
+と `.md`（`sekken-learn-extensions`）を再帰的に読む（名前が `.` で始まるディレクトリは飛ばす）。段落
+（空行・見出し・表・ドロワー・箇条書きの頭で区切る）の折り返しをつなぎ直して「。」で切り、和文の字を含む
+文をエンジンに送る。エンジンは数えてすぐ `sekken-server-personal` に書く。同じ文を何度数えても回数は
+足されるので、同じファイルを 2 度数えない。自分のメモ約 4,800 文を数えると、英数字を含む自分の文の先頭一致が
+73.9% から 80.1% に上がり、代わりに Wikipedia の文が 2.1 ポイント下がった
+（sekken-train の experiments/2026-10-13-personal-seed）。Emacs を使わずに数えるなら
+`sekken learn --dic system.dic.zst --personal sekken-personal.zst < sentences.txt`（1 行 1 文）。
+エンジンは終了時に本人の n-gram を書くので、このコマンドはエンジンを止めてから使う。
 
 ## ライセンス
 
