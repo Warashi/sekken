@@ -15,6 +15,7 @@ use std::sync::mpsc;
 
 use anyhow::{Context as _, Result};
 use sekken_lm::adapted::{AdaptedHead, fingerprint};
+use sekken_lm::config::Weight;
 use sekken_lm::file::SavedModel;
 use sekken_lm::infer::Plastic;
 use sekken_lm::scorer::LmScorer;
@@ -27,16 +28,21 @@ pub struct AdaptArgs {
     /// 動かした出力層の保存先。あれば `--lm` の出力層をこれに差し替える（`--lm` が同じときだけ）
     #[arg(long)]
     pub adapted_lm: Option<PathBuf>,
+    /// 出力層を動かすたびに `--lm` の元の出力層へ引き戻す割合（学習率に掛ける）。0 なら引き戻さない
+    #[arg(long, default_value_t = sekken_lm::infer::ADAPT_ANCHOR)]
+    pub adapt_anchor: f32,
 }
 
-/// `--lm` を読み、動かした出力層があれば差し替える。`--lm` の指紋も返す（保存する出力層に付ける）。
+/// `--lm` を読み、動かした出力層があれば差し替える。`--lm` の指紋（保存する出力層に付ける）と、
+/// 差し替える前の `--lm` の出力層（`Infer::set_anchor` で引き戻す先）も返す。
 /// 出力層が別の `--lm` から作られたもの、読めないもの、旧形式（モデル全体の写し）なら、理由を
 /// stderr に出して `--lm` のまま使う。次の保存で上書きされる。
-pub fn load_model(lm: &Path, adapted: Option<&Path>) -> Result<(SavedModel, u64)> {
+pub fn load_model(lm: &Path, adapted: Option<&Path>) -> Result<(SavedModel, u64, Vec<Weight>)> {
     let bytes = std::fs::read(lm).with_context(|| format!("read {}", lm.display()))?;
     let base = fingerprint(&bytes);
     let mut saved =
         crate::engine::load_lm_bytes(&bytes).with_context(|| format!("load {}", lm.display()))?;
+    let original = saved.head_weights();
     if let Some(path) = adapted.filter(|p| p.exists()) {
         let head = std::fs::File::open(path)
             .map_err(anyhow::Error::from)
@@ -62,7 +68,7 @@ pub fn load_model(lm: &Path, adapted: Option<&Path>) -> Result<(SavedModel, u64)
             }
         }
     }
-    Ok((saved, base))
+    Ok((saved, base, original))
 }
 
 /// 読み込みが終わった採点器と、その元になった `--lm` の指紋。
@@ -279,11 +285,11 @@ mod tests {
         let adapted = dir.join("adapted.zst");
         save_model(&small_model(1), &base);
         save_head(&base, 0.25, &adapted);
-        let (saved, fp) = load_model(&base, Some(&adapted)).unwrap();
+        let (saved, fp, _) = load_model(&base, Some(&adapted)).unwrap();
         assert!(head_weight(&saved).iter().all(|&w| w == 0.25));
         assert_eq!(fp, fingerprint(&std::fs::read(&base).unwrap()));
         // 保存先がまだ無い初回は `--lm` のまま。
-        let (saved, _) = load_model(&base, Some(&dir.join("none.zst"))).unwrap();
+        let (saved, _, _) = load_model(&base, Some(&dir.join("none.zst"))).unwrap();
         assert_eq!(head_weight(&saved), head_weight(&small_model(1)));
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -296,7 +302,7 @@ mod tests {
         save_model(&small_model(1), &base);
         save_head(&base, 0.25, &adapted);
         save_model(&small_model(2), &base);
-        let (saved, _) = load_model(&base, Some(&adapted)).unwrap();
+        let (saved, _, _) = load_model(&base, Some(&adapted)).unwrap();
         assert_eq!(head_weight(&saved), head_weight(&small_model(2)));
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -308,11 +314,11 @@ mod tests {
         let adapted = dir.join("adapted.zst");
         save_model(&small_model(1), &base);
         std::fs::write(&adapted, b"not a model").unwrap();
-        let (saved, _) = load_model(&base, Some(&adapted)).unwrap();
+        let (saved, _, _) = load_model(&base, Some(&adapted)).unwrap();
         assert_eq!(head_weight(&saved), head_weight(&small_model(1)));
         // 2026-10 まではモデル全体の写しを保存していた。
         save_model(&small_model(2), &adapted);
-        let (saved, _) = load_model(&base, Some(&adapted)).unwrap();
+        let (saved, _, _) = load_model(&base, Some(&adapted)).unwrap();
         assert_eq!(head_weight(&saved), head_weight(&small_model(1)));
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -323,6 +329,7 @@ mod tests {
             AdaptArgs {
                 adapt_lr: 3e-3,
                 adapted_lm: None,
+                adapt_anchor: 0.0,
             },
         )
     }
@@ -356,11 +363,12 @@ mod tests {
             AdaptArgs {
                 adapt_lr: 0.1,
                 adapted_lm: Some(adapted.clone()),
+                adapt_anchor: 0.0,
             },
         );
         // 読み込みが終わる前に来た文も、終わってから学習される。
         adapter.adapt("ねこ".to_string(), "猫".to_string());
-        let (saved, fp) = load_model(&base, Some(&adapted)).unwrap();
+        let (saved, fp, _) = load_model(&base, Some(&adapted)).unwrap();
         let scorer = Arc::new(LmScorer::from_saved(&saved).unwrap());
         ready_tx
             .send(Ready {
@@ -370,7 +378,7 @@ mod tests {
             .unwrap();
         adapter.adapt("ねこ".to_string(), "猫が鳴く".to_string());
         adapter.flush();
-        let (reloaded, _) = load_model(&base, Some(&adapted)).unwrap();
+        let (reloaded, _, _) = load_model(&base, Some(&adapted)).unwrap();
         assert_ne!(
             head_weight(&reloaded),
             head_weight(&saved),

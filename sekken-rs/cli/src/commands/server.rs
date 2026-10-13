@@ -138,12 +138,15 @@ pub fn run(args: Args) -> Result<()> {
     let user_jisyo = args.engine.user_jisyo.clone();
     let personal = args.engine.personal.clone();
     let adapted_lm = args.adapt.adapted_lm.clone();
+    let adapt_anchor = args.adapt.adapt_anchor;
     let (ready_tx, ready_rx) = mpsc::channel();
     let adapter = Adapter::spawn(ready_rx, args.adapt);
     let engine_args = args.engine;
     let mut loader = EngineLoader::spawn(move || {
-        let (saved, base) = sekken_cli::adapt::load_model(&engine_args.lm, adapted_lm.as_deref())?;
+        let (saved, base, original) =
+            sekken_cli::adapt::load_model(&engine_args.lm, adapted_lm.as_deref())?;
         let scorer = Arc::new(engine_args.lm_scorer(&saved)?);
+        scorer.infer().set_anchor(&original, adapt_anchor);
         let engine = engine_args.build_with(Box::new(scorer.clone()))?;
         // 学習は組み立てに成功してからでよい。失敗すればサーバーごと終わる。
         let _ = ready_tx.send(Ready { scorer, base });
@@ -393,6 +396,7 @@ mod tests {
             AdaptArgs {
                 adapt_lr: 3e-3,
                 adapted_lm: None,
+                adapt_anchor: 0.0,
             },
         )
     }
@@ -608,6 +612,7 @@ mod tests {
             AdaptArgs {
                 adapt_lr: 3e-3,
                 adapted_lm: None,
+                adapt_anchor: 0.0,
             },
         );
         let (_tx, rx) = mpsc::channel::<()>();

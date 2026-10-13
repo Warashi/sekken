@@ -104,8 +104,25 @@ pub struct Infer {
     /// 出力層。確定した文で逐次に動かす（`adapt`）ので、採点中に読み、
     /// 更新時に書き換えられるよう他の重みと分けて置く。
     head: RwLock<Head>,
+    /// `adapt` で出力層を引き戻す先と強さ。設定しなければ引き戻さない。
+    anchor: std::sync::OnceLock<Anchor>,
     /// 行列積を分けるスレッド数。
     threads: usize,
+}
+
+/// 確定した文で出力層を動かすたびに、元の重みへ引き戻す割合（学習率に掛ける）。
+///
+/// 引き戻さないと出力層は確定のたびに元の重みから離れ続け、本人の文 4,763 文で Wikipedia の先頭一致が
+/// 37.7% から 19.1% に崩れた。3 なら 35.8% に留まり、自分の文の伸びは変わらなかった
+/// （sekken-train の experiments/2026-10-13-adapt-anchor）。
+pub const ADAPT_ANCHOR: f32 = 3.0;
+
+/// `adapt` で引き戻す先の出力層。
+struct Anchor {
+    weight: Vec<f32>,
+    bias: Vec<f32>,
+    /// 1 歩ごとに元の重みとの差の `lr · strength` を戻す。
+    strength: f32,
 }
 
 /// 出力層の重み。logits = hidden · weightᵀ + bias。
@@ -207,6 +224,7 @@ impl Infer {
             embed: get("embed.weight")?,
             norm: get("norm.weight")?,
             head: RwLock::new(head),
+            anchor: std::sync::OnceLock::new(),
             blocks,
             threads: 1,
             cfg,
@@ -494,6 +512,18 @@ impl Infer {
             row[t as usize] -= 1.0;
         }
         let mut head = self.head.write().unwrap();
+        if let Some(anchor) = self.anchor.get() {
+            // 元の重みとの差を一定の割合で戻してから動かす（減衰を勾配と分けた形）。
+            let k = (lr * anchor.strength).min(1.0);
+            for (b, b0) in head.bias.iter_mut().zip(&anchor.bias) {
+                *b -= k * (*b - b0);
+            }
+            if plastic == Plastic::Head {
+                for (w, w0) in head.weight.iter_mut().zip(&anchor.weight) {
+                    *w -= k * (*w - w0);
+                }
+            }
+        }
         for (b, col) in head.bias.iter_mut().enumerate() {
             let g: f32 = (0..rows).map(|r| grad[r * v + b]).sum();
             *col -= lr * g;
@@ -523,6 +553,28 @@ impl Infer {
             }
         }
         nll
+    }
+
+    /// `adapt` で出力層を `head`（`head.weight` と `head.bias`。bias が無ければ零）へ引き戻すようにする。
+    /// 動かした出力層を読み込んで始めるときも、元のモデルの出力層を渡す。`strength` が 0 以下なら
+    /// 引き戻さない。2 度目以降の呼び出しは無視する。
+    pub fn set_anchor(&self, head: &[Weight], strength: f32) {
+        if strength <= 0.0 {
+            return;
+        }
+        let find = |name: &str| head.iter().find(|(n, _, _)| n == name).map(|w| w.2.clone());
+        let Some(weight) = find("head.weight") else {
+            return;
+        };
+        if weight.len() != self.cfg.vocab_size * self.cfg.d_model {
+            return;
+        }
+        let bias = find("head.bias").unwrap_or_else(|| vec![0.0; self.cfg.vocab_size]);
+        let _ = self.anchor.set(Anchor {
+            weight,
+            bias,
+            strength,
+        });
     }
 
     /// 出力層の今の重み。ファイルの重みの `head.weight` と `head.bias` を置き換えて
@@ -1179,6 +1231,35 @@ mod tests {
             let total: f32 = log_probs(&infer, &after, pos).iter().map(|p| p.exp()).sum();
             assert!((total - 1.0).abs() < 1e-4, "pos={pos} total={total}");
         }
+    }
+
+    #[test]
+    fn 引き戻す先を決めると動かし続けても元の重みの近くに留まる() {
+        let ids = [0u32, 3, 4, 5];
+        let drift = |strength: f32| -> f32 {
+            let infer = infer();
+            let original = infer.head_weights();
+            infer.set_anchor(&original, strength);
+            let d = infer.cfg.d_model;
+            for _ in 0..200 {
+                let read = infer.read(&[Chain {
+                    state: &infer.init_state(),
+                    ids: &ids,
+                }]);
+                infer.adapt(&read.hidden[..3 * d], &ids[1..], 0.05, Plastic::Head);
+            }
+            let now = infer.head_weights();
+            now[0]
+                .2
+                .iter()
+                .zip(&original[0].2)
+                .map(|(a, b)| (a - b) * (a - b))
+                .sum()
+        };
+        let free = drift(0.0);
+        let anchored = drift(3.0);
+        assert!(anchored < free * 0.5, "anchored={anchored} free={free}");
+        assert!(anchored > 0.0);
     }
 
     #[test]

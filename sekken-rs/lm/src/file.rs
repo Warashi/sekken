@@ -105,6 +105,16 @@ impl SavedModel {
         Ok(saved)
     }
 
+    /// 出力層の重み（`head.weight` と、あれば `head.bias`）。動かした出力層で置き換える前に取っておき、
+    /// `Infer::set_anchor` で引き戻す先にする。
+    pub fn head_weights(&self) -> Vec<Weight> {
+        self.weights
+            .iter()
+            .filter(|(n, _, _)| n == "head.weight" || n == "head.bias")
+            .cloned()
+            .collect()
+    }
+
     /// 同じ名前の重みを置き換え、無ければ足す。動かした出力層を書き戻すのに使う。
     pub fn replace_weights(&mut self, weights: impl IntoIterator<Item = Weight>) {
         for w in weights {
