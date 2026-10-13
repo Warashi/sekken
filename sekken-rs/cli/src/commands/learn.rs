@@ -6,6 +6,7 @@
 //!
 //! server は本人の n-gram をメモリに持ち、終了時に `--personal` に書く。server が動いている間に
 //! このコマンドで同じファイルに書くと、server の終了時に上書きされて消えるので、server を止めてから使う。
+//! Emacs からは server を止めずに `M-x sekken-learn-files`（server の `learn` に文を送る）で数えられる。
 
 use std::io::BufRead as _;
 use std::path::PathBuf;

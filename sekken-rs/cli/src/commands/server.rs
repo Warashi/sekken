@@ -55,6 +55,10 @@ pub const SUPERSEDED: i64 = -32001;
 /// エンジンは生きているので Emacs 側は異常終了として数えない。
 pub const REGISTER_FAILED: i64 = -32002;
 
+/// 文を本人の n-gram に数えられなかったときの JSON-RPC エラーコード。`--personal` が無い、
+/// ファイルに書けない、のどちらもエンジンは生きているので Emacs 側は異常終了として数えない。
+pub const LEARN_FAILED: i64 = -32003;
+
 /// 別スレッドで読み込み中のエンジン。初回利用時に完了を待つ。
 pub enum EngineLoader {
     Loading(JoinHandle<Result<Engine>>),
@@ -301,6 +305,37 @@ pub fn handle(
                 },
             }
         }
+        // 過去に書いた文をまとめて本人の n-gram に数え、すぐ書く（終了を待つと落ちたときに失う）。
+        // 文の切り出しは呼ぶ側（Emacs なら org の構造を知っている）がする。
+        "learn" => {
+            let sentences = match parse_sentences(&req.params["sentences"]) {
+                Ok(sentences) => sentences,
+                Err(message) => return Reply::err(id, -32602, message),
+            };
+            let Some(path) = personal else {
+                return Reply::err(id, LEARN_FAILED, "personal n-gram is not configured");
+            };
+            match loader.engine() {
+                Ok(engine) => {
+                    for sentence in &sentences {
+                        engine.scorer.learn(sentence);
+                    }
+                    let saved = engine.scorer.personal().map_or(Ok(()), |p| p.save_to(path));
+                    match saved {
+                        Ok(()) => Reply::ok(id, json!({ "sentences": sentences.len() })),
+                        Err(err) => Reply::err(id, LEARN_FAILED, format!("{err:#}")),
+                    }
+                }
+                Err(err) => Reply {
+                    response: Response::err(
+                        id,
+                        LOAD_FAILED,
+                        format!("failed to load engine: {err:#}"),
+                    ),
+                    exit: true,
+                },
+            }
+        }
         // 動かした出力層と本人の n-gram はここで書く。この後の `exit` は即座に終了する。
         "shutdown" => {
             adapter.flush();
@@ -325,6 +360,24 @@ fn save_personal(engine: &Engine, path: &Path) {
             path.display()
         );
     }
+}
+
+/// `params.sentences`（文字列の配列）を読む。空の文は除く。
+pub fn parse_sentences(value: &Value) -> Result<Vec<&str>, String> {
+    let Some(list) = value.as_array() else {
+        return Err("params.sentences must be an array of strings".to_string());
+    };
+    let mut out = Vec::with_capacity(list.len());
+    for v in list {
+        let Some(s) = v.as_str() else {
+            return Err("params.sentences must be an array of strings".to_string());
+        };
+        let s = s.trim();
+        if !s.is_empty() {
+            out.push(s);
+        }
+    }
+    Ok(out)
 }
 
 /// `params.yomi` と `params.surface` を読む。
@@ -519,6 +572,52 @@ mod tests {
         );
         assert_eq!(reply.response.error.unwrap().code, -32602);
         assert!(!reply.exit);
+    }
+
+    #[test]
+    fn learn_は読み込みを待たずに_params_の誤りと本人の_n_gram_の未設定を返す() {
+        let (_tx, rx) = mpsc::channel::<()>();
+        let mut loader = EngineLoader::spawn(move || {
+            let _ = rx.recv();
+            Err(anyhow!("never loaded"))
+        });
+        for params in [json!({}), json!({ "sentences": ["猫", 1] })] {
+            let reply = handle(
+                &mut loader,
+                &idle_adapter(),
+                None,
+                Some(Path::new("/tmp/personal.zst")),
+                json!(1),
+                &request("learn", params),
+            );
+            let error = reply.response.error.unwrap();
+            assert_eq!(error.code, -32602);
+            assert!(error.message.contains("sentences"), "{}", error.message);
+            assert!(!reply.exit);
+        }
+        let reply = handle(
+            &mut loader,
+            &idle_adapter(),
+            None,
+            None,
+            json!(1),
+            &request("learn", json!({ "sentences": ["猫が鳴く。"] })),
+        );
+        let error = reply.response.error.unwrap();
+        assert_eq!(error.code, LEARN_FAILED);
+        assert!(
+            error.message.contains("not configured"),
+            "{}",
+            error.message
+        );
+        assert!(!reply.exit);
+    }
+
+    #[test]
+    fn sentences_は空の文を除いて読む() {
+        let params = json!(["猫が鳴く。", "  ", "犬が吠える。"]);
+        let got = parse_sentences(&params).unwrap();
+        assert_eq!(got, ["猫が鳴く。", "犬が吠える。"]);
     }
 
     #[test]
