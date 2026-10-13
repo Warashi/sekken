@@ -14,9 +14,16 @@ pub trait Segmenter {
     fn split(&self, surface: &str, f: &mut dyn FnMut(&str));
 }
 
+/// 空白だけの語は飛ばす。本人は英数字と和文の間に空白を入れる（`3 つ`、`Emacs の`）が、配布の bigram の
+/// 学習データ（Wikipedia）にはほとんど無いので、空白を語にすると literal の直後の語の文脈が空白になり、
+/// 数字の後の助数詞（3 つ）や英単語の後の助詞を bigram が見られない。
 impl Segmenter for crate::tokenizer::Tokenizer {
     fn split(&self, surface: &str, f: &mut dyn FnMut(&str)) {
-        self.for_each_surface(surface, f);
+        self.for_each_surface(surface, |t: &str| {
+            if !t.trim().is_empty() {
+                f(t)
+            }
+        });
     }
 }
 
