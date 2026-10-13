@@ -20,6 +20,14 @@ impl Segmenter for crate::tokenizer::Tokenizer {
     }
 }
 
+/// 文を `segmenter` で語に分けて `personal` に数える。採点と同じ分け方で数えるため、
+/// 変換中の確定（`NgramScorer::learn`）と、過去の文をまとめて数える `sekken learn` で共有する。
+pub fn learn(personal: &mut Personal, segmenter: &impl Segmenter, sentence: &str) {
+    let mut words = Vec::new();
+    segmenter.split(sentence, &mut |t| words.push(personal::key(t)));
+    personal.add(&words);
+}
+
 /// 表層形を分けた 1 語。id の引き当ては二分探索なので、表層形ごとに一度だけ行う。
 #[derive(Clone, Copy)]
 struct Word {
@@ -76,10 +84,7 @@ impl<S: Segmenter> NgramScorer<S> {
         let Some((personal, _)) = &self.personal else {
             return;
         };
-        let mut words = Vec::new();
-        self.segmenter
-            .split(sentence, &mut |t| words.push(personal::key(t)));
-        personal.borrow_mut().add(&words);
+        learn(&mut personal.borrow_mut(), &self.segmenter, sentence);
     }
 
     /// `surface` の語の列に `f` を適用する。列を複製せずに済ませるため。
@@ -284,6 +289,21 @@ mod tests {
         assert!(s.unigram("猫く") < before);
         // 数えていない接続は、本人の文の分だけ確率が減って高くなる。
         assert!(s.bigram(Some("猫"), Some("が")) > unrelated);
+    }
+
+    #[test]
+    fn 先に数えた本人の_n_gram_は確定で数えたのと同じに効く() {
+        let mut confirmed = scorer();
+        confirmed.set_personal(Personal::new(2), 1.0);
+        confirmed.learn("猫く");
+        let mut personal = Personal::new(2);
+        learn(&mut personal, &CharSegmenter, "猫く");
+        let mut seeded = scorer();
+        seeded.set_personal(personal, 1.0);
+        assert_eq!(
+            seeded.bigram(Some("猫"), Some("く")),
+            confirmed.bigram(Some("猫"), Some("く"))
+        );
     }
 
     #[test]
