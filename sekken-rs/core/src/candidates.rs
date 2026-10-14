@@ -266,9 +266,10 @@ fn is_number(text: &str) -> bool {
 /// 見出し（`#つ`、`#こ`）で引き、候補の `#0`〜`#3` を数字に置き換える。
 ///
 /// `kept` なら数字を打ったまま（`#0`）の候補だけを、数字を含めずに後ろの区間の候補として返す（3 は literal が
-/// 出す）。そうでなければ数字を書き換える候補（`#1` 全角、`#2` 漢数字、`#3` 位取りの漢数字）を、literal と
-/// 後ろの区間の 2 区間を覆う候補として返す。打った半角の数字を残すことがほとんどなので、書き換える候補は
-/// 打ったままの候補の数だけ順位を下げ、かなの候補と同じ罰則を課す。`#4` 以降（再帰、大字、棋譜）の候補は出さない。
+/// 出す）。そうでなければ数字を書き換える候補（`#2` 漢数字、`#3` 位取りの漢数字）を、literal と後ろの区間の
+/// 2 区間を覆う候補として返す。打った半角の数字を残すことがほとんどなので、書き換える候補は打ったままの候補の
+/// 数だけ順位を下げ、かなの候補と同じ罰則を課す。全角（`#1`）は出さない。半角で打った数字を全角にしたい場面は
+/// ほぼ無く、罰則を課しても LM が選ぶことがある（2018年7月 → ７月）。`#4` 以降（再帰、大字、棋譜）も出さない。
 fn numeric(dict: &Dictionary, number: &str, text: &str, kept: bool) -> Vec<Candidate> {
     let (reading, symbols) = split_trailing_symbols(text);
     let chars: Vec<char> = reading.chars().collect();
@@ -303,7 +304,6 @@ fn numeric(dict: &Dictionary, number: &str, text: &str, kept: bool) -> Vec<Candi
                     }
                     continue;
                 }
-                '1' => number.chars().map(zenkaku_digit).collect(),
                 '2' => number.chars().map(kanji_digit).collect(),
                 '3' => match kanji_number(number) {
                     Some(s) => s,
@@ -335,10 +335,6 @@ fn numeric(dict: &Dictionary, number: &str, text: &str, kept: bool) -> Vec<Candi
         }
     }
     out
-}
-
-fn zenkaku_digit(c: char) -> char {
-    char::from_u32(c as u32 - '0' as u32 + '０' as u32).unwrap_or(c)
 }
 
 const KANJI_DIGITS: [char; 10] = ['〇', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
@@ -587,18 +583,14 @@ emacs /Ｅｍａｃｓ/イーマックス/
     fn 数字の_literal_は次の区間と合わせて数字を書き換えた候補を出す() {
         let pieces = [Piece::literal("3"), Piece::convert("つの")];
         let c = candidates_at(&dict(), &Dictionary::default(), &pieces, 0);
-        // 打ったままの候補（#0）の数だけ順位を下げる。#4 以降は出さない。
+        // 打ったままの候補（#0）の数だけ順位を下げる。全角（#1）と #4 以降は出さない。
         assert_eq!(
             c,
             [
                 Candidate::ranked("3", 1, 0),
                 Candidate {
                     kana: true,
-                    ..Candidate::ranked("３つの", 2, 1)
-                },
-                Candidate {
-                    kana: true,
-                    ..Candidate::ranked("三つの", 2, 2)
+                    ..Candidate::ranked("三つの", 2, 1)
                 },
             ]
         );
