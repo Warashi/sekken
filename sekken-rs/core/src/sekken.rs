@@ -22,12 +22,23 @@ pub struct Sekken<S: Scorer> {
 impl<S: Scorer> Sekken<S> {
     /// 入力を変換し、良い順に最大 `top_n` 個の文字列を返す。
     pub fn henkan(&self, input: &Input, top_n: usize) -> Vec<String> {
-        // 先頭の変換しない区間は格子に入れず、文頭のかなとして候補に前置する。
-        let head_len = input
+        // 先頭の変換しない区間は格子に入れず、文頭のかなとして候補に前置する。ただし変換する区間の
+        // 直前の数字の literal は、数値変換（`'3;tu` の 三つ）で書き換えるので格子に入れる。
+        let mut head_len = input
             .pieces
             .iter()
             .take_while(|p| !p.kind.converts())
             .count();
+        if head_len > 0
+            && head_len < input.pieces.len()
+            && input.pieces[head_len - 1].kind == crate::input::Kind::Literal
+            && input.pieces[head_len - 1]
+                .text
+                .bytes()
+                .all(|b| b.is_ascii_digit())
+        {
+            head_len -= 1;
+        }
         let head: String = input.pieces[..head_len]
             .iter()
             .map(|p| p.text.as_str())
@@ -98,6 +109,7 @@ mod tests {
 ;; okuri-nasi entries.
 わがはい /我輩/
 ねこ /猫/
+#つ /#1つ/#0つ/#2つ/
 ";
 
     /// どの文も同じに採点する検証器。格子の順位だけで決まる変換を確かめる。
@@ -208,6 +220,14 @@ mod tests {
     fn 先頭のかな区間はかなとして先頭に付く() {
         let r = sekken().henkan(&roman("soreHaNekoDa"), 1);
         assert_eq!(r[0], "それは猫だ");
+    }
+
+    #[test]
+    fn 文頭の数字の_literal_も数値変換で書き換えられる() {
+        let input = Input::new(vec![Piece::literal("3"), Piece::convert("つ")]);
+        let r = sekken().henkan(&input, 5);
+        assert!(r.contains(&"3つ".to_string()), "{r:?}");
+        assert!(r.contains(&"三つ".to_string()), "{r:?}");
     }
 
     #[test]

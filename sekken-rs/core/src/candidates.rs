@@ -178,10 +178,26 @@ pub fn candidates_at(
     match piece.kind {
         Kind::Convert => {}
         Kind::Abbrev => return abbrev(dict, user, &piece.text),
-        Kind::Kana | Kind::Literal => return vec![Candidate::ranked(piece.text.clone(), 1, 0)],
+        Kind::Kana => return vec![Candidate::ranked(piece.text.clone(), 1, 0)],
+        Kind::Literal => {
+            let mut out = vec![Candidate::ranked(piece.text.clone(), 1, 0)];
+            // 数字の literal と次の区間をまとめて、数字を書き換えた数値変換の候補（３つ、三つ）にする。
+            if is_number(&piece.text)
+                && let Some(next) = pieces.get(index + 1)
+                && next.kind == Kind::Convert
+            {
+                out.extend(numeric(dict, &piece.text, &next.text, false));
+            }
+            return out;
+        }
     }
     let (reading, symbols) = split_trailing_symbols(&piece.text);
     let mut out = Vec::new();
+
+    // 数字の literal の後の区間は、数値変換の見出し（`#つ` の `#0つ`）を数字を打ったままの形で引く。
+    if index > 0 && pieces[index - 1].kind == Kind::Literal && is_number(&pieces[index - 1].text) {
+        out.extend(numeric(dict, &pieces[index - 1].text, &piece.text, true));
+    }
 
     // `>` で区切った次の区間は送り仮名でなく接尾辞。
     if symbols.is_empty()
@@ -241,6 +257,128 @@ pub fn candidates_at(
     out
 }
 
+/// 数値変換の対象になる literal（ASCII の数字だけ）。
+fn is_number(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// SKK の数値変換。数字の literal `number` の後に読み `text` の区間が続くとき、読みの頭を `#` 付きの
+/// 見出し（`#つ`、`#こ`）で引き、候補の `#0`〜`#3` を数字に置き換える。
+///
+/// `kept` なら数字を打ったまま（`#0`）の候補だけを、数字を含めずに後ろの区間の候補として返す（3 は literal が
+/// 出す）。そうでなければ数字を書き換える候補（`#1` 全角、`#2` 漢数字、`#3` 位取りの漢数字）を、literal と
+/// 後ろの区間の 2 区間を覆う候補として返す。打った半角の数字を残すことがほとんどなので、書き換える候補は
+/// 打ったままの候補の数だけ順位を下げる。`#4` 以降（再帰、大字、棋譜）の候補は出さない。
+fn numeric(dict: &Dictionary, number: &str, text: &str, kept: bool) -> Vec<Candidate> {
+    let (reading, symbols) = split_trailing_symbols(text);
+    let chars: Vec<char> = reading.chars().collect();
+    let mut kept_out = Vec::new();
+    let mut rewritten = Vec::new();
+    for split in (1..=chars.len()).rev() {
+        let yomi: String = chars[..split].iter().collect();
+        let rest: String = chars[split..].iter().collect();
+        if rest.starts_with(is_small_kana) {
+            continue;
+        }
+        for template in dict.okuri_nasi(&format!("#{yomi}")) {
+            let Some(i) = template.find('#') else {
+                continue;
+            };
+            let (before, after) = template.split_at(i);
+            let mut tail = after[1..].chars();
+            let Some(kind) = tail.next() else {
+                continue;
+            };
+            let after = tail.as_str();
+            if after.contains('#') {
+                continue;
+            }
+            let digits = match kind {
+                '0' => {
+                    if before.is_empty() {
+                        kept_out.push(format!("{after}{rest}{symbols}"));
+                    }
+                    continue;
+                }
+                '1' => number.chars().map(zenkaku_digit).collect(),
+                '2' => number.chars().map(kanji_digit).collect(),
+                '3' => match kanji_number(number) {
+                    Some(s) => s,
+                    None => continue,
+                },
+                _ => continue,
+            };
+            rewritten.push(format!("{before}{digits}{after}{rest}{symbols}"));
+        }
+    }
+    let mut out = Vec::new();
+    if kept {
+        for (rank, surface) in kept_out.into_iter().enumerate() {
+            if !out.iter().any(|c: &Candidate| c.surface == surface) {
+                out.push(Candidate::ranked(surface, 1, rank));
+            }
+        }
+    } else {
+        let offset = kept_out.len();
+        for (rank, surface) in rewritten.into_iter().enumerate() {
+            if !out.iter().any(|c: &Candidate| c.surface == surface) {
+                out.push(Candidate::ranked(surface, 2, offset + rank));
+            }
+        }
+    }
+    out
+}
+
+fn zenkaku_digit(c: char) -> char {
+    char::from_u32(c as u32 - '0' as u32 + '０' as u32).unwrap_or(c)
+}
+
+const KANJI_DIGITS: [char; 10] = ['〇', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+
+fn kanji_digit(c: char) -> char {
+    c.to_digit(10).map_or(c, |d| KANJI_DIGITS[d as usize])
+}
+
+/// 位取りの漢数字（1024 → 千二十四）。16 桁を超える数は `None`。
+fn kanji_number(number: &str) -> Option<String> {
+    let n: u64 = number.parse().ok()?;
+    if n == 0 {
+        return Some("〇".to_string());
+    }
+    if n >= 10_000_000_000_000_000 {
+        return None;
+    }
+    let mut out = String::new();
+    let mut rest = n;
+    for (unit, name) in [
+        (1_000_000_000_000u64, "兆"),
+        (100_000_000, "億"),
+        (10_000, "万"),
+        (1, ""),
+    ] {
+        let part = rest / unit;
+        rest %= unit;
+        if part == 0 {
+            continue;
+        }
+        for (place, mark) in [(1000, '千'), (100, '百'), (10, '十')] {
+            let d = part / place % 10;
+            if d > 1 || (d == 1 && unit > 1 && place == 1000) {
+                out.push(KANJI_DIGITS[d as usize]);
+            }
+            if d > 0 {
+                out.push(mark);
+            }
+        }
+        let d = part % 10;
+        if d > 0 {
+            out.push(KANJI_DIGITS[d as usize]);
+        }
+        out.push_str(name);
+    }
+    Some(out)
+}
+
 /// abbrev 区間の候補。綴りそのままの見出しを引き、無ければ綴りのまま出す。
 fn abbrev(dict: &Dictionary, user: &Dictionary, text: &str) -> Vec<Candidate> {
     let mut out = Vec::new();
@@ -267,6 +405,9 @@ mod tests {
 お> /御/
 >かい /会/貝/
 emacs /Ｅｍａｃｓ/イーマックス/
+つの /角/
+#つ /#1つ/#0つ/#2つ/#3つ/
+#こ /#3個/#0個/#4個/
 ";
 
     fn dict() -> Dictionary {
@@ -419,6 +560,48 @@ emacs /Ｅｍａｃｓ/イーマックス/
             candidates_at(&dict(), &Dictionary::default(), &pieces, 1),
             [Candidate::ranked("Emacs", 1, 0)]
         );
+    }
+
+    #[test]
+    fn 数字の_literal_の後の区間は数値変換の見出しを数字を打ったままの形で引く() {
+        let pieces = [Piece::literal("3"), Piece::convert("つの")];
+        let c = candidates_at(&dict(), &Dictionary::default(), &pieces, 1);
+        // 数字は literal が出すので、後ろの区間の候補は数字を含めない。かな罰則は掛からない。
+        assert_eq!(c[0], Candidate::ranked("つの", 1, 0));
+        assert!(c.contains(&Candidate::ranked("角", 1, 0)));
+        // 数字でない literal の後では引かない。
+        let pieces = [Piece::literal("a"), Piece::convert("つの")];
+        let c = candidates_at(&dict(), &Dictionary::default(), &pieces, 1);
+        assert_eq!(c[0], Candidate::ranked("角", 1, 0));
+    }
+
+    #[test]
+    fn 数字の_literal_は次の区間と合わせて数字を書き換えた候補を出す() {
+        let pieces = [Piece::literal("3"), Piece::convert("つの")];
+        let c = candidates_at(&dict(), &Dictionary::default(), &pieces, 0);
+        // 打ったままの候補（#0）の数だけ順位を下げる。#4 以降は出さない。
+        assert_eq!(
+            c,
+            [
+                Candidate::ranked("3", 1, 0),
+                Candidate::ranked("３つの", 2, 1),
+                Candidate::ranked("三つの", 2, 2),
+            ]
+        );
+        let pieces = [Piece::literal("12"), Piece::convert("こ")];
+        let c = candidates_at(&dict(), &Dictionary::default(), &pieces, 0);
+        assert_eq!(surfaces(&c), ["12", "十二個"]);
+    }
+
+    #[test]
+    fn 位取りの漢数字() {
+        assert_eq!(kanji_number("0").as_deref(), Some("〇"));
+        assert_eq!(kanji_number("10").as_deref(), Some("十"));
+        assert_eq!(kanji_number("1024").as_deref(), Some("千二十四"));
+        assert_eq!(kanji_number("20000").as_deref(), Some("二万"));
+        assert_eq!(kanji_number("10000000").as_deref(), Some("一千万"));
+        assert_eq!(kanji_number("100000000").as_deref(), Some("一億"));
+        assert_eq!(kanji_number("99999999999999999"), None);
     }
 
     #[test]
