@@ -268,7 +268,7 @@ fn is_number(text: &str) -> bool {
 /// `kept` なら数字を打ったまま（`#0`）の候補だけを、数字を含めずに後ろの区間の候補として返す（3 は literal が
 /// 出す）。そうでなければ数字を書き換える候補（`#1` 全角、`#2` 漢数字、`#3` 位取りの漢数字）を、literal と
 /// 後ろの区間の 2 区間を覆う候補として返す。打った半角の数字を残すことがほとんどなので、書き換える候補は
-/// 打ったままの候補の数だけ順位を下げる。`#4` 以降（再帰、大字、棋譜）の候補は出さない。
+/// 打ったままの候補の数だけ順位を下げ、かなの候補と同じ罰則を課す。`#4` 以降（再帰、大字、棋譜）の候補は出さない。
 fn numeric(dict: &Dictionary, number: &str, text: &str, kept: bool) -> Vec<Candidate> {
     let (reading, symbols) = split_trailing_symbols(text);
     let chars: Vec<char> = reading.chars().collect();
@@ -295,7 +295,10 @@ fn numeric(dict: &Dictionary, number: &str, text: &str, kept: bool) -> Vec<Candi
             }
             let digits = match kind {
                 '0' => {
-                    if before.is_empty() {
+                    // 数字の後がひらがなの候補（3つ）だけ。かなの候補には literal の後のかな罰則が掛かるので
+                    // 引かないと「3角」に負ける。漢字の助数詞（個、回）は普通の辞書引きで出せ、ここで足すと
+                    // 助詞を押しのける（1つか → 1束、4か → 4日）。
+                    if before.is_empty() && after.starts_with(is_hiragana) {
                         kept_out.push(format!("{after}{rest}{symbols}"));
                     }
                     continue;
@@ -319,10 +322,15 @@ fn numeric(dict: &Dictionary, number: &str, text: &str, kept: bool) -> Vec<Candi
             }
         }
     } else {
+        // 打った数字を書き換える候補には、かなの候補と同じ罰則を課す。順位を下げるだけでは、literal から
+        // 後ろの区間への接続を数えない分だけ安くなり、2018年7月 が ７月 になる。
         let offset = kept_out.len();
         for (rank, surface) in rewritten.into_iter().enumerate() {
             if !out.iter().any(|c: &Candidate| c.surface == surface) {
-                out.push(Candidate::ranked(surface, 2, offset + rank));
+                out.push(Candidate {
+                    kana: true,
+                    ..Candidate::ranked(surface, 2, offset + rank)
+                });
             }
         }
     }
@@ -584,13 +592,22 @@ emacs /Ｅｍａｃｓ/イーマックス/
             c,
             [
                 Candidate::ranked("3", 1, 0),
-                Candidate::ranked("３つの", 2, 1),
-                Candidate::ranked("三つの", 2, 2),
+                Candidate {
+                    kana: true,
+                    ..Candidate::ranked("３つの", 2, 1)
+                },
+                Candidate {
+                    kana: true,
+                    ..Candidate::ranked("三つの", 2, 2)
+                },
             ]
         );
         let pieces = [Piece::literal("12"), Piece::convert("こ")];
         let c = candidates_at(&dict(), &Dictionary::default(), &pieces, 0);
         assert_eq!(surfaces(&c), ["12", "十二個"]);
+        // 漢字の助数詞は打ったままの候補にしない（普通の辞書引きで出す）。
+        let c = candidates_at(&dict(), &Dictionary::default(), &pieces, 1);
+        assert!(!c.contains(&Candidate::ranked("個", 1, 0)));
     }
 
     #[test]
