@@ -35,6 +35,23 @@ struct Word {
     chars: usize,
     /// 個人の n-gram の鍵。
     key: Key,
+    /// 語彙に無いカタカナ語を、語彙のカタカナ語に分けたもの（`katakana_split`）。
+    split: Option<Split>,
+}
+
+/// 語彙に無いカタカナ語を語彙の語の並びとみなしたときの、最初と最後の語と、その間の接続コスト。
+#[derive(Clone, Copy)]
+struct Split {
+    first: u32,
+    last: u32,
+    inner: f64,
+}
+
+/// 語彙の語に分けるときの 1 語の長さの上限（文字数）。分け方を探す時間を抑える。
+const MAX_PIECE_CHARS: usize = 16;
+
+fn is_katakana(c: char) -> bool {
+    matches!(c as u32, 0x30A1..=0x30FA | 0x30FC)
 }
 
 /// 覚える表層形と語の数の上限。超えたら全部忘れる。1 変換で数百〜数千の
@@ -93,13 +110,8 @@ impl<S: Segmenter> NgramScorer<S> {
             return f(w);
         }
         let mut words: Vec<Word> = Vec::new();
-        self.segmenter.split(surface, &mut |t| {
-            words.push(Word {
-                id: self.id(t),
-                chars: t.chars().count(),
-                key: personal::key(t),
-            })
-        });
+        self.segmenter
+            .split(surface, &mut |t| words.push(self.word(t)));
         let r = f(&words);
         let mut cache = self.cache.borrow_mut();
         if cache.len() >= CACHE_LIMIT {
@@ -107,6 +119,88 @@ impl<S: Segmenter> NgramScorer<S> {
         }
         cache.insert(surface.to_string(), words);
         r
+    }
+
+    fn word(&self, token: &str) -> Word {
+        let id = self.id(token);
+        Word {
+            id,
+            chars: token.chars().count(),
+            key: personal::key(token),
+            split: if id.is_none() {
+                self.katakana_split(token)
+            } else {
+                None
+            },
+        }
+    }
+
+    /// 語彙に無いカタカナ語（vibrato は辞書に無いカタカナの連なりを 1 語にまとめる）を、
+    /// 語彙のカタカナ語の並びに分ける。未知語のコストは文字数に比例するので、長いカタカナ語
+    /// （パフォーマンスオーバーヘッド）ほど高くなり、後ろをひらがなにして既知の短い語に
+    /// 崩した候補（パフォーマンスおーばーへっど）に負ける。分けた並びのコストで数えれば、
+    /// 語彙の語からなるカタカナ語は語彙の語と同じ程度のコストになる。
+    /// 分け方は各語の unigram のコストの和が最小のもの。語彙の語で覆えなければ `None`。
+    fn katakana_split(&self, token: &str) -> Option<Split> {
+        let chars: Vec<char> = token.chars().collect();
+        let n = chars.len();
+        if n < 2 || !chars.iter().all(|&c| is_katakana(c)) {
+            return None;
+        }
+        // best[i]: chars[..i] を語彙の語で覆う最小コストと、最後の語の (開始位置, id)。
+        let mut best: Vec<Option<(f64, usize, u32)>> = vec![None; n + 1];
+        best[0] = Some((0.0, 0, 0));
+        let mut piece = String::new();
+        for end in 1..=n {
+            for start in end.saturating_sub(MAX_PIECE_CHARS)..end {
+                let Some((cost, _, _)) = best[start] else {
+                    continue;
+                };
+                piece.clear();
+                piece.extend(&chars[start..end]);
+                let Some(id) = self.id(&piece) else {
+                    continue;
+                };
+                let total = cost + self.model.transition_cost(None, Some(id), end - start);
+                if best[end].is_none_or(|(c, _, _)| total < c) {
+                    best[end] = Some((total, start, id));
+                }
+            }
+        }
+        best[n]?;
+        let mut ids = Vec::new();
+        let mut end = n;
+        while end > 0 {
+            let (_, start, id) = best[end]?;
+            ids.push((id, end - start));
+            end = start;
+        }
+        ids.reverse();
+        let inner = ids
+            .windows(2)
+            .map(|w| {
+                self.model
+                    .transition_cost(Some(w[0].0), Some(w[1].0), w[1].1)
+            })
+            .sum();
+        Some(Split {
+            first: ids[0].0,
+            last: ids[ids.len() - 1].0,
+            inner,
+        })
+    }
+
+    /// `prev`（`None` は文頭）の後に `next` が来るコスト。語彙に無いカタカナ語は、未知語の
+    /// コストと語彙の語に分けたコストの小さい方。
+    fn next_cost(&self, prev: Option<u32>, next: Word) -> f64 {
+        let unknown = self.model.transition_cost(prev, next.id, next.chars);
+        match (next.id, next.split) {
+            (None, Some(s)) => {
+                let split = self.model.transition_cost(prev, Some(s.first), next.chars) + s.inner;
+                unknown.min(split)
+            }
+            _ => unknown,
+        }
     }
 
     fn id(&self, token: &str) -> Option<u32> {
@@ -126,24 +220,26 @@ impl<S: Segmenter> NgramScorer<S> {
     fn cost_base(&self, prev: Option<Word>, next: Option<Word>) -> f64 {
         let prev_id = match prev {
             None => Some(crate::ngram::BOS),
-            Some(p) => p.id,
+            // 語彙に無いカタカナ語は、分けた最後の語を左の文脈にする。
+            Some(p) => p.id.or(p.split.map(|s| s.last)),
         };
-        let (next_id, chars) = match next {
-            None => (Some(crate::ngram::EOS), 0),
-            Some(n) => (n.id, n.chars),
-        };
-        self.model.transition_cost(prev_id, next_id, chars)
+        match next {
+            None => self
+                .model
+                .transition_cost(prev_id, Some(crate::ngram::EOS), 0),
+            Some(n) => self.next_cost(prev_id, n),
+        }
     }
 
     /// 本人の n-gram の最下位に置く、配布の bigram と unigram の対数確率。
     fn base(&self, prev: Option<Word>, next: Option<Word>) -> Base {
-        let (next_id, chars) = match next {
-            None => (Some(crate::ngram::EOS), 0),
-            Some(n) => (n.id, n.chars),
+        let unigram = match next {
+            None => self.model.transition_cost(None, Some(crate::ngram::EOS), 0),
+            Some(n) => self.next_cost(None, n),
         };
         Base {
             bigram: -self.cost_base(prev, next),
-            unigram: -self.model.transition_cost(None, next_id, chars),
+            unigram: -unigram,
         }
     }
 
@@ -192,13 +288,8 @@ impl<S: Segmenter> Scorer for NgramScorer<S> {
             return 0.0;
         }
         let mut words: Vec<Word> = Vec::new();
-        self.segmenter.split(surface, &mut |t| {
-            words.push(Word {
-                id: self.id(t),
-                chars: t.chars().count(),
-                key: personal::key(t),
-            })
-        });
+        self.segmenter
+            .split(surface, &mut |t| words.push(self.word(t)));
         let mut history = vec![personal::BOS];
         let mut prev = None;
         let mut extra = 0.0;
@@ -252,6 +343,54 @@ mod tests {
             s.bigram(None, Some("猫")) + s.bigram(Some("猫"), Some("が鳴く")) + s.unigram("が鳴く");
         let whole = s.bigram(None, Some("猫が鳴く")) + s.unigram("猫が鳴く");
         assert!((path - whole).abs() < 1e-9, "{path} vs {whole}");
+    }
+
+    /// カタカナの連なりを 1 語にまとめ、他は 1 字ずつ分ける（vibrato の未知語の扱いに似せる）。
+    struct KatakanaRunSegmenter;
+    impl Segmenter for KatakanaRunSegmenter {
+        fn split(&self, s: &str, f: &mut dyn FnMut(&str)) {
+            let mut start = None;
+            for (i, c) in s.char_indices() {
+                match (is_katakana(c), start) {
+                    (true, None) => start = Some(i),
+                    (true, Some(_)) => {}
+                    (false, st) => {
+                        if let Some(st) = st {
+                            f(&s[st..i]);
+                            start = None;
+                        }
+                        f(&s[i..i + c.len_utf8()]);
+                    }
+                }
+            }
+            if let Some(st) = start {
+                f(&s[st..]);
+            }
+        }
+    }
+
+    #[test]
+    fn 語彙に無いカタカナ語は語彙の語に分けたコストで数える() {
+        let mut m = NgramCounter::new();
+        for _ in 0..200 {
+            m.add_sentence(["オーバー", "ヘッド", "が"]);
+            m.add_sentence(["お", "ば", "が"]);
+        }
+        let s = NgramScorer::new(m.freeze().unwrap(), KatakanaRunSegmenter);
+        // オーバーヘッド は語彙に無いが、オーバー＋ヘッド に分ければ既知の語の並び。
+        let katakana = s.bigram(None, Some("オーバーヘッドが")) + s.unigram("オーバーヘッドが");
+        let hiragana = s.bigram(None, Some("おーばーへっどが")) + s.unigram("おーばーへっどが");
+        assert!(katakana < hiragana, "{katakana} vs {hiragana}");
+        let parts = s.bigram(None, Some("オーバー"))
+            + s.bigram(Some("オーバー"), Some("ヘッド"))
+            + s.bigram(Some("ヘッド"), Some("が"));
+        assert!((katakana - parts).abs() < 1e-9, "{katakana} vs {parts}");
+        // 語彙の語で覆えないカタカナ語は今までどおり未知語のコスト。
+        let unknown = s.bigram(None, Some("ゴゴ"));
+        assert_eq!(
+            unknown,
+            s.model.transition_cost(Some(crate::ngram::BOS), None, 2)
+        );
     }
 
     #[test]
