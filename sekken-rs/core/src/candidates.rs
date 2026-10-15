@@ -257,6 +257,43 @@ pub fn candidates_at(
     out
 }
 
+/// 辞書を引く区間が 1 つだけの語の、読みの同音語をすべて辞書の順に返す。
+///
+/// 変換の候補は文全体の上位だけなので、同音語が多い読み（こうしょう は 28 個）の後ろの語は選べない。
+/// 1 語だけ打ち直したときに全部選べるよう、区間の読みの頭のうち送りなしの見出しがある最も長いもの
+/// （`こうしょうを` なら `こうしょう`）の候補に残りのかなを続ける。送りありの見出しは、残りのかなを
+/// 送り仮名にして読みの頭ごとに引く（`かく` の 書く）。ユーザー辞書の候補を先にする。
+pub fn homophones(dict: &Dictionary, user: &Dictionary, text: &str) -> Vec<String> {
+    let (reading, symbols) = split_trailing_symbols(text);
+    let chars: Vec<char> = reading.chars().collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |s: String| {
+        if !out.contains(&s) {
+            out.push(s);
+        }
+    };
+    let mut nasi_found = false;
+    for split in (1..=chars.len()).rev() {
+        let yomi: String = chars[..split].iter().collect();
+        let rest: String = chars[split..].iter().collect();
+        if yomi.chars().any(|c| c.is_ascii()) || rest.starts_with(is_small_kana) {
+            continue;
+        }
+        if !nasi_found {
+            for surface in user.okuri_nasi(&yomi).iter().chain(dict.okuri_nasi(&yomi)) {
+                nasi_found = true;
+                push(format!("{surface}{rest}{symbols}"));
+            }
+        }
+        if !rest.is_empty() {
+            for surface in okuri_ari(dict, &yomi, &rest) {
+                push(format!("{surface}{rest}{symbols}"));
+            }
+        }
+    }
+    out
+}
+
 /// 数値変換の対象になる literal（ASCII の数字だけ）。
 fn is_number(text: &str) -> bool {
     !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit())
@@ -600,6 +637,24 @@ emacs /Ｅｍａｃｓ/イーマックス/
         // 漢字の助数詞は打ったままの候補にしない（普通の辞書引きで出す）。
         let c = candidates_at(&dict(), &Dictionary::default(), &pieces, 1);
         assert!(!c.contains(&Candidate::ranked("個", 1, 0)));
+    }
+
+    #[test]
+    fn 同音語は送りなしの最も長い見出しと送りありの見出しから辞書の順に返す() {
+        let user = Dictionary::parse(";; okuri-nasi entries.\nねこ /寝子/猫/\n");
+        // ユーザー辞書の候補が先で、重ねない。
+        assert_eq!(homophones(&dict(), &user, "ねこ"), ["寝子", "猫"]);
+        // 送りなしの最も長い見出し（ねこ）に残りのかなを続ける。短い見出し（ね）は引かない。
+        assert_eq!(
+            homophones(&dict(), &Dictionary::default(), "ねこは"),
+            ["猫は"]
+        );
+        // 送りありは残りのかなを送り仮名にして引く。
+        assert_eq!(
+            homophones(&dict(), &Dictionary::default(), "かく"),
+            ["可く", "書く", "掛く"]
+        );
+        assert!(homophones(&dict(), &Dictionary::default(), "ぬ").is_empty());
     }
 
     #[test]

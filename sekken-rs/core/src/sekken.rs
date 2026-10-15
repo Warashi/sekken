@@ -1,6 +1,6 @@
 //! 入力から変換候補列までを束ねる入口。
 
-use crate::candidates::candidates_at;
+use crate::candidates::{candidates_at, homophones};
 use crate::dictionary::Dictionary;
 use crate::input::Input;
 use crate::kana::hira2kata;
@@ -75,6 +75,18 @@ impl<S: Scorer> Sekken<S> {
             }
         }
         result.truncate(top_n);
+        // 辞書を引く区間が 1 つだけの語は、上位の後ろにその読みの同音語をすべて続ける。文の候補は上位だけで、
+        // 同音語の多い読みの後ろの語に届かないので、外れた語を 1 語だけ打ち直して選べるようにする。
+        if let [piece] = pieces
+            && piece.kind == crate::input::Kind::Convert
+        {
+            for surface in homophones(&self.dict, &self.user, &piece.text) {
+                let s = head.clone() + &surface;
+                if !result.contains(&s) {
+                    result.push(s);
+                }
+            }
+        }
         result
     }
 }
@@ -110,6 +122,7 @@ mod tests {
 わがはい /我輩/
 ねこ /猫/
 #つ /#1つ/#0つ/#2つ/
+かい /貝/会/回/
 ";
 
     /// どの文も同じに採点する検証器。格子の順位だけで決まる変換を確かめる。
@@ -220,6 +233,19 @@ mod tests {
     fn 先頭のかな区間はかなとして先頭に付く() {
         let r = sekken().henkan(&roman("soreHaNekoDa"), 1);
         assert_eq!(r[0], "それは猫だ");
+    }
+
+    #[test]
+    fn 辞書を引く区間が_1_つだけの語は上位の後ろに同音語をすべて続ける() {
+        let input = Input::new(vec![Piece::convert("かい")]);
+        let r = sekken().henkan(&input, 1);
+        assert_eq!(r.len(), 3, "{r:?}");
+        for s in ["貝", "会", "回"] {
+            assert!(r.contains(&s.to_string()), "{r:?}");
+        }
+        // 区間が 2 つ以上なら上位だけ。
+        let input = Input::new(vec![Piece::convert("ねこ"), Piece::convert("かい")]);
+        assert_eq!(sekken().henkan(&input, 1).len(), 1);
     }
 
     #[test]

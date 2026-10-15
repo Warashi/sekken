@@ -15,6 +15,7 @@
 (require 'sekken-input)
 (require 'sekken-word)
 (require 'sekken-server)
+(require 'sekken-learn)
 
 (defcustom sekken-convert-max-candidates 10
   "エンジンに要求する候補数。"
@@ -130,14 +131,62 @@ table を使い回すため、候補を閉じ込めると追従しない。"
   (let ((sekken-mode nil))
     (key-binding (this-command-keys-vector) t)))
 
+(defconst sekken-convert--paragraph-limit 4000
+  "打ち直した語の前後の段落を探す範囲（文字数）。")
+
+(defun sekken-convert--japanese-p (char)
+  "CHAR がかなか漢字か。句読点は含めない。"
+  (and char (string-match-p "[ぁ-ゖァ-ヺー々一-鿿]" (string char))))
+
+(defun sekken-convert--sentences-around (start end)
+  "START から END に入れた語を含む文のリスト。
+前後の空行までを段落として `sekken-learn-sentences' と同じく文に切り、
+入れた語を含む文だけを返す（段落の中で同じ語を含む別の文も返る）。「。」で終わっていない
+文は返さない。"
+  (let* ((word (buffer-substring-no-properties start end))
+         (from (save-excursion
+                 (goto-char start)
+                 (if (re-search-backward "^[ \t]*$"
+                                         (max (point-min)
+                                              (- start sekken-convert--paragraph-limit))
+                                         t)
+                     (match-end 0)
+                   (max (point-min) (- start sekken-convert--paragraph-limit)))))
+         (to (save-excursion
+               (goto-char end)
+               (if (re-search-forward "^[ \t]*$"
+                                      (min (point-max)
+                                           (+ end sekken-convert--paragraph-limit))
+                                      t)
+                   (match-beginning 0)
+                 (min (point-max) (+ end sekken-convert--paragraph-limit))))))
+    (seq-filter (lambda (sentence)
+                  (and (string-search word sentence)
+                       (not (equal sentence word))))
+                (sekken-learn-sentences
+                 (buffer-substring-no-properties from to)))))
+
+(defun sekken-convert--relearn (start end)
+  "START から END に入れた語の前後に和文が続いていれば、その文を本人の n-gram に数え直す。
+確定した後で外れた語を 1 語だけ打ち直したときに、正しい語を前後の語とのつながりごと
+数えるため。打ち直した語だけを学習させると前後のつながりが入らず、最初に確定した外れた
+文のつながりの方が強く残る。外れた文の数は減らせないので、その文は二重に数えられる。"
+  (when (or (sekken-convert--japanese-p (char-before start))
+            (sekken-convert--japanese-p (char-after end)))
+    (let ((sentences (sekken-convert--sentences-around start end)))
+      (when sentences
+        (sekken-server-learn-async sentences)))))
+
 (defun sekken-convert--finish (start roman)
   "候補が入ったら START からの語 ROMAN を終える exit-function を返す。
 exit-function が呼ばれた時点で候補はバッファに入っているので、status は
 見ない。corfu は選んだ候補を入れて一覧を抜けるとき finished ではなく
-exact で呼ぶ。選んだ候補はエンジンに学習させる。"
+exact で呼ぶ。選んだ候補はエンジンに学習させ、前後に和文が続いていれば
+その文も数え直す（`sekken-convert--relearn'）。"
   (lambda (string _status)
     (sekken-word-finish start roman)
-    (sekken-server-adapt (sekken-input-pieces roman) string)))
+    (sekken-server-adapt (sekken-input-pieces roman) string)
+    (sekken-convert--relearn start (+ start (length string)))))
 
 (cl-defun sekken-convert ()
   "ポイント直前の語を変換する。

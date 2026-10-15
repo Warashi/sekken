@@ -135,6 +135,44 @@
             (sekken-convert))))
       (should (equal calls '(([(:kind "convert" :text "ねこ")] "根子")))))))
 
+;; 前後に和文が続く位置で候補を選んだときの数え直し。
+
+(defun sekken-convert-test--choose (before after roman choice)
+  "BEFORE と AFTER の間で ROMAN を打って CHOICE を選び、数え直しに送った文のリストを返す。"
+  (with-temp-buffer
+    (insert before after)
+    (goto-char (1+ (length before)))
+    (sekken-test-type roman)
+    (let (learned)
+      (cl-letf (((symbol-function 'sekken-server-adapt) #'ignore)
+                ((symbol-function 'sekken-server-learn-async)
+                 (lambda (sentences) (push sentences learned))))
+        (sekken-convert-test--with-engine (list choice)
+          (cl-letf (((symbol-function 'completion-in-region)
+                     (lambda (start end _table &optional _pred)
+                       (delete-region start end)
+                       (goto-char start)
+                       (insert choice)
+                       (funcall (plist-get completion-extra-properties :exit-function)
+                                choice 'finished))))
+            (sekken-convert))))
+      (nreverse learned))))
+
+(ert-deftest sekken-convert/文の途中で選んだ語はその文ごと数え直す ()
+  (should (equal (sekken-convert-test--choose "江戸時代の" "をする。" "Koushou" "工廠")
+                 '(("江戸時代の工廠をする。")))))
+
+(ert-deftest sekken-convert/段落の外の文は数え直さない ()
+  (should (equal (sekken-convert-test--choose "前の段落。\n\n江戸時代の" "をする。\n\n次の段落。"
+                                              "Koushou" "工廠")
+                 '(("江戸時代の工廠をする。")))))
+
+(ert-deftest sekken-convert/句読点の後に続けて打った語は数え直さない ()
+  (should (null (sekken-convert-test--choose "前の文。" "" "Neko" "猫"))))
+
+(ert-deftest sekken-convert/。で終わっていない文は数え直さない ()
+  (should (null (sekken-convert-test--choose "江戸時代の" "をする" "Koushou" "工廠"))))
+
 (ert-deftest sekken-convert/かなと綴りに置き換えた末尾を確定として覚える ()
   (with-temp-buffer
     (sekken-test-type "kyouha'Emacs")

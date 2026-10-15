@@ -258,6 +258,26 @@ ON-FAILURE があれば引数なしで呼ぶ。接続の起動に失敗すれば
          :timeout-fn (lambda () (sekken-server--adapt-failed nil nil)))
       (error (sekken-server--adapt-failed nil (error-message-string err))))))
 
+(defun sekken-server-learn-async (sentences)
+  "文のリスト SENTENCES をエンジンの本人の n-gram に数える。応答は待たない。
+`sekken-server-adapt' と同じく、動いている接続が無ければ何もせず、失敗は
+`sekken-server--adapt-error' に残して知らせ、エラーは投げない。
+本人の n-gram を数えない設定（`sekken-server-personal' が nil）なら送らない。"
+  (when (and sekken-server-personal
+             sekken-server--connection
+             (jsonrpc-running-p sekken-server--connection))
+    (condition-case err
+        (jsonrpc-async-request
+         sekken-server--connection :learn
+         (list :sentences (vconcat sentences))
+         :timeout (sekken-server--henkan-timeout)
+         :success-fn (lambda (_result) (setq sekken-server--adapt-error nil))
+         :error-fn (lambda (err)
+                     (sekken-server--adapt-failed (plist-get err :code)
+                                                  (plist-get err :message)))
+         :timeout-fn (lambda () (sekken-server--adapt-failed nil nil)))
+      (error (sekken-server--adapt-failed nil (error-message-string err))))))
+
 (defun sekken-server-register (yomi surface)
   "送りなしの読み YOMI の語 SURFACE をユーザー辞書に登録する。
 エンジンがメモリに足してファイルに書く。断られれば `user-error' にする。"
