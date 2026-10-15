@@ -138,44 +138,40 @@ table を使い回すため、候補を閉じ込めると追従しない。"
   "CHAR がかなか漢字か。句読点は含めない。"
   (and char (string-match-p "[ぁ-ゖァ-ヺー々一-鿿]" (string char))))
 
-(defun sekken-convert--sentences-around (start end)
-  "START から END に入れた語を含む文のリスト。
-前後の空行までを段落として `sekken-learn-sentences' と同じく文に切り、
-入れた語を含む文だけを返す（段落の中で同じ語を含む別の文も返る）。「。」で終わっていない
-文は返さない。"
-  (let* ((word (buffer-substring-no-properties start end))
+(defun sekken-convert--sentence-around (start end)
+  "START から END に入れた語を含む文。無ければ nil。
+文は、手前の「。」か空行の後から、後ろの最初の「。」まで（空行を越えない）。
+`sekken-learn-sentences' と同じく折り返しをつなぎ直して数える文に整え、
+「。」で終わっていない文と数えない文は nil にする。"
+  (let* ((limit sekken-convert--paragraph-limit)
          (from (save-excursion
                  (goto-char start)
-                 (if (re-search-backward "^[ \t]*$"
-                                         (max (point-min)
-                                              (- start sekken-convert--paragraph-limit))
-                                         t)
+                 (if (re-search-backward "。\\|^[ \t]*$"
+                                         (max (point-min) (- start limit)) t)
                      (match-end 0)
-                   (max (point-min) (- start sekken-convert--paragraph-limit)))))
+                   (max (point-min) (- start limit)))))
          (to (save-excursion
                (goto-char end)
-               (if (re-search-forward "^[ \t]*$"
-                                      (min (point-max)
-                                           (+ end sekken-convert--paragraph-limit))
-                                      t)
-                   (match-beginning 0)
-                 (min (point-max) (+ end sekken-convert--paragraph-limit))))))
-    (seq-filter (lambda (sentence)
-                  (and (string-search word sentence)
-                       (not (equal sentence word))))
-                (sekken-learn-sentences
-                 (buffer-substring-no-properties from to)))))
+               (and (re-search-forward "。\\|^[ \t]*$"
+                                       (min (point-max) (+ end limit)) t)
+                    (equal (match-string 0) "。")
+                    (match-end 0))))
+         (sentences (and to (sekken-learn-sentences
+                             (buffer-substring-no-properties from to)))))
+    (and (= (length sentences) 1)
+         (not (equal (car sentences) (buffer-substring-no-properties start end)))
+         (car sentences))))
 
 (defun sekken-convert--relearn (start end)
-  "START から END に入れた語の前後に和文が続いていれば、その文を本人の n-gram に数え直す。
+  "START から END に入れた語の前後に和文が続いていれば、その語を含む文を本人の n-gram に数え直す。
 確定した後で外れた語を 1 語だけ打ち直したときに、正しい語を前後の語とのつながりごと
 数えるため。打ち直した語だけを学習させると前後のつながりが入らず、最初に確定した外れた
 文のつながりの方が強く残る。外れた文の数は減らせないので、その文は二重に数えられる。"
   (when (or (sekken-convert--japanese-p (char-before start))
             (sekken-convert--japanese-p (char-after end)))
-    (let ((sentences (sekken-convert--sentences-around start end)))
-      (when sentences
-        (sekken-server-learn-async sentences)))))
+    (let ((sentence (sekken-convert--sentence-around start end)))
+      (when sentence
+        (sekken-server-learn-async (list sentence))))))
 
 (defun sekken-convert--finish (start roman)
   "候補が入ったら START からの語 ROMAN を終える exit-function を返す。

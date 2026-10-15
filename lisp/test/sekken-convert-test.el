@@ -167,6 +167,16 @@
                                               "Koushou" "工廠")
                  '(("江戸時代の工廠をする。")))))
 
+(ert-deftest sekken-convert/同じ語を含む別の文は数え直さない ()
+  (should (equal (sekken-convert-test--choose "工廠を見た。江戸時代の" "をする。工廠は古い。"
+                                              "Koushou" "工廠")
+                 '(("江戸時代の工廠をする。")))))
+
+(ert-deftest sekken-convert/折り返した文はつなぎ直して数え直す ()
+  (should (equal (sekken-convert-test--choose "前の文。江戸時代\nの" "をする\nことにした。"
+                                              "Koushou" "工廠")
+                 '(("江戸時代の工廠をすることにした。")))))
+
 (ert-deftest sekken-convert/句読点の後に続けて打った語は数え直さない ()
   (should (null (sekken-convert-test--choose "前の文。" "" "Neko" "猫"))))
 
