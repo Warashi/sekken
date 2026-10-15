@@ -47,11 +47,10 @@ Creative Commons Attribution-ShareAlike 4.0 International（CC BY-SA 4.0）で
 
 - model.zst: Wikipedia 日本語版の本文と FineWeb-2 日本語（下記）の文から
   語の bigram 頻度を数え、Kneser-Ney で平滑化したもの。本文そのものは含まない
-- lm.zst: zenz-v2.5-dataset（下記）の `train_wikipedia.jsonl` と
-  `train_llm-jp-corpus-v3.jsonl` の全ペアから、読みと出力を交互に並べた
-  文字言語モデルの重みにしたもの。ペアそのものは含まない
+- lm.zst: zenz-v2.5-dataset（下記）の `train_wikipedia.jsonl` の全ペアから、
+  読みと出力を交互に並べた文字言語モデルの重みにしたもの。ペアそのものは含まない
 - ライセンス本文: https://creativecommons.org/licenses/by-sa/4.0/legalcode
-- FineWeb-2 と llm-jp-corpus-v3 由来の部分には ODC-By 1.0 の帰属表示の条件と
+- FineWeb-2 由来の部分（model.zst）には ODC-By 1.0 の帰属表示の条件と
   Common Crawl の利用規約も掛かる。出典は下記の各節に示す
 
 ## Wikipedia 日本語版（学習データ）
@@ -93,7 +92,8 @@ Creative Commons Attribution-ShareAlike 4.0 International（CC BY-SA 4.0）で
   https://commoncrawl.org/terms-of-use に従う
 - 変更点: 評価文と重なる行を除き、読みと出力を文字言語モデルの重みに加工した。
   ペアそのものは含まない
-- リポジトリには含めない。lm.zst は上記 2 ファイルの全量で学習した
+- リポジトリには含めない。0.6.0 の lm.zst は `train_wikipedia.jsonl` の全量で学習した
+  （0.5.0 までの lm.zst は `train_llm-jp-corpus-v3.jsonl` も含む 2 ファイルの全量）
 
 ## IPA 辞書（ipadic-mecab-2_7_0、vibrato 形式）
 
