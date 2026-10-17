@@ -69,14 +69,16 @@
             cp ${./sekken-rs/core/kana-table.tsv} $out/share/emacs/share/kana-table.tsv
           '';
         };
+        # 配布するモデルは Release にあるので、公開前は取得に失敗する。
+        sekken-models = pkgs.callPackage ./nix/models.nix {};
       in {
         packages = {
           default = sekken;
-          inherit sekken sekken-el;
+          inherit sekken sekken-el sekken-models;
         };
 
         checks = {
-          inherit sekken sekken-test sekken-clippy;
+          inherit sekken sekken-test sekken-clippy sekken-models;
           ert = pkgs.runCommand "sekken-ert" {
             nativeBuildInputs = [pkgs.emacs-nox];
           } ''
