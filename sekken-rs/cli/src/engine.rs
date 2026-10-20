@@ -38,10 +38,10 @@ pub struct EngineArgs {
     /// 言語モデルのコストに掛ける重み
     #[arg(long, default_value_t = 1.0)]
     pub lm_weight: f64,
-    /// 言語モデルの線形層を int8 の行列積で読む。int8 の内積命令（aarch64 の dot product、
-    /// x86_64 の AVX-512 VNNI か AVX-VNNI）が無い CPU では f32 のまま読む
+    /// 言語モデルの線形層を int8 にせず f32 のまま読む。int8 の内積命令（aarch64 の
+    /// dot product、x86_64 の AVX-512 VNNI か AVX-VNNI）が無い CPU では指定しなくても f32
     #[arg(long)]
-    pub lm_int8: bool,
+    pub lm_f32: bool,
     /// 言語モデルの提案で格子を再探索する回数の上限
     #[arg(long, default_value_t = 3, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
     pub spec_rounds: usize,
@@ -102,11 +102,13 @@ impl EngineArgs {
         self.build_with(Box::new(self.lm_scorer(&saved)?))
     }
 
-    /// 読んだ言語モデルから、`--lm-int8` に従って採点器を組む。
+    /// 読んだ言語モデルから、`--lm-f32` と CPU の命令に従って採点器を組む。
     pub fn lm_scorer(&self, saved: &SavedModel) -> Result<LmScorer> {
         let infer = saved.infer()?;
-        let int8 = self.lm_int8 && sekken_lm::quant::fast();
-        if self.lm_int8 {
+        let int8 = !self.lm_f32 && sekken_lm::quant::fast();
+        if self.lm_f32 {
+            eprintln!("lm: f32 (--lm-f32)");
+        } else {
             eprintln!(
                 "lm: int8 kernel={:?}{}",
                 sekken_lm::quant::kernel(),
@@ -197,6 +199,13 @@ mod tests {
                 .spec_rounds,
             1
         );
+    }
+
+    #[test]
+    fn 既定では言語モデルを_int8_で読み_lm_f32_で_f32_に戻す() {
+        assert!(!parse(&["--lm", "l"]).unwrap().lm_f32);
+        assert!(parse(&["--lm", "l", "--lm-f32"]).unwrap().lm_f32);
+        assert!(parse(&["--lm", "l", "--lm-int8"]).is_err());
     }
 
     #[test]
