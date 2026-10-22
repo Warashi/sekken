@@ -206,10 +206,14 @@ exact で呼ぶ。選んだ候補はエンジンに学習させ、前後に和�
        ((seq-empty-p (plist-get analysis :pieces))
         (user-error "sekken: 変換境界の後に読みがありません"))
        ((plist-get analysis :converts)
-        ;; corfu は開始時点の `completion-extra-properties' を保存して
-        ;; 選択時に使うので、動的束縛で足りる。
+        ;; 候補 UI は開始時点の `completion-extra-properties' を保存して
+        ;; 選択時に使うので、動的束縛で足りる。predicate が無いと Emacs 標準の
+        ;; UI は一覧のキーマップを有効にしない。`*Completions*' が見えているかでは
+        ;; 判定しない。corfu は毎コマンド predicate を見るので、それでは即座に閉じる。
         (let ((completion-extra-properties
-               (list :exit-function (sekken-convert--finish start roman))))
+               (list :exit-function (sekken-convert--finish start roman)))
+              (completion-in-region-mode-predicate
+               (lambda () (eql (car (sekken-word-bounds)) start))))
           (completion-in-region start end #'sekken-convert-table)))
        (t
         (delete-region start end)

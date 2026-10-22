@@ -159,8 +159,10 @@ DEL と backspace は入力中の語の末尾をかな 1 つ分消す（`Nekoga`
 押した時点で語が置き換わってから削除が走る。
 
 1 位以外の候補を選ぶには `C-j`（`sekken-mode-map` の `sekken-convert`。別のキーにするなら
-`keymap-set sekken-mode-map` で付け替える）を使う。候補が `completion-in-region` に渡るので、corfu を使っていればその
-ポップアップに出る。一覧が出ている間は、一覧を動く・絞る・閉じるキーで
+`keymap-set sekken-mode-map` で付け替える）を使う。候補が `completion-in-region` に渡るので、`completion-in-region-function`
+の UI（corfu など）に出る。Emacs 標準の UI では `*Completions*` に出て、`M-<down>`・`M-<up>` で動き `M-RET` で選ぶ。
+corfu は既定ではミニバッファで有効にならないので、検索などのミニバッファでも corfu で選ぶなら `global-corfu-minibuffer` を設定する。
+一覧が出ている間は、一覧を動く・絞る・閉じるキーで
 語は置き換わらない。候補を選んでそのまま次の語を打ち始められる。ポイント直前に変換する入力が無ければ、そのキーの元の
 コマンド（改行など）が動く。
 

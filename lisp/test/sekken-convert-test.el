@@ -86,6 +86,27 @@
           (sekken-convert)))
       (should (equal called '(1 5 ("猫" "ねこ")))))))
 
+(ert-deftest sekken-convert/Emacs_標準の候補一覧から2番目以降を選べる ()
+  (with-temp-buffer
+    (set-window-buffer nil (current-buffer))
+    (sekken-test-type "Neko")
+    (sekken-convert-test--with-engine '("猫" "根子" "寝子")
+      (unwind-protect
+          (progn
+            (sekken-convert)
+            (should completion-in-region-mode)
+            (minibuffer-next-completion)
+            (minibuffer-next-completion)
+            (completion-in-region--postch)
+            (should completion-in-region-mode)
+            (minibuffer-choose-completion)
+            ;; 選んだ後も一覧のキーマップが残ると、行末まで TAB などを握り続ける。
+            (completion-in-region--postch)
+            (should-not completion-in-region-mode))
+        (completion-in-region-mode -1)))
+    (should (equal (buffer-string) "根子"))
+    (should (null (sekken-word-bounds)))))
+
 (ert-deftest sekken-convert/選んだ候補の末尾を確定として覚える ()
   (with-temp-buffer
     (insert "kyouha'Emacs ")
