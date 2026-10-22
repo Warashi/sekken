@@ -28,6 +28,7 @@
 (require 'sekken-register)
 (require 'sekken-learn)
 (require 'sekken-im)
+(require 'sekken-isearch)
 
 (defvar sekken-mode-map
   (let ((map (make-sparse-keymap)))
