@@ -153,10 +153,23 @@
 (ert-deftest sekken-input/境界の後に読みがあれば先読みする ()
   ;; 境界で終わる語も確定はできるが、先読みはせず表示に境界を残す。
   (should (sekken-input-ready-p ";neko"))
-  (should (sekken-input-ready-p "N"))
+  (should (sekken-input-ready-p "Ne"))
   (should-not (sekken-input-ready-p ";"))
   (should-not (sekken-input-ready-p "Neko;"))
   (should-not (sekken-input-ready-p ";;")))
+
+(ert-deftest sekken-input/区間を終えるときにしか決まらない末尾の間は先読みしない ()
+  ;; `;kan' の n は次の打鍵で な にも ん にもなるので、`;kann' と同じ候補を見せない。
+  (should-not (sekken-input-ready-p ";kan"))
+  (should-not (sekken-input-ready-p "N"))
+  (should-not (sekken-input-ready-p "KanJin"))
+  (should (sekken-input-ready-p ";kann"))
+  (should (sekken-input-ready-p ";kana"))
+  (should (sekken-input-ready-p "KanJi"))
+  ;; 閉じた区間や接頭辞の印は区間を終えているので先読みする。
+  (should (sekken-input-ready-p "Kan>"))
+  ;; 送る区間は変わらず、変換すれば ん として引く。
+  (should (equal (sekken-input-pieces ";kan") [(:kind "convert" :text "かん")])))
 
 (ert-deftest sekken-input/literal_の中の空白は綴りのまま送り_表示する ()
   (should (equal (sekken-input-pieces "Kyouha'git branch;wo")
