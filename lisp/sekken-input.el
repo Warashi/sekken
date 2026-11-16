@@ -19,6 +19,7 @@
 
 (require 'cl-lib)
 (require 'sekken-kana)
+(require 'sekken-typo)
 (require 'subr-x)
 
 (cl-defstruct (sekken-input-reader (:constructor sekken-input-reader-create))
@@ -160,7 +161,8 @@ abbrev 区間は `/'、literal 区間は `'' を付けて綴りのまま、`>' �
   "SETTLED をエンジンに送る区間の列にする。
 先頭の小文字は kana、変換境界で始まる各部分は convert、`/' で開いた部分は
 abbrev、`'' で開いた部分は literal の区間になり、`>' の印は :prefix と
-:suffix で付ける。
+:suffix で付ける。読めない英字の残った convert の区間には、直した読みの
+候補（`sekken-typo-alternatives'）を :alternatives で付ける。
 jsonrpc.el が JSON の配列にするようベクタで返す。"
   (let ((head (car settled))
         (pieces nil))
@@ -168,14 +170,18 @@ jsonrpc.el が JSON の配列にするようベクタで返す。"
       (push (list :kind "kana" :text (sekken-kana-roman-to-kana-end head))
             pieces))
     (dolist (segment (cdr settled))
-      (push (append
-             (list :kind (cond ((plist-get segment :abbrev) "abbrev")
-                               ((plist-get segment :literal) "literal")
-                               (t "convert"))
-                   :text (sekken-input--segment-kana segment t))
-             (and (plist-get segment :prefix) '(:prefix t))
-             (and (plist-get segment :suffix) '(:suffix t)))
-            pieces))
+      (let* ((spelled (or (plist-get segment :abbrev) (plist-get segment :literal)))
+             (alternatives (and (not spelled)
+                                (sekken-typo-alternatives (plist-get segment :text)))))
+        (push (append
+               (list :kind (cond ((plist-get segment :abbrev) "abbrev")
+                                 ((plist-get segment :literal) "literal")
+                                 (t "convert"))
+                     :text (sekken-input--segment-kana segment t))
+               (and alternatives (list :alternatives (vconcat alternatives)))
+               (and (plist-get segment :prefix) '(:prefix t))
+               (and (plist-get segment :suffix) '(:suffix t)))
+              pieces)))
     (vconcat (nreverse pieces))))
 
 (defun sekken-input--commit (settled)

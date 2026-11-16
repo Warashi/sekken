@@ -93,6 +93,15 @@
   (should (equal (sekken-input-pieces "neko") [(:kind "kana" :text "ねこ")]))
   (should (equal (sekken-input-pieces "") [])))
 
+(ert-deftest sekken-input/読めない英字の残った変換区間に直した読みの候補を付けて送る ()
+  (let ((piece (aref (sekken-input-pieces "SoreHaKnaji") 2)))
+    (should (equal (plist-get piece :text) "kなじ"))
+    (should (seq-contains-p (plist-get piece :alternatives) "かんじ")))
+  (should (equal (sekken-input-pieces "Kanji") [(:kind "convert" :text "かんじ")]))
+  ;; エンジンが採点しないかなの区間と、綴りのままの区間には付けない。
+  (should (equal (sekken-input-pieces "knaji") [(:kind "kana" :text "kなじ")]))
+  (should (equal (sekken-input-pieces "'knaji") [(:kind "literal" :text "knaji")])))
+
 (ert-deftest sekken-input/末尾の子音も表のとおり変換して送る ()
   ;; `k' は表に無いので綴りのまま、`kk' で っk、`ka' が来れば か に変わる。
   ;; `z' + 子音のキーも同じ規則で通る。
