@@ -36,6 +36,9 @@ pub struct Piece {
     pub prefix: bool,
     /// 直前に `>` があり、接尾辞の見出し（`>かい`）でも引く。
     pub suffix: bool,
+    /// `text` の代わりに読める候補。エディタが打ち間違いを直して作る。空でなければ
+    /// 変換の前にどれか 1 つ（`Sekken::resolve`）に置き換える。
+    pub alternatives: Vec<String>,
 }
 
 impl Piece {
@@ -45,6 +48,7 @@ impl Piece {
             text: text.into(),
             prefix: false,
             suffix: false,
+            alternatives: Vec::new(),
         }
     }
 
@@ -68,6 +72,15 @@ impl Piece {
     pub fn with_marks(mut self, prefix: bool, suffix: bool) -> Piece {
         self.prefix = prefix;
         self.suffix = suffix;
+        self
+    }
+
+    /// 読みの候補を付ける。
+    pub fn with_alternatives<T: Into<String>>(
+        mut self,
+        alternatives: impl IntoIterator<Item = T>,
+    ) -> Piece {
+        self.alternatives = alternatives.into_iter().map(Into::into).collect();
         self
     }
 }

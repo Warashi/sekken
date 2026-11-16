@@ -2,7 +2,7 @@
 
 use crate::candidates::{candidates_at, homophones};
 use crate::dictionary::Dictionary;
-use crate::input::Input;
+use crate::input::{Input, Piece};
 use crate::kana::hira2kata;
 use crate::lattice::{Lattice, Weights};
 use crate::scorer::Scorer;
@@ -20,8 +20,42 @@ pub struct Sekken<S: Scorer> {
 }
 
 impl<S: Scorer> Sekken<S> {
+    fn lattice(&self, pieces: &[Piece]) -> Lattice {
+        Lattice {
+            weights: self.weights,
+            candidates: (0..pieces.len())
+                .map(|i| candidates_at(&self.dict, &self.user, pieces, i))
+                .collect(),
+        }
+    }
+
+    /// 読みの候補を持つ区間を、前から順に、入力全体の格子の 1 位のコストが最も小さく
+    /// なる候補に置き換える。読みごとに検証器まで通すと候補の数だけ打鍵が遅くなり、
+    /// 打ち間違いを直した読みの選び分けは格子のコストだけでも検証器を通すより外れない。
+    pub fn resolve(&self, input: &Input) -> Input {
+        let mut pieces = input.pieces.clone();
+        for i in 0..pieces.len() {
+            let alternatives = std::mem::take(&mut pieces[i].alternatives);
+            let best = alternatives
+                .into_iter()
+                .filter_map(|text| {
+                    pieces[i].text = text.clone();
+                    let cost = self.lattice(&pieces).nbest(&self.scorer, 1).first()?.cost;
+                    Some((text, cost))
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            if let Some((text, _)) = best {
+                pieces[i].text = text;
+            } else {
+                pieces[i].text = input.pieces[i].text.clone();
+            }
+        }
+        Input::new(pieces)
+    }
+
     /// 入力を変換し、良い順に最大 `top_n` 個の文字列を返す。
     pub fn henkan(&self, input: &Input, top_n: usize) -> Vec<String> {
+        let input = &self.resolve(input);
         // 先頭の変換しない区間は格子に入れず、文頭のかなとして候補に前置する。ただし変換する区間の
         // 直前の数字の literal は、数値変換（`'3;tu` の 三つ）で書き換えるので格子に入れる。
         let mut head_len = input
@@ -53,12 +87,7 @@ impl<S: Scorer> Sekken<S> {
             };
         }
         let reading = input.reading();
-        let lattice = Lattice {
-            weights: self.weights,
-            candidates: (0..pieces.len())
-                .map(|i| candidates_at(&self.dict, &self.user, pieces, i))
-                .collect(),
-        };
+        let lattice = self.lattice(pieces);
         let decoded = self
             .speculator
             .decode(&lattice, &self.scorer, &reading, &head, top_n);
@@ -227,6 +256,19 @@ mod tests {
     #[test]
     fn 二重セミコロンをリテラルとしてかなにする() {
         assert_eq!(sekken().henkan(&roman("semi;;koron"), 1)[0], "せみ;ころん");
+    }
+
+    #[test]
+    fn 読みの候補があれば格子のコストが最小の読みで変換する() {
+        let input = Input::new(vec![
+            Piece::kana("それは"),
+            Piece::convert("ねkp").with_alternatives(["ねっこ", "ねこ"]),
+        ]);
+        assert_eq!(sekken().henkan(&input, 1)[0], "それは猫");
+        assert_eq!(
+            sekken().resolve(&input),
+            Input::new(vec![Piece::kana("それは"), Piece::convert("ねこ")])
+        );
     }
 
     #[test]
