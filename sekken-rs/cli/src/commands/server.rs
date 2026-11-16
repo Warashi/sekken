@@ -271,11 +271,19 @@ pub fn handle(
             let Some(sentence) = req.params["sentence"].as_str() else {
                 return Reply::err(id, -32602, "params.sentence must be a string");
             };
-            let reading = input.reading();
+            // 読みの候補は henkan と同じ読みに置き換えて、確定した文と組にする。読み込み中は
+            // 選べないので、候補のある入力は学ばない。
+            let engine = loader.loaded();
+            let has_alternatives = input.pieces.iter().any(|p| !p.alternatives.is_empty());
+            let reading = match &engine {
+                Some(engine) => engine.resolve(&input).reading(),
+                None if has_alternatives => String::new(),
+                None => input.reading(),
+            };
             if !reading.is_empty() && !sentence.is_empty() {
                 // 本人の n-gram は数えるだけで 0.1 ms もかからないので、変換と同じスレッドでやる。
                 // 読み込み中なら数えない（確定した文はエンジンの候補なので、ふつうは読み込み後に来る）。
-                if let Some(engine) = loader.loaded() {
+                if let Some(engine) = engine {
                     engine.scorer.learn(sentence);
                 }
                 adapter.adapt(reading, sentence.to_string());
@@ -422,10 +430,25 @@ pub fn parse_pieces(pieces: &Value) -> Result<Input, String> {
             let Some(text) = piece["text"].as_str() else {
                 return Err("params.pieces[].text must be a string".to_string());
             };
-            Ok(Piece::new(kind, text).with_marks(
-                piece["prefix"].as_bool().unwrap_or(false),
-                piece["suffix"].as_bool().unwrap_or(false),
-            ))
+            let alternatives = match &piece["alternatives"] {
+                Value::Null => Vec::new(),
+                Value::Array(texts) => texts
+                    .iter()
+                    .map(|t| t.as_str().map(str::to_string))
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or("params.pieces[].alternatives must be an array of strings")?,
+                _ => {
+                    return Err(
+                        "params.pieces[].alternatives must be an array of strings".to_string()
+                    );
+                }
+            };
+            Ok(Piece::new(kind, text)
+                .with_marks(
+                    piece["prefix"].as_bool().unwrap_or(false),
+                    piece["suffix"].as_bool().unwrap_or(false),
+                )
+                .with_alternatives(alternatives))
         })
         .collect::<Result<Vec<_>, _>>()
         .map(Input::new)
@@ -523,6 +546,23 @@ mod tests {
             ]
         );
         assert!(parse_pieces(&json!([])).unwrap().pieces.is_empty());
+    }
+
+    #[test]
+    fn 区間の読みの候補を読む() {
+        let input = parse_pieces(&json!([
+            { "kind": "convert", "text": "ねkp", "alternatives": ["ねこ", "ねっこ"] },
+        ]))
+        .unwrap();
+        assert_eq!(
+            input.pieces,
+            [Piece::convert("ねkp").with_alternatives(["ねこ", "ねっこ"])]
+        );
+        assert!(
+            parse_pieces(&json!([{ "kind": "convert", "text": "ねkp", "alternatives": [1] }]))
+                .unwrap_err()
+                .contains("alternatives")
+        );
     }
 
     #[test]
